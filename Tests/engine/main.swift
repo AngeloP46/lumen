@@ -34,6 +34,28 @@ do {
     print("PROBE texture row 2 (top row of memory) BGRA:", px, px[2] > 200 ? "=> CI top is texture top (NO flip needed)" : "=> FLIPPED (need flip)")
 }
 
+// ---- Pass/fail harness: each failed check prints "FAIL: ..."; the summary goes to stdout and RESULT.txt,
+// and the tool exits 1 if anything failed.
+var checkCount = 0
+var failures: [String] = []
+func check(_ ok: Bool, _ message: @autoclosure () -> String) {
+    checkCount += 1
+    if !ok {
+        let m = message()
+        failures.append(m)
+        print("FAIL:", m)
+    }
+}
+func finishChecks() -> Never {
+    let summary = failures.isEmpty
+        ? "PASS: all \(checkCount) checks passed"
+        : "FAILED: \(failures.count) of \(checkCount) checks failed\n" + failures.map { "  - " + $0 }.joined(separator: "\n")
+    print("==== TEST SUMMARY ====")
+    print(summary)
+    try? (summary + "\n").write(to: outDir.appendingPathComponent("RESULT.txt"), atomically: true, encoding: .utf8)
+    exit(failures.isEmpty ? 0 : 1)
+}
+
 func now() -> Double { Date().timeIntervalSinceReferenceDate }
 
 func saveJPEG(_ cg: CGImage, _ name: String) {
@@ -73,12 +95,20 @@ func sheet(_ items: [(String, CGImage)], cell: Int = 420, cols: Int = 3) -> CGIm
 func edit(_ f: (inout EditSettings) -> Void) -> EditSettings { var s = EditSettings(); f(&s); return s }
 
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
+var opened = 0
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
     let stem = file.deletingPathExtension().lastPathComponent
     let t0 = now()
-    guard let session = EditSession(url: file) else { print("cannot open", file.lastPathComponent); continue }
+    guard let session = EditSession(url: file) else {
+        check(false, "\(file.lastPathComponent): EditSession could not open it (or the sample download failed)")
+        continue
+    }
     let t1 = now()
-    guard let source = session.makeSource(maxEdge: 1800, materialize: true) else { print("source failed", stem); continue }
+    guard let source = session.makeSource(maxEdge: 1800, materialize: true) else {
+        check(false, "\(stem): makeSource(maxEdge: 1800) returned nil")
+        continue
+    }
+    opened += 1
     let t2 = now()
     print("\(stem): native \(session.nativeSize) preview \(source.size) open \(Int((t1 - t0) * 1000))ms source \(Int((t2 - t1) * 1000))ms air \(source.air) dn \(source.darkNorm)")
 
@@ -180,13 +210,19 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
 
     for (gname, cases) in groups {
         var items: [(String, CGImage)] = []
-        for (label, s) in cases { if let cg = render(s) { items.append((label, cg)) } }
+        for (label, s) in cases {
+            let cg = render(s)
+            check(cg != nil, "\(stem) \(gname) '\(label)': render returned nil")
+            if let cg = cg { items.append((label, cg)) }
+        }
         if let sh = sheet(items) { saveJPEG(sh, "\(stem)-\(gname).jpg") }
     }
     var ov: [(String, CGImage)] = []
     for (label, m) in maskCases {
         let s = edit { $0.masks = [m] }
-        if let cg = render(s, geometry: false, overlay: m) { ov.append((label + " overlay", cg)) }
+        let cg = render(s, geometry: false, overlay: m)
+        check(cg != nil, "\(stem) '\(label)' overlay: render returned nil")
+        if let cg = cg { ov.append((label + " overlay", cg)) }
     }
     if let sh = sheet(ov) { saveJPEG(sh, "\(stem)-overlays.jpg") }
 
@@ -200,7 +236,7 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         if let data = session.renderData(exportEdits, format: .jpeg, quality: 0.9) {
             print(" export full-res:", data.count / 1024, "KB in", Int((now() - t) * 1000), "ms")
             try? data.write(to: outDir.appendingPathComponent("\(stem)-export.jpg"))
-        } else { print(" EXPORT FAILED") }
+        } else { check(false, "\(stem): full-resolution export (renderData .jpeg) returned nil") }
     }
     print(" timing default:"); timeIt(EditSettings())
     print(" timing heavy:")
@@ -211,3 +247,6 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         $0.masks = [linear, radial]
     })
 }
+
+check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
+finishChecks()
