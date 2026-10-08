@@ -5,19 +5,27 @@ on:
     paths:
       - 'Sources/Edit/**'
       - 'Tests/engine/**'
+      - '.github/ci/**'
       - '.github/workflows/engine-test.yml'
+
+# A newer push to the same branch cancels the run that is still going (saves macOS minutes).
+concurrency:
+  group: engine-test-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: macos-15
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Fetch sample photos
         run: |
           mkdir -p samples
-          curl -sL -o samples/a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW"
-          curl -sL -o samples/cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000"
-          curl -sL -o samples/matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000"
-          curl -sL -o samples/falls.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Hopetoun_falls.jpg?width=2000"
+          bash .github/ci/get.sh samples/a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW" 10000000
+          bash .github/ci/get.sh samples/cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000" 100000
+          bash .github/ci/get.sh samples/matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000" 100000
+          bash .github/ci/get.sh samples/falls.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Hopetoun_falls.jpg?width=2000" 100000
           ls -la samples
       - name: Build kernels and test tool
         run: |
@@ -29,8 +37,19 @@ jobs:
             Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift \
             Tests/engine/main.swift
       - name: Run
+        # The test's own exit status is the job's status. Only a crash (anything above 1) gets the lldb backtrace,
+        # and the backtrace never changes the result: exit 1 = a check failed, other non-zero = it crashed.
         run: |
-          ./out/engine-test out/k.metallib samples out/render || lldb -b -o run -o "bt 25" -- ./out/engine-test out/k.metallib samples out/render
+          set +e
+          ./out/engine-test out/k.metallib samples out/render
+          code=$?
+          echo "engine-test exit code: $code"
+          if [ "$code" -gt 1 ]; then
+            echo "::group::lldb backtrace (the test crashed)"
+            lldb -b -o run -o "bt 25" -- ./out/engine-test out/k.metallib samples out/render
+            echo "::endgroup::"
+          fi
+          exit "$code"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
