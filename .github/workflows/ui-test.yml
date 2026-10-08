@@ -2,7 +2,7 @@ name: UI screenshots
 on:
   workflow_dispatch:
   push:
-    branches: [v2]
+    branches: [main, v2]
     paths:
       - 'Sources/**'
       - 'project.yml'

@@ -35,7 +35,7 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 
 ## Testing without a Mac or device (very useful)
 - **Engine test** (`.github/workflows/engine-test.yml`, runs on any push touching `Sources/Edit/**`): compiles the engine files + `Tests/engine/main.swift` as a macOS command-line tool on the runner's (paravirtual) Metal GPU, renders an A9 ARW and three JPEGs through ~40 edit cases and masks, uploads contact sheets as the `engine-renders` artifact. Download with `gh run download <id> --name engine-renders` and view the JPEGs. Also prints render timings and a Metal-texture orientation probe.
-- **UI screenshots** (`.github/workflows/ui-test.yml`, runs on push to branch `v2`/manual): builds the app for the iPhone 16 Pro Max simulator, launches it with `-lumenDemo*` arguments (see `Sources/Demo.swift`) on the same sample photos and uploads screenshots as the `screenshots` artifact. Use this to check layout.
+- **UI screenshots** (`.github/workflows/ui-test.yml`, runs on push to `main`/`v2`, ~7 min): builds the app for the iPhone 16 Pro Max simulator, launches it with `-lumenDemo*` arguments (see `Sources/Demo.swift`) on the same sample photos and uploads screenshots as the `screenshots` artifact. Use this to check layout.
 - Sample photos are fetched in CI (raw.pixls.us A9 ARW, Wikimedia JPEGs).
 
 ## Architecture (Sources/)
@@ -47,20 +47,23 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - `Edit/EditSettings.swift`: Codable model (JSON sidecar per photo; old sidecars are migrated by `LibraryStore.settings(for:)`).
 - `Edit/EditorViewModel.swift`: builds the graph on every change and hands it to the Metal canvas; undo/redo; debounced saving; mask editing state; histogram (throttled); export.
 - `Views/CanvasView.swift`: `MTKView` that draws the CIImage directly (no CPU read-back) with pinch/pan transform (`ViewXform`), flipped for Metal textures.
-- `Views/EditorView.swift` + `Panels.swift` + `Components.swift`: Lightroom-mobile layout: slim top bar, full-height photo, one-slider "param strip" panels (`ParamStrip`/`ScrubSlider`), tool strip at the bottom. `MaskViews.swift`: mask panel (type grid, Shape/Adjust tabs, range bar for luminance, colour samples), on-photo handles. Red overlay shows only on the Shape tab (eye button toggles; Adjust tab hides it, eye peeks).
+- `Views/EditorView.swift`: full-height photo, round floating buttons on top (back/undo/redo/hold-to-compare/menu), 8 fixed tools in a bottom bar (Presets, Crop, Light, Color, Grade, Curve, Detail, Masks). `panelPlan` gives the panel whatever height the photo does not need: with room for >= 4 whole rows it shows **every slider as a list** (`ParamPanel` list layout), otherwise **one slider at a time** (strip). More menu has Sliders: Automatic / One at a time / Full list. Tap the photo to hide all chrome; swipe the panel's grabber down to close the panel; press-and-hold the photo to see the original.
+- `Views/Panels.swift` + `Components.swift`: panels built from `ParamItem`s (`ParamPanel`, `ScrubSlider` = relative drag, drag away from the track for finer steps, double-tap reset, value bubble). Grade = three `ColorWheel`s (hue/sat puck) + luminance sliders + Blend/Balance. Color has B&W, Reset and a colour-mix mode (`HSLPanel`: 8 swatches + Hue/Sat/Lum). `CurvePanel` shows the live histogram behind the curve and has curve presets.
+- `Views/MaskViews.swift`: mask panel (type grid, Shape/Adjust tabs, components with add/subtract/intersect, luminance range bar with histogram, colour samples), on-photo handles. Red overlay shows only on the Shape tab (eye button toggles; the Adjust tab hides it, eye peeks).
 - `Library/LibraryStore.swift`: imports from Photos (fetches RAW original resource, falls back to `PickedFile` transferable) or Files; thumbnails via the same engine.
 
-## Status (2026-10-08, branch `v2`)
-- Engine v2 verified on CI renders (A9 ARW decode works; tone/colour/HSL/curves/B&W/crop/masks look right; subject mask works; sky mask is heuristic). Preview render ≈ 10–25 ms on the CI GPU.
-- New UI, mask UI, Photos-import fix (picker moved out of the Menu) are built and compile; see "Things to verify" for what still needs the real phone.
+## Status (2026-10-08, merged to `main`)
+- Engine v2 + UI revamp done and verified on CI (engine renders of an A9 ARW + JPEGs; iPhone-simulator screenshots of every panel). Preview render ~10-25 ms on the CI GPU; full-res 24 MP export ~1.4 s.
+- Photos import fix (picker moved out of the Menu; RAW fallback via `PickedFile`) cannot be exercised in CI - needs the phone.
+- Subject mask (Vision) works on macOS CI but the simulator is too slow to show it; sky mask is a classical heuristic (works on clear/overcast skies, not magic).
 
 ## Things to verify on the phone
-- Smoothness while dragging sliders; zoom/pan crispness; first-open time of a 24 MP ARW (preview source build ≈ 1–2 s).
-- Photos import (needs the permission prompt on first use); ProRAW DNG and ARW from Files.
-- Canvas orientation/colours on the real display (Metal texture flip is unit-tested on macOS only).
-- Sky mask quality on varied skies; subject mask first-run delay.
-- `CIRAWFilter` `extendedDynamicRangeAmount = 1.0` plus our highlight shoulder: check default look vs Apple Photos and highlight recovery.
+- Smoothness while dragging sliders; zoom/pan crispness; first-open time of a 24 MP ARW (preview source build ~1-2 s).
+- Photos import (permission prompt on first use); ProRAW DNG and ARW from Files.
+- Canvas orientation/colours on the real display (simulator is correct; macOS probe differs, iOS is not flipped).
+- `CIRAWFilter` `extendedDynamicRangeAmount = 1.0` plus our highlight shoulder: default look vs Apple Photos, highlight recovery.
 - Temperature/tint strength and direction; sharpen/clarity strength at 100% (no 100% zoom yet).
+- Colour-wheel feel, curve touch targets, mask handle sizes.
 
 ## Roadmap ideas
 Full-resolution 100% zoom tile, draggable crop corners, filmstrip/next-prev in editor, batch sync, before/after split, AI sky model via CoreML, lens-free vignette correction, histogram-based tone-curve backdrop, Metal tile export for 48 MP ProRAW.
