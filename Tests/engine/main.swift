@@ -190,6 +190,18 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
     }
     if let sh = sheet(ov) { saveJPEG(sh, "\(stem)-overlays.jpg") }
 
+    // Full-resolution export path (lazy graph, no materialised planes).
+    do {
+        let exportEdits = edit {
+            $0.exposure = 0.3; $0.contrast = 25; $0.highlights = -40; $0.shadows = 30; $0.clarity = 25; $0.sharpness = 40
+            $0.vignette = -20; $0.masks = [linear, radial]
+        }
+        let t = now()
+        if let data = session.renderData(exportEdits, format: .jpeg, quality: 0.9) {
+            print(" export full-res:", data.count / 1024, "KB in", Int((now() - t) * 1000), "ms")
+            try? data.write(to: outDir.appendingPathComponent("\(stem)-export.jpg"))
+        } else { print(" EXPORT FAILED") }
+    }
     print(" timing default:"); timeIt(EditSettings())
     print(" timing heavy:")
     timeIt(edit {
