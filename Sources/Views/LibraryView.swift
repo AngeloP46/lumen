@@ -1,0 +1,127 @@
+import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
+
+private enum LibraryFilter: String, CaseIterable, Identifiable {
+    case all = "All photos", picks = "Picks", rated = "Rated", rejects = "Rejected"
+    var id: String { rawValue }
+
+    func matches(_ i: LibraryItem) -> Bool {
+        switch self {
+        case .all: return i.flag != -1
+        case .picks: return i.flag == 1
+        case .rated: return i.rating > 0
+        case .rejects: return i.flag == -1
+        }
+    }
+}
+
+struct LibraryView: View {
+    @EnvironmentObject var store: LibraryStore
+    @State private var pickerItems: [PhotosPickerItem] = []
+    @State private var showFileImporter = false
+    @State private var filter: LibraryFilter = .all
+
+    private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
+
+    private var visible: [LibraryItem] { store.items.filter { filter.matches($0) } }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if store.items.isEmpty {
+                    ContentUnavailableView("No photos yet",
+                                           systemImage: "photo.on.rectangle.angled",
+                                           description: Text("Tap + to import RAW/ProRAW from Photos, or ARW files from Files / an SD card."))
+                } else if visible.isEmpty {
+                    ContentUnavailableView("Nothing here", systemImage: "line.3.horizontal.decrease.circle",
+                                           description: Text("No photos match “\(filter.rawValue)”."))
+                } else {
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 2) {
+                            ForEach(visible) { item in
+                                NavigationLink(value: item) { ThumbnailView(item: item) }
+                                    .contextMenu {
+                                        Button(role: .destructive) { store.delete(item) } label: {
+                                            Label("Remove from Lumen", systemImage: "trash")
+                                        }
+                                    }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle(filter == .all ? "Lumen" : filter.rawValue)
+            .navigationDestination(for: LibraryItem.self) { EditorView(item: $0) }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Picker("Filter", selection: $filter) {
+                            ForEach(LibraryFilter.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                    } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        PhotosPicker(selection: $pickerItems, matching: .images, photoLibrary: .shared()) {
+                            Label("From Photos", systemImage: "photo")
+                        }
+                        Button { showFileImporter = true } label: {
+                            Label("From Files / SD card", systemImage: "folder")
+                        }
+                    } label: { Image(systemName: "plus") }
+                }
+            }
+            .onChange(of: pickerItems) { _, new in
+                guard !new.isEmpty else { return }
+                Task {
+                    await store.importPicked(new)
+                    pickerItems = []
+                }
+            }
+            .fileImporter(isPresented: $showFileImporter,
+                          allowedContentTypes: [.rawImage, .image],
+                          allowsMultipleSelection: true) { result in
+                if case .success(let urls) = result { store.importFiles(urls) }
+            }
+            .alert("Import problem", isPresented: Binding(get: { store.lastError != nil },
+                                                         set: { if !$0 { store.lastError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(store.lastError ?? "") }
+        }
+    }
+}
+
+struct ThumbnailView: View {
+    @EnvironmentObject var store: LibraryStore
+    let item: LibraryItem
+
+    var body: some View {
+        let _ = store.thumbVersion // re-read the file whenever a thumbnail finishes
+        let current = store.item(item.id) ?? item
+        Color.black
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                if let img = UIImage(contentsOfFile: store.thumbURL(item).path) {
+                    Image(uiImage: img).resizable().scaledToFill()
+                } else {
+                    ProgressView()
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                HStack(spacing: 2) {
+                    if current.flag != 0 {
+                        Image(systemName: "flag.fill").foregroundStyle(current.flag == 1 ? .green : .red)
+                    }
+                    if current.rating > 0 {
+                        Text("\(current.rating)").foregroundStyle(.yellow)
+                        Image(systemName: "star.fill").foregroundStyle(.yellow)
+                    }
+                }
+                .font(.caption2)
+                .shadow(radius: 2)
+                .padding(4)
+            }
+            .clipped()
+    }
+}
