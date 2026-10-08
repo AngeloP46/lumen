@@ -329,6 +329,7 @@ final class EditorViewModel: ObservableObject {
         s.cropAspect = settings.cropAspect
         s.cropL = settings.cropL; s.cropT = settings.cropT
         s.cropR = settings.cropR; s.cropB = settings.cropB
+        s.hdr = settings.hdr; s.hdrStops = settings.hdrStops
         if s.temperature == 0 && s.tint == 0 {
             s.temperature = settings.temperature
             s.tint = settings.tint
