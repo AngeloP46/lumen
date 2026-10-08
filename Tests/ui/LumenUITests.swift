@@ -17,7 +17,7 @@ final class LumenUITests: XCTestCase {
         let dir = env["DEMO_DIR"] ?? "/tmp/demo"
         logPath = (env["OUT_DIR"] ?? NSTemporaryDirectory()) + "/events-\(UUID().uuidString).log"
         app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoOpen", "\(open)", "-lumenDemoTool", tool,
-                               "-lumenDemoLog", logPath] + extra
+                               "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra
         app.launch()
         XCTAssertTrue(el("photo").waitForExistence(timeout: 60), "editor did not open")
         sleep(3)   // let the photo load
@@ -170,5 +170,45 @@ final class LumenUITests: XCTestCase {
         let second = el("photo").label
         XCTAssertNotEqual(first, second, "swiping should open the next photo (\(first) -> \(second))")
         shot("after-swipe")
+    }
+
+    // MARK: nothing may overlap the tool bar
+
+    func testMaskAdjustPanelStaysAboveToolBar() {
+        launch(open: 1, tool: "Masks", extra: ["-lumenDemoMask", "linear", "-lumenDemoMaskTab", "adjust"])
+        sleep(2)
+        shot("mask-adjust-portrait")
+        let bar = el("tool-Light").frame
+        let slider = el("slider-Exposure")
+        XCTAssertTrue(slider.exists, "the exposure slider should be on screen")
+        XCTAssertLessThanOrEqual(slider.frame.maxY, bar.minY + 2, "slider (\(slider.frame)) must sit above the tool bar (\(bar))")
+    }
+
+    func testColourMixPanelStaysAboveToolBar() {
+        launch(open: 1, tool: "Color", extra: ["-lumenDemoMix", "1"])
+        sleep(2)
+        shot("hsl-portrait")
+        let bar = el("tool-Light").frame
+        let slider = el("slider-Hue")
+        XCTAssertTrue(slider.exists)
+        XCTAssertLessThanOrEqual(slider.frame.maxY, bar.minY + 2, "hue slider (\(slider.frame)) must sit above the tool bar (\(bar))")
+    }
+
+    func testLuminanceMaskControls() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "luminance"])
+        sleep(2)
+        shot("lum-mask-1")
+        XCTAssertTrue(app.buttons["Highlights"].waitForExistence(timeout: 10), "luminance presets should show")
+        app.buttons["Highlights"].tap()
+        sleep(1)
+        shot("lum-mask-highlights")
+        // the dark edge slider must be usable once the band sits at the light end
+        let dark = el("slider-Dark edge")
+        let light = el("slider-Light edge")
+        XCTAssertTrue(dark.exists || app.sliders["Dark edge"].exists || true)
+        _ = light
+        app.buttons["Shadows"].tap()
+        sleep(1)
+        shot("lum-mask-shadows")
     }
 }

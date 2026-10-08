@@ -65,13 +65,15 @@ struct LibraryView: View {
             }
             .navigationTitle(filter == .all ? "Lumen" : filter.rawValue)
             .navigationDestination(for: LibraryItem.self) { EditorView(item: $0).id($0.id) }
-            .environment(\.openItem, { item in path = [item] })
             .task {
                 guard let dir = DemoMode.value("-lumenDemoDir") else { return }
                 if store.items.isEmpty {
                     let urls = (try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil)) ?? []
                     store.importFiles(urls.sorted { $0.lastPathComponent < $1.lastPathComponent })
                     try? await Task.sleep(nanoseconds: 4_000_000_000)
+                }
+                if DemoMode.value("-lumenDemoFresh") != nil {
+                    for it in store.items { store.save(EditSettings(), for: it) }
                 }
                 if let n = DemoMode.value("-lumenDemoOpen"), let i = Int(n), store.items.indices.contains(i) {
                     path = [store.items[i]]
@@ -126,6 +128,8 @@ struct LibraryView: View {
                 Button("OK", role: .cancel) {}
             } message: { Text(store.lastError ?? "") }
         }
+        // on the stack itself (not its root view) so the editors it pushes can reach it
+        .environment(\.openItem, { item in path = [item] })
     }
 }
 
