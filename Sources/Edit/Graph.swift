@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 /// Builds the lazy Core Image graph for a set of edits. Nothing is rendered here, so this is cheap to call per slider tick.
 extension EditSession {
-    func develop(_ s: EditSettings, source: ImageSource, geometry: Bool, applyCrop: Bool = true) -> CIImage {
+    func develop(_ s: EditSettings, source: ImageSource, geometry: Bool, applyCrop: Bool = true, hdrWeight: Double = 0) -> CIImage {
         guard let k = LumenKernels.shared else { return source.base }
         let ext = source.extent
         let E = source.longEdge
@@ -28,7 +28,17 @@ extension EditSession {
         args += [g0, g1, g2, g3, g4, g6]
         var img = kernel.apply(extent: ext, arguments: args) ?? source.base
 
-        if geometry { img = self.geometry(img, s, applyCrop: applyCrop) }
+        // HDR: the same develop maths, but only the highlight gain (>= 1) is kept; applied again after the look LUT.
+        var gainImg: CIImage?
+        if s.hdr, hdrWeight > 0, let gk = (kernel === k.mainLocal ? k.gainLocal : k.gain), k.applyGain != nil {
+            let gh = v(exp2(s.hdrStops), 0, 0, 0)
+            gainImg = gk.apply(extent: ext, arguments: args + [gh])
+        }
+
+        if geometry {
+            img = self.geometry(img, s, applyCrop: applyCrop)
+            if let gi = gainImg { gainImg = self.geometry(gi, s, applyCrop: applyCrop) }
+        }
 
         // Vignette, grain and the output curve.
         let fe = img.extent
@@ -47,6 +57,9 @@ extension EditSession {
             if let out = f.outputImage {
                 img = k.toLinear.apply(extent: fe, arguments: [out]) ?? out
             }
+        }
+        if let gi = gainImg, let ag = k.applyGain {
+            img = ag.apply(extent: img.extent, arguments: [img, gi, v(min(max(hdrWeight, 0), 1), 0, 0, 0)]) ?? img
         }
         return img
     }
