@@ -44,15 +44,16 @@ jobs:
           mkdir -p shots
           shot() { # name, args...
             name=$1; shift
+            WAIT=${WAIT:-14}
             xcrun simctl terminate $UDID com.example.lumen 2>/dev/null || true
             xcrun simctl launch $UDID com.example.lumen -lumenDemoDir "$DEMO" "$@"
-            sleep 14
+            sleep $WAIT
             xcrun simctl io $UDID screenshot shots/$name.png
           }
           shot 00-library
           shot 01-light -lumenDemoOpen 1 -lumenDemoTool Light -lumenDemoEdit 1
-          shot 02-masks-subject -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject
-          shot 03-masks-adjust -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject -lumenDemoMaskTab adjust
+          WAIT=50 shot 02-masks-subject -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject
+          WAIT=50 shot 03-masks-adjust -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject -lumenDemoMaskTab adjust
           shot 04-masks-luminance -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask luminance
           shot 05-masks-sky -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask sky
           shot 06-masks-linear -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask linear

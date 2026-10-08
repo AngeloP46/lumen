@@ -68,10 +68,8 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
                 placed = placed.transformed(by: CGAffineTransform(scaleX: k, y: k))
             }
             let h = placed.extent.height
-            // Core Image draws bottom-up into a Metal texture, so flip, then position by the top-left corner.
-            placed = placed
-                .transformed(by: CGAffineTransform(scaleX: 1, y: -1))
-                .transformed(by: CGAffineTransform(translationX: r.minX * sf, y: r.minY * sf + h))
+            // Core Image's origin is bottom-left; position by the photo's top-left corner in view space.
+            placed = placed.transformed(by: CGAffineTransform(translationX: r.minX * sf, y: size.height - (r.minY * sf + h)))
             out = placed.composited(over: out)
         }
         LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: LumenGPU.displaySpace)

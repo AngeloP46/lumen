@@ -234,7 +234,7 @@ final class EditSession: @unchecked Sendable {
 
         func upscaled(_ img: CIImage) -> CIImage {
             var m = img
-            if materialize, let mm = Self.materialized(img) { m = mm }
+            if let mm = Self.materialized(img) { m = mm }   // always: these are small, and it stops the RAW decoding twice
             if f >= 1 { return m }
             return m.clampedToExtent()
                 .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
