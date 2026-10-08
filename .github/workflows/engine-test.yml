@@ -24,7 +24,7 @@ jobs:
           mkdir -p out
           xcrun -sdk macosx metal -fcikernel -c Sources/Edit/Kernels.metal -o out/k.air
           xcrun -sdk macosx metallib -cikernel out/k.air -o out/k.metallib
-          swiftc -O -o out/engine-test \
+          swiftc -Onone -g -o out/engine-test \
             Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift \
             Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift \
             Tests/engine/main.swift

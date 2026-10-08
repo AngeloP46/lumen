@@ -5,6 +5,7 @@ import ImageIO
 import UniformTypeIdentifiers
 
 // Headless render test: `engine-test <metallib> <inputDir> <outDir>`
+setvbuf(stdout, nil, _IONBF, 0)
 let args = CommandLine.arguments
 LumenGPU.libraryURL = URL(fileURLWithPath: args[1])
 let inDir = URL(fileURLWithPath: args[2])
