@@ -207,10 +207,13 @@ struct EditSettings: Codable, Equatable {
     // Geometry
     var straighten: Double = 0     // degrees, positive = clockwise
     var quarterTurns: Int = 0
-    var cropAspect: Double = 0     // 0 = keep original ratio, otherwise width/height
-    var cropZoom: Double = 1
-    var cropX: Double = 0          // -1...1 pan of the crop window
-    var cropY: Double = 0
+    var cropAspect: Double = 0     // locked ratio (width / height); 0 = free
+    var cropL: Double = 0          // crop frame as fractions of the straightened picture, top-left origin
+    var cropT: Double = 0
+    var cropR: Double = 1
+    var cropB: Double = 1
+
+    var hasCrop: Bool { cropL > 0 || cropT > 0 || cropR < 1 || cropB < 1 }
 
     var isDefault: Bool { self == EditSettings() }
 }

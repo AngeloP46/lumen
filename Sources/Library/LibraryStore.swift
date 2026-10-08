@@ -109,9 +109,7 @@ final class LibraryStore: ObservableObject {
         s.straighten = 0
         s.quarterTurns = 0
         s.cropAspect = 0
-        s.cropZoom = 1
-        s.cropX = 0
-        s.cropY = 0
+        s.cropL = 0; s.cropT = 0; s.cropR = 1; s.cropB = 1
         userPresets.append(UserPreset(name: name, settings: s))
         savePresets()
     }

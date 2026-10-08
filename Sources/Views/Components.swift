@@ -8,6 +8,17 @@ enum Theme {
     static let separator = Color.white.opacity(0.07)
 }
 
+// MARK: - Navigation between photos
+
+private struct OpenItemKey: EnvironmentKey { static let defaultValue: (LibraryItem) -> Void = { _ in } }
+extension EnvironmentValues {
+    /// Set by the library: replaces the open photo (used by swipe / next / previous in the editor).
+    var openItem: (LibraryItem) -> Void {
+        get { self[OpenItemKey.self] }
+        set { self[OpenItemKey.self] = newValue }
+    }
+}
+
 // MARK: - Slider layout (decided by the editor from the free space under the photo)
 
 enum SliderLayout { case strip, list }

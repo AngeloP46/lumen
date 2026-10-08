@@ -167,46 +167,6 @@ struct DetailPanel: View {
     }
 }
 
-// MARK: - Crop
-
-struct CropPanel: View {
-    @ObservedObject var vm: EditorViewModel
-    @State private var sel = "Angle"
-    private let aspects: [(String, Double)] = [
-        ("Original", 0), ("1:1", 1), ("4:5", 0.8), ("5:4", 1.25),
-        ("3:2", 1.5), ("2:3", 2.0 / 3), ("16:9", 16.0 / 9), ("9:16", 9.0 / 16),
-    ]
-
-    var body: some View {
-        VStack(spacing: 4) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    IconButton(system: "rotate.left") { vm.settings.quarterTurns -= 1 }
-                    IconButton(system: "rotate.right") { vm.settings.quarterTurns += 1 }
-                    ForEach(aspects, id: \.0) { name, ratio in
-                        Chip(title: name, selected: abs(vm.settings.cropAspect - ratio) < 0.001) {
-                            vm.settings.cropAspect = ratio
-                            vm.settings.cropX = 0
-                            vm.settings.cropY = 0
-                        }
-                    }
-                    IconButton(system: "arrow.counterclockwise") {
-                        vm.settings.cropAspect = 0; vm.settings.cropZoom = 1
-                        vm.settings.cropX = 0; vm.settings.cropY = 0
-                        vm.settings.straighten = 0; vm.settings.quarterTurns = 0
-                    }
-                }
-                .padding(.horizontal, 12)
-            }
-            ParamPanel(items: [
-                vm.param("Angle", \.straighten, range: -45...45, decimals: 1),
-                vm.param("Zoom", \.cropZoom, range: 1...3, decimals: 2),
-            ], selected: $sel, header: nil)
-            Text("Drag the photo to reposition the crop.").font(.caption2).foregroundStyle(.secondary)
-        }
-    }
-}
-
 // MARK: - Presets
 
 struct PresetsPanel: View {

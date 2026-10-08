@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 /// Builds the lazy Core Image graph for a set of edits. Nothing is rendered here, so this is cheap to call per slider tick.
 extension EditSession {
-    func develop(_ s: EditSettings, source: ImageSource, geometry: Bool) -> CIImage {
+    func develop(_ s: EditSettings, source: ImageSource, geometry: Bool, applyCrop: Bool = true) -> CIImage {
         guard let k = LumenKernels.shared else { return source.base }
         let ext = source.extent
         let E = source.longEdge
@@ -28,7 +28,7 @@ extension EditSession {
         args += [g0, g1, g2, g3, g4, g6]
         var img = kernel.apply(extent: ext, arguments: args) ?? source.base
 
-        if geometry { img = self.geometry(img, s) }
+        if geometry { img = self.geometry(img, s, applyCrop: applyCrop) }
 
         // Vignette, grain and the output curve.
         let fe = img.extent
@@ -53,8 +53,9 @@ extension EditSession {
 
     // MARK: Geometry
 
-    /// 90° turns, straighten, then crop (aspect ratio / zoom / pan) inside the largest inscribed rectangle.
-    func geometry(_ input: CIImage, _ s: EditSettings) -> CIImage {
+    /// 90° turns, straighten, then crop to the frame (fractions of the largest rectangle that fits inside the rotated picture).
+    /// `applyCrop: false` keeps the whole straightened picture, which is what the crop editor shows.
+    func geometry(_ input: CIImage, _ s: EditSettings, applyCrop: Bool = true) -> CIImage {
         var img = input
         let turns = ((s.quarterTurns % 4) + 4) % 4
         if turns != 0 {
@@ -64,24 +65,16 @@ extension EditSession {
         let w = img.extent.width, h = img.extent.height
         let theta = CGFloat(abs(s.straighten)) * .pi / 180
         let kfit = 1 / (cos(theta) + sin(theta) * max(w / h, h / w))
-        if s.straighten != 0 {
-            img = Self.rotateAboutCenter(img, by: -CGFloat(s.straighten) * .pi / 180) // original centre is now the origin
-        } else {
-            img = img.transformed(by: CGAffineTransform(translationX: -w / 2, y: -h / 2))
-        }
+        img = Self.rotateAboutCenter(img, by: -CGFloat(s.straighten) * .pi / 180) // original centre is now the origin
 
         let w0 = w * kfit, h0 = h * kfit
-        var cw = w0, ch = h0
-        if s.cropAspect > 0 {
-            let a = CGFloat(s.cropAspect)
-            if a > w0 / h0 { cw = w0; ch = w0 / a } else { ch = h0; cw = h0 * a }
+        var l = 0.0, t = 0.0, r = 1.0, b = 1.0
+        if applyCrop {
+            l = min(max(s.cropL, 0), 0.95); t = min(max(s.cropT, 0), 0.95)
+            r = min(max(s.cropR, l + 0.04), 1); b = min(max(s.cropB, t + 0.04), 1)
         }
-        let z = CGFloat(max(1, s.cropZoom))
-        cw /= z
-        ch /= z
-        let cx = CGFloat(s.cropX) * (w0 - cw) / 2
-        let cy = CGFloat(s.cropY) * (h0 - ch) / 2
-        let rect = CGRect(x: cx - cw / 2, y: cy - ch / 2, width: cw, height: ch).integral
+        let rect = CGRect(x: -w0 / 2 + CGFloat(l) * w0, y: -h0 / 2 + CGFloat(1 - b) * h0,
+                          width: CGFloat(r - l) * w0, height: CGFloat(b - t) * h0).integral
         return Self.normalized(img.cropped(to: rect))
     }
 

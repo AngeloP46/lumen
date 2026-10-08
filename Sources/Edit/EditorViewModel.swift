@@ -46,6 +46,16 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var autoMaskBusy = false
     @Published private(set) var autoMaskMissing: Set<String> = []
 
+    // Crop editing: the whole straightened picture is shown with a frame on top
+    @Published var cropEditing = false { didSet { requestRender() } }
+
+    // Full-resolution source used while zoomed in (100% view)
+    @Published private(set) var detailLoading = false
+    private var detailSource: ImageSource?
+    private var detailBuilding = false
+    private var zoomLevel: CGFloat = 1
+    private var releaseTask: Task<Void, Never>?
+
     private var session: EditSession?
     private var source: ImageSource?
     private weak var store: LibraryStore?
@@ -135,14 +145,109 @@ final class EditorViewModel: ObservableObject {
         guard let session, let source else { return }
         let s = showOriginal ? EditSettings() : settings
         let skipGeometry = maskEditing && !showOriginal
-        var img = session.develop(s, source: source, geometry: !skipGeometry)
-        let base = img
+        let applyCrop = !(cropEditing && !showOriginal)
+        let useDetail = zoomLevel > 1.4 && detailSource != nil
+        let active = (useDetail ? detailSource : nil) ?? source
+        var img = session.develop(s, source: active, geometry: !skipGeometry, applyCrop: applyCrop)
+        // the histogram always reads the small preview, even while the 100% view is showing
+        let base = useDetail ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop) : img
         if overlayVisible, let m = selectedMask {
-            img = session.overlay(img, mask: m, source: source, gain: exp2(s.exposure))
+            img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure))
         }
-        if img.extent.size != imageSize { imageSize = img.extent.size }
+        if !useDetail, img.extent.size != imageSize { imageSize = img.extent.size }
         canvas.update(img)
         scheduleHistogram(base)
+    }
+
+    // MARK: 100% view
+
+    func zoomChanged(_ z: CGFloat) {
+        let wasDetail = zoomLevel > 1.4
+        zoomLevel = z
+        if z > 1.4 {
+            releaseTask?.cancel()
+            releaseTask = nil
+            if detailSource == nil { buildDetail() } else if !wasDetail { requestRender() }
+        } else {
+            if wasDetail { requestRender() }
+            if z <= 1.05, detailSource != nil, releaseTask == nil {
+                releaseTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 6_000_000_000)
+                    guard let self, !Task.isCancelled else { return }
+                    if self.zoomLevel <= 1.05 { self.detailSource = nil }
+                    self.releaseTask = nil
+                }
+            }
+        }
+    }
+
+    private func buildDetail() {
+        guard let session, let source, !detailBuilding else { return }
+        let native = max(session.nativeSize.width, session.nativeSize.height)
+        guard native > source.longEdge * 1.15 else { return }
+        detailBuilding = true
+        detailLoading = true
+        let edge = min(native, 6000)
+        workQueue.async {
+            let src = session.makeSource(maxEdge: edge, materialize: true)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.detailBuilding = false
+                self.detailLoading = false
+                self.detailSource = src
+                self.syncDetailMasks()
+                self.requestRender()
+            }
+        }
+    }
+
+    /// Automatic masks are found once on the preview and shared with the full-resolution source.
+    private func syncDetailMasks() {
+        guard let source, let detail = detailSource else { return }
+        let (masks, tried) = source.snapshotMasks()
+        let sx = detail.size.width / source.size.width, sy = detail.size.height / source.size.height
+        for key in tried { detail.storeMask(key, masks[key]?.transformed(by: CGAffineTransform(scaleX: sx, y: sy))) }
+    }
+
+    // MARK: Crop frame
+
+    /// Aspect ratio of the picture currently shown (the whole straightened picture while cropping).
+    private var shownAspect: Double { imageSize.height > 0 ? Double(imageSize.width / imageSize.height) : 1.5 }
+
+    /// Aspect of the original file after any 90° turns.
+    var originalAspect: Double {
+        guard let source else { return 1.5 }
+        let a = Double(source.size.width / source.size.height)
+        return abs(settings.quarterTurns) % 2 == 1 ? 1 / a : a
+    }
+
+    func setCropFrame(_ l: Double, _ t: Double, _ r: Double, _ b: Double) {
+        settings.cropL = l; settings.cropT = t; settings.cropR = r; settings.cropB = b
+    }
+
+    func resetCropFrame() {
+        settings.cropAspect = 0
+        setCropFrame(0, 0, 1, 1)
+    }
+
+    /// Locks the frame to `ratio` (0 = free) and fits the largest centred frame of that shape.
+    func setCropAspect(_ ratio: Double) {
+        var s = settings
+        s.cropAspect = ratio
+        if ratio > 0 {
+            let a0 = shownAspect
+            let fw: Double, fh: Double
+            if ratio >= a0 { fw = 1; fh = a0 / ratio } else { fh = 1; fw = ratio / a0 }
+            s.cropL = (1 - fw) / 2; s.cropR = (1 + fw) / 2
+            s.cropT = (1 - fh) / 2; s.cropB = (1 + fh) / 2
+        }
+        settings = s
+    }
+
+    /// Swaps landscape/portrait for the locked ratio.
+    func flipCropOrientation() {
+        guard settings.cropAspect > 0, abs(settings.cropAspect - 1) > 0.001 else { return }
+        setCropAspect(1 / settings.cropAspect)
     }
 
     private func scheduleHistogram(_ img: CIImage) {
@@ -177,6 +282,7 @@ final class EditorViewModel: ObservableObject {
                 guard let self else { return }
                 self.autoMaskBusy = false
                 self.autoMaskMissing = missing
+                self.syncDetailMasks()
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()   // masks may have changed while we were busy
             }
@@ -218,9 +324,8 @@ final class EditorViewModel: ObservableObject {
         s.straighten = settings.straighten
         s.quarterTurns = settings.quarterTurns
         s.cropAspect = settings.cropAspect
-        s.cropZoom = settings.cropZoom
-        s.cropX = settings.cropX
-        s.cropY = settings.cropY
+        s.cropL = settings.cropL; s.cropT = settings.cropT
+        s.cropR = settings.cropR; s.cropB = settings.cropB
         if s.temperature == 0 && s.tint == 0 {
             s.temperature = settings.temperature
             s.tint = settings.tint

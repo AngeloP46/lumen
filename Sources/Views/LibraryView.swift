@@ -64,7 +64,8 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle(filter == .all ? "Lumen" : filter.rawValue)
-            .navigationDestination(for: LibraryItem.self) { EditorView(item: $0) }
+            .navigationDestination(for: LibraryItem.self) { EditorView(item: $0).id($0.id) }
+            .environment(\.openItem, { item in path = [item] })
             .task {
                 guard let dir = DemoMode.value("-lumenDemoDir") else { return }
                 if store.items.isEmpty {

@@ -28,6 +28,7 @@ private struct PanelPlan {
 struct EditorView: View {
     @EnvironmentObject var store: LibraryStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openItem) private var openItem
     @StateObject private var vm: EditorViewModel
     @AppStorage("showHistogram") private var showHistogram = true
     @AppStorage("sliderStyle") private var sliderStyle = "auto"   // auto | strip | list
@@ -39,7 +40,6 @@ struct EditorView: View {
     @State private var lastZoom: CGFloat = 1
     @State private var pan: CGSize = .zero
     @State private var lastPan: CGSize = .zero
-    @State private var cropStart: (Double, Double)?
 
     private let item: LibraryItem
     private let toolbarHeight: CGFloat = 52
@@ -75,10 +75,12 @@ struct EditorView: View {
         .onDisappear { vm.flushSave(); store.refreshThumbnail(item) }
         .onChange(of: tool) { _, new in
             vm.maskEditing = (new == .masks)
+            vm.cropEditing = (new == .crop)
             if new == .masks, vm.selectedMaskID == nil, let first = vm.settings.masks.first { vm.selectMask(first.id) }
             if new == .presets { vm.loadPresetThumbs(user: store.userPresets) }
             if new == .masks || new == .crop { resetZoom() }
         }
+        .onChange(of: zoom) { _, z in vm.zoomChanged(z) }
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },
                                              set: { if !$0 { vm.message = nil } })) {
@@ -117,7 +119,7 @@ struct EditorView: View {
 
         switch tool {
         case .presets: return fixed(112, 112)
-        case .crop: return fixed(158, 190)
+        case .crop: return fixed(168, 184)
         case .grade: return fixed(250, 262)
         case .curve: return fixed(216, 236)
         case .light: return list(6, 44)
@@ -179,10 +181,16 @@ struct EditorView: View {
                     .allowsHitTesting(false)
                 if vm.imageSize != .zero {
                     gestureLayer(xform)
-                    if tool == .crop { cropGrid(xform.rect) }
+                    if tool == .crop { CropOverlay(vm: vm, xform: xform) }
                     if tool == .masks { MaskOverlay(vm: vm, xform: xform) }
                 }
                 if vm.isLoading || vm.isExporting { ProgressView().tint(.white) }
+                if vm.detailLoading && zoom > 1.4 {
+                    HStack(spacing: 6) { ProgressView().controlSize(.small).tint(.white); Text("Loading full resolution…").font(.caption) }
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .frame(maxHeight: .infinity, alignment: .top).padding(.top, 56)
+                }
                 if vm.loadFailed { Text("This file couldn't be opened.").foregroundStyle(.secondary) }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -201,18 +209,6 @@ struct EditorView: View {
                 }
             }
         }
-    }
-
-    private func cropGrid(_ r: CGRect) -> some View {
-        Path { p in
-            for i in 1..<3 {
-                let x = r.minX + r.width * CGFloat(i) / 3, y = r.minY + r.height * CGFloat(i) / 3
-                p.move(to: CGPoint(x: x, y: r.minY)); p.addLine(to: CGPoint(x: x, y: r.maxY))
-                p.move(to: CGPoint(x: r.minX, y: y)); p.addLine(to: CGPoint(x: r.maxX, y: y))
-            }
-        }
-        .stroke(Color.white.opacity(0.35), lineWidth: 0.7)
-        .allowsHitTesting(false)
     }
 
     // MARK: Floating top buttons
@@ -237,6 +233,8 @@ struct EditorView: View {
                     Text("One at a time").tag("strip")
                     Text("Full list").tag("list")
                 }
+                Button { go(-1) } label: { Label("Previous photo", systemImage: "chevron.left") }.disabled(neighbour(-1) == nil)
+                Button { go(1) } label: { Label("Next photo", systemImage: "chevron.right") }.disabled(neighbour(1) == nil)
                 Menu("Rating") {
                     let current = store.item(item.id) ?? item
                     ForEach(0...5, id: \.self) { n in
@@ -282,12 +280,30 @@ struct EditorView: View {
             .onTapGesture { if canNavigate { withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() } } }
             .gesture(zoomGesture)
             .gesture(panGesture, including: (canNavigate && zoom > 1) ? .all : .none)
-            .gesture(cropDrag(size: xform.rect.size), including: tool == .crop ? .all : .none)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 50).onEnded { v in
+                    guard canNavigate, zoom <= 1.05, abs(v.translation.width) > 110, abs(v.translation.height) < 70 else { return }
+                    go(v.translation.width < 0 ? 1 : -1)
+                })
             .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.35, maximumDistance: 30)
                     .onChanged { _ in if canNavigate { vm.showOriginal = true } }
                     .onEnded { _ in vm.showOriginal = false },
                 including: canNavigate ? .all : .none)
+    }
+
+    /// The photo before/after this one in the library (rejected photos are skipped).
+    private func neighbour(_ delta: Int) -> LibraryItem? {
+        let items = store.items.filter { $0.flag != -1 || $0.id == item.id }
+        guard let i = items.firstIndex(where: { $0.id == item.id }), items.indices.contains(i + delta) else { return nil }
+        return items[i + delta]
+    }
+
+    private func go(_ delta: Int) {
+        guard let n = neighbour(delta) else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        vm.flushSave()
+        openItem(n)
     }
 
     private func resetZoom() {
@@ -307,18 +323,6 @@ struct EditorView: View {
         DragGesture()
             .onChanged { v in pan = CGSize(width: lastPan.width + v.translation.width, height: lastPan.height + v.translation.height) }
             .onEnded { _ in lastPan = pan }
-    }
-
-    private func cropDrag(size: CGSize) -> some Gesture {
-        DragGesture()
-            .onChanged { v in
-                if cropStart == nil { cropStart = (vm.settings.cropX, vm.settings.cropY) }
-                guard let start = cropStart, size.width > 0, size.height > 0 else { return }
-                let k = 2 * max(1, vm.settings.cropZoom)
-                vm.settings.cropX = min(max(start.0 - Double(v.translation.width / size.width) * k, -1), 1)
-                vm.settings.cropY = min(max(start.1 + Double(v.translation.height / size.height) * k, -1), 1)
-            }
-            .onEnded { _ in cropStart = nil }
     }
 
     // MARK: Tools

@@ -91,6 +91,10 @@ final class ImageSource: @unchecked Sendable {
         tried.insert(key)
         if let img { masks[key] = img }
     }
+    func snapshotMasks() -> (masks: [String: CIImage], tried: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        return (masks, tried)
+    }
     func hasTried(_ key: String) -> Bool { lock.lock(); defer { lock.unlock() }; return tried.contains(key) }
 
     func cachedRaster(_ c: MaskComponent) -> CIImage? { lock.lock(); defer { lock.unlock() }; return raster[c] }
