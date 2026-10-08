@@ -49,6 +49,8 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - `Views/CanvasView.swift`: `MTKView` that draws the CIImage directly (no CPU read-back) with pinch/pan transform (`ViewXform`), flipped for Metal textures.
 - `Views/EditorView.swift`: full-height photo, round floating buttons on top (back/undo/redo/hold-to-compare/menu), 8 fixed tools in a bottom bar (Presets, Crop, Light, Color, Grade, Curve, Detail, Masks). `panelPlan` gives the panel whatever height the photo does not need: with room for >= 4 whole rows it shows **every slider as a list** (`ParamPanel` list layout), otherwise **one slider at a time** (strip). More menu has Sliders: Automatic / One at a time / Full list. Tap the photo to hide all chrome; swipe the panel's grabber down to close the panel; press-and-hold the photo to see the original.
 - `Views/Panels.swift` + `Components.swift`: panels built from `ParamItem`s (`ParamPanel`, `ScrubSlider` = relative drag, drag away from the track for finer steps, double-tap reset, value bubble). Grade = three `ColorWheel`s (hue/sat puck) + luminance sliders + Blend/Balance. Color has B&W, Reset and a colour-mix mode (`HSLPanel`: 8 swatches + Hue/Sat/Lum). `CurvePanel` shows the live histogram behind the curve and has curve presets.
+- `Views/CropViews.swift`: Lightroom-style crop. The crop frame is stored as fractions (`cropL/T/R/B`) of the straightened picture; while the Crop tool is open the whole straightened picture is shown with a draggable frame (corners/edges, drag inside to move, aspect lock via `cropAspect`, 0 = free). Angle slider = straighten.
+- 100% view: pinching past ~1.4x makes `EditorViewModel` build a second, full-resolution `ImageSource` (max 6000 px long edge, shared AI masks) and render from it; it is released a few seconds after zooming back out. Swipe left/right on the photo (or More menu) moves to the next/previous photo.
 - `Views/MaskViews.swift`: mask panel (type grid, Shape/Adjust tabs, components with add/subtract/intersect, luminance range bar with histogram, colour samples), on-photo handles. Red overlay shows only on the Shape tab (eye button toggles; the Adjust tab hides it, eye peeks).
 - `Library/LibraryStore.swift`: imports from Photos (fetches RAW original resource, falls back to `PickedFile` transferable) or Files; thumbnails via the same engine.
 
@@ -66,4 +68,4 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - Colour-wheel feel, curve touch targets, mask handle sizes.
 
 ## Roadmap ideas
-Full-resolution 100% zoom tile, draggable crop corners, filmstrip/next-prev in editor, batch sync, before/after split, AI sky model via CoreML, lens-free vignette correction, histogram-based tone-curve backdrop, Metal tile export for 48 MP ProRAW.
+Batch sync/copy-paste to many photos, before/after split, AI sky model via CoreML, lens-free vignette correction, histogram-based tone-curve backdrop, Metal tile export for 48 MP ProRAW.
