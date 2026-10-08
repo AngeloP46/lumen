@@ -400,6 +400,8 @@ final class EditorViewModel: ObservableObject {
         guard let id = selectedMaskID else { return }
         updateMask(id) { m in
             if m.components.count > 1 { m.components.removeAll { $0.id == cid } }
+            // the first component is the base: its op is ignored when rendering and locked in the panel
+            if !m.components.isEmpty { m.components[0].op = .add }
         }
         selectedComponentID = selectedMask?.components.first?.id
     }
