@@ -277,6 +277,11 @@ struct EditorView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
+            // the view or the photo's shape can change while zoomed (panel opened, Masks tool left): keep the pan in bounds
+            .onChange(of: xform) { _, xf in
+                let p = clampPan(pan, zoom: zoom, xf)
+                if p != pan { pan = p }
+            }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("canvas")
             // pinch works over every tool (including the mask and crop overlays), anchored on your fingers
