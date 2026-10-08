@@ -77,9 +77,10 @@ float4 lumenPack3(sample_t a, sample_t b, sample_t c) {
 
 // ------------------------------------------------------------------ the main develop kernel
 
-inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
-                        float4 pa, float4 pb, float4 pc, float4 pd, float4 pe,
-                        float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
+// Tone part: everything up to and including the log-luminance tone delta (scene linear, may exceed 1).
+inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
+                            float4 pa, float4 pb, float4 pc, float4 pd, float4 pe,
+                            float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
     float3 c = max(base, 0.0);
 
     // ---- accumulated parameters (global + local)
@@ -91,7 +92,6 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
     float bk = g1.y + pb.z;
     float temp = g1.z + pc.x;
     float tint = g1.w + pc.y;
-    float sat = g2.y + pc.z;
     float clar = g2.w + pd.x;
     float tex = g2.z + pd.y;
     float dz = g3.x + pd.z;
@@ -174,7 +174,11 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
     }
     delta = clamp(delta, -4.0, 4.0);
     c *= exp2(delta);
+    return c;
+}
 
+// Colour part: highlight shoulder, >1 desaturation, vibrance / saturation, final clamp.
+inline float3 lmDevelopColor(float3 c, float vib, float sat) {
     // ---- highlight shoulder: identity below 0.85, rolls off towards 1; keeps hue by scaling
     float y = lmLum(c);
     if (y > 0.85) {
@@ -191,7 +195,6 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
     }
 
     // ---- vibrance / saturation in OkLab
-    float vib = g2.x;
     if (vib != 0.0 || sat != 0.0) {
         float3 lab = lmToLab(c);
         float C = length(lab.yz);
@@ -211,6 +214,14 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
         c = lmFromLab(lab);
     }
     return clamp(c, 0.0, 1.0);
+}
+
+inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
+                        float4 pa, float4 pb, float4 pc, float4 pd, float4 pe,
+                        float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
+    float sat = g2.y + pc.z;
+    return lmDevelopColor(lmDevelopTone(base, L1, L2, chroma, pa, pb, pc, pd, pe, g0, g1, g2, g3, g4, g6),
+                          g2.x, sat);
 }
 
 float4 lumenMain(sample_t img, sample_t l1, sample_t l2, sample_t ch,
