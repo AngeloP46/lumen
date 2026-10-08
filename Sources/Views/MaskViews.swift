@@ -136,7 +136,13 @@ struct MaskPanel: View {
                 if vm.maskTab == .shape {
                     ScrollView { shapeControls(m).padding(.horizontal, 14).padding(.bottom, 8) }
                 } else {
-                    ParamPanel(items: localItems(m), selected: $sel, header: nil)
+                    ParamPanel(items: localItems(m), selected: $sel, header: AnyView(
+                        HStack {
+                            PillButton(title: "Reset adjustments", system: "arrow.counterclockwise") {
+                                vm.updateMask(m.id) { $0.adjust = LocalAdjust() }
+                            }
+                            Spacer()
+                        }))
                 }
             } else {
                 header(nil)
@@ -187,6 +193,7 @@ struct MaskPanel: View {
                 .padding(.leading, 12)
             }
             if let m {
+                IconButton(system: "hand.draw", active: vm.panMode) { vm.panMode.toggle() }
                 IconButton(system: eyeOn ? "eye" : "eye.slash", active: eyeOn) {
                     if vm.maskTab == .shape { vm.overlayEnabled.toggle() } else { vm.peekOverlay.toggle() }
                 }

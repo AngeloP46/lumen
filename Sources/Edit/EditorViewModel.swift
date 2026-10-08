@@ -43,6 +43,8 @@ final class EditorViewModel: ObservableObject {
     @Published var brushSize = 0.06
     @Published var brushErase = false
     @Published var colorAddMode = false
+    @Published var panMode = false          // single finger pans the zoomed photo instead of painting / dragging handles
+    private var strokeStart: Date?
     @Published private(set) var autoMaskBusy = false
     @Published private(set) var autoMaskMissing: Set<String> = []
 
@@ -421,7 +423,16 @@ final class EditorViewModel: ObservableObject {
     func beginStroke(_ p: Pt) {
         guard let c = selectedComponent, c.kind == .brush else { return }
         let stroke = BrushStroke(points: [p], size: brushSize, erase: brushErase)
+        strokeStart = Date()
         updateComponent(c.id) { $0.strokes.append(stroke) }
+    }
+
+    /// A pinch starts with one finger down, which paints a stray dab: take it back.
+    func cancelRecentStroke() {
+        guard let c = selectedComponent, c.kind == .brush, let t = strokeStart, Date().timeIntervalSince(t) < 0.8,
+              let last = c.strokes.last, last.points.count <= 4 else { return }
+        strokeStart = nil
+        updateComponent(c.id) { _ = $0.strokes.popLast() }
     }
 
     func extendStroke(_ p: Pt) {

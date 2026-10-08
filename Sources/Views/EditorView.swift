@@ -18,11 +18,22 @@ private enum Tool: String, CaseIterable, Identifiable {
     }
 }
 
-/// How tall the panel is and whether it shows every slider (list) or one at a time (strip).
+/// What a tool needs: heights for the compact and roomy forms, and for slider tools the row count and header height.
+private struct ToolSpec {
+    var compact: CGFloat
+    var roomy: CGFloat
+    var rows = 0
+    var header: CGFloat = 0
+}
+
+/// The panel as it will be drawn this frame.
 private struct PanelPlan {
     var height: CGFloat
     var layout: SliderLayout
     var rowHeight: CGFloat = 40
+    var minHeight: CGFloat = 100
+    var maxHeight: CGFloat = 600
+    var key = ""
 }
 
 struct EditorView: View {
@@ -35,14 +46,22 @@ struct EditorView: View {
     @State private var tool: Tool? = Tool(rawValue: DemoMode.value("-lumenDemoTool") ?? "") ?? .light
     @State private var chromeHidden = false
 
+    // panel height the user chose by dragging the handle (per tool); nil = automatic
+    @State private var panelUser: [String: CGFloat] = [:]
+    @State private var panelLive: CGFloat?
+    @State private var panelDragStart: CGFloat?
+
     // pinch-zoom / pan of the preview
     @State private var zoom: CGFloat = 1
-    @State private var lastZoom: CGFloat = 1
     @State private var pan: CGSize = .zero
-    @State private var lastPan: CGSize = .zero
+    @State private var pinchBase: (zoom: CGFloat, pan: CGSize)?
+    @State private var panBase: CGSize?
+    @GestureState private var holding = false
+    @State private var lastHoldEnd = Date.distantPast
 
     private let item: LibraryItem
     private let toolbarHeight: CGFloat = 52
+    private let maxZoom: CGFloat = 8
 
     init(item: LibraryItem) {
         self.item = item
@@ -76,11 +95,16 @@ struct EditorView: View {
         .onChange(of: tool) { _, new in
             vm.maskEditing = (new == .masks)
             vm.cropEditing = (new == .crop)
+            vm.panMode = false
             if new == .masks, vm.selectedMaskID == nil, let first = vm.settings.masks.first { vm.selectMask(first.id) }
             if new == .presets { vm.loadPresetThumbs(user: store.userPresets) }
-            if new == .masks || new == .crop { resetZoom() }
+            if new == .crop { resetZoom() }
         }
         .onChange(of: zoom) { _, z in vm.zoomChanged(z) }
+        .onChange(of: holding) { _, h in
+            vm.showOriginal = h
+            if !h { lastHoldEnd = Date() }
+        }
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },
                                              set: { if !$0 { vm.message = nil } })) {
@@ -90,61 +114,99 @@ struct EditorView: View {
 
     // MARK: Layout planning
 
-    /// The panel takes whatever vertical room the photo does not need. Sliders are shown as a full list when there
-    /// is room for at least four whole rows, otherwise one at a time.
+    private func spec(_ t: Tool) -> ToolSpec {
+        switch t {
+        case .presets: return ToolSpec(compact: 112, roomy: 112)
+        case .crop: return ToolSpec(compact: 168, roomy: 184)
+        case .grade: return ToolSpec(compact: 250, roomy: 262)
+        case .curve: return ToolSpec(compact: 216, roomy: 236)
+        case .light: return ToolSpec(compact: 100, roomy: 0, rows: 6, header: 44)
+        case .color: return ToolSpec(compact: 100, roomy: 0, rows: 4, header: 44)
+        case .detail: return ToolSpec(compact: 100, roomy: 0, rows: 14, header: 44)
+        case .masks:
+            if vm.settings.masks.isEmpty || vm.selectedMask == nil { return ToolSpec(compact: 150, roomy: 176) }
+            return vm.maskTab == .shape ? ToolSpec(compact: 250, roomy: 330)
+                                        : ToolSpec(compact: 100, roomy: 0, rows: 14, header: 40)
+        }
+    }
+
+    /// The panel takes whatever vertical room the photo does not need, unless the user dragged it to a height of their
+    /// own. Sliders are shown as a full list when there is room for at least four whole rows, otherwise one at a time.
     private func panelPlan(in size: CGSize) -> PanelPlan {
         guard let tool else { return PanelPlan(height: 0, layout: .strip) }
+        let sp = spec(tool)
         let aspect = vm.imageSize.height > 0 ? vm.imageSize.width / vm.imageSize.height : 1.5
         let avail = size.height - toolbarHeight
         let photoH = size.width / max(aspect, 0.2)
         let free = max(avail - photoH - 6, 0)
-        let cap = avail * 0.6
+        let pad: CGFloat = 12
 
-        // Tools with a fixed layout: (compact, roomy)
-        func fixed(_ compact: CGFloat, _ roomy: CGFloat) -> PanelPlan {
-            let h = free > compact + 30 ? min(roomy, max(free, compact)) : compact
-            return PanelPlan(height: h, layout: .strip)
-        }
-        // Slider lists: (rows, header height)
-        func list(_ rows: Int, _ header: CGFloat) -> PanelPlan {
-            let stripH: CGFloat = 100 + (header > 0 ? 0 : 0)
-            let pad: CGFloat = 12
+        var auto: CGFloat
+        if sp.rows > 0 {
+            let cap = avail * 0.6
             let usable = sliderStyle == "list" ? cap : min(free, cap)
-            let fit = Int((usable - header - pad) / 40)
-            if sliderStyle == "strip" || fit < 4 { return PanelPlan(height: stripH, layout: .strip) }
-            let n = min(rows, fit)
-            let rowH: CGFloat = n == rows ? min(max((usable - header - pad) / CGFloat(rows), 40), 48) : 40
-            return PanelPlan(height: header + CGFloat(n) * rowH + pad, layout: .list, rowHeight: rowH)
+            let fit = Int((usable - sp.header - pad) / 40)
+            if sliderStyle == "strip" || fit < 4 {
+                auto = sp.compact
+            } else {
+                let n = min(sp.rows, fit)
+                let rowH: CGFloat = n == sp.rows ? min(max((usable - sp.header - pad) / CGFloat(sp.rows), 40), 48) : 40
+                auto = sp.header + CGFloat(n) * rowH + pad
+            }
+        } else {
+            auto = free > sp.compact + 30 ? min(sp.roomy, max(free, sp.compact)) : sp.compact
         }
 
-        switch tool {
-        case .presets: return fixed(112, 112)
-        case .crop: return fixed(168, 184)
-        case .grade: return fixed(250, 262)
-        case .curve: return fixed(216, 236)
-        case .light: return list(6, 44)
-        case .color: return list(4, 44)
-        case .detail: return list(14, 44)
-        case .masks:
-            if vm.settings.masks.isEmpty || vm.selectedMask == nil { return fixed(150, 176) }
-            return vm.maskTab == .shape ? fixed(250, 330) : list(14, 40)
+        let key = tool.rawValue + (tool == .masks ? vm.maskTab.rawValue : "")
+        let minH: CGFloat = sp.rows > 0 ? 100 : min(sp.compact, 120)
+        let maxH = max(avail * 0.78, minH)
+        let base = panelUser[key] ?? auto
+        let h = min(max(panelLive ?? base, minH), maxH)
+
+        var layout = SliderLayout.strip
+        var rowH: CGFloat = 40
+        if sp.rows > 0, sliderStyle != "strip", h >= sp.header + 4 * 40 + pad {
+            layout = .list
+            let all = sp.header + CGFloat(sp.rows) * 40 + pad
+            rowH = h >= all ? min(max((h - sp.header - pad) / CGFloat(sp.rows), 40), 48) : 40
         }
+        return PanelPlan(height: h, layout: layout, rowHeight: rowH, minHeight: minH, maxHeight: maxH, key: key)
     }
 
     private func panelContainer(_ t: Tool, plan: PanelPlan) -> some View {
         VStack(spacing: 0) {
-            Capsule().fill(Color.white.opacity(0.25)).frame(width: 36, height: 4).padding(.top, 5).padding(.bottom, 3)
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 8).onEnded { v in
-                    if v.translation.height > 24 { withAnimation(.easeOut(duration: 0.18)) { tool = nil } }
-                })
+            // grab handle: drag up for more of the controls, down for more of the photo (all the way down closes it)
+            ZStack {
+                Capsule().fill(Color.white.opacity(0.3)).frame(width: 44, height: 5)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 24)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                    .onChanged { v in
+                        if panelDragStart == nil { panelDragStart = plan.height }
+                        panelLive = (panelDragStart ?? plan.height) - v.translation.height
+                    }
+                    .onEnded { v in
+                        let raw = (panelDragStart ?? plan.height) - v.translation.height
+                        if raw < plan.minHeight - 45 {
+                            withAnimation(.easeOut(duration: 0.18)) { tool = nil }
+                        } else {
+                            panelUser[plan.key] = min(max(raw, plan.minHeight), plan.maxHeight)
+                        }
+                        panelLive = nil
+                        panelDragStart = nil
+                    }
+            )
+            .onTapGesture(count: 2) { withAnimation(.easeOut(duration: 0.2)) { panelUser[plan.key] = nil } }
+
             panel(for: t)
                 .environment(\.sliderLayout, plan.layout)
                 .environment(\.listRowHeight, plan.rowHeight)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .frame(height: plan.height + 12)
+        .frame(height: plan.height + 24)
         .background(Theme.panel, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
     }
 
@@ -167,12 +229,15 @@ struct EditorView: View {
             vm.settings.grading.shadows = GradeZone(hue: 215, sat: 55, lum: 0)
             vm.settings.grading.highlights = GradeZone(hue: 40, sat: 45, lum: 5)
         }
-        if let z = DemoMode.value("-lumenDemoZoom").flatMap(Double.init) { zoom = CGFloat(z); lastZoom = zoom }
+        if let z = DemoMode.value("-lumenDemoZoom").flatMap(Double.init) { zoom = CGFloat(z) }
         if let r = DemoMode.value("-lumenDemoCrop").flatMap(Double.init) {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 1_800_000_000)
                 vm.selectCropRatio(r)
             }
+        }
+        if let h = DemoMode.value("-lumenDemoPanel").flatMap(Double.init), let t = tool {
+            panelUser[t.rawValue + (t == .masks ? vm.maskTab.rawValue : "")] = CGFloat(h)
         }
         sliderStyle = DemoMode.value("-lumenDemoSlider") ?? "auto"
     }
@@ -189,7 +254,7 @@ struct EditorView: View {
                 if vm.imageSize != .zero {
                     gestureLayer(xform)
                     if tool == .crop { CropOverlay(vm: vm, xform: xform) }
-                    if tool == .masks { MaskOverlay(vm: vm, xform: xform) }
+                    if tool == .masks { MaskOverlay(vm: vm, xform: xform).allowsHitTesting(!vm.panMode) }
                 }
                 if vm.isLoading || vm.isExporting { ProgressView().tint(.white) }
                 if vm.detailLoading && zoom > 1.4 {
@@ -202,6 +267,8 @@ struct EditorView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
+            // pinch works over every tool (including the mask and crop overlays), anchored on your fingers
+            .simultaneousGesture(zoomGesture(xform), including: tool == .crop ? .none : .all)
             .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
             .overlay(alignment: .topLeading) {
                 if showHistogram && !chromeHidden {
@@ -213,6 +280,7 @@ struct EditorView: View {
                 if vm.showOriginal {
                     Text("ORIGINAL").font(.caption2.bold()).padding(.horizontal, 10).padding(.vertical, 5)
                         .background(.ultraThinMaterial, in: Capsule()).padding(10)
+                        .allowsHitTesting(false)
                 }
             }
         }
@@ -226,13 +294,6 @@ struct EditorView: View {
             Spacer()
             FloatButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }
             FloatButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }
-            Image(systemName: "eye")
-                .font(.system(size: 15, weight: .medium))
-                .frame(width: 36, height: 36)
-                .background(.ultraThinMaterial, in: Circle())
-                .background(Color.black.opacity(0.25), in: Circle())
-                .foregroundStyle(vm.showOriginal ? Theme.accent : Color.white)
-                .onLongPressGesture(minimumDuration: 0, maximumDistance: 200, pressing: { vm.showOriginal = $0 }, perform: {})
             Menu {
                 Toggle("Histogram", isOn: $showHistogram)
                 Picker("Sliders", selection: $sliderStyle) {
@@ -278,24 +339,36 @@ struct EditorView: View {
     // MARK: Gestures
 
     private var canNavigate: Bool { tool != .masks && tool != .crop }
+    private var canPan: Bool { canNavigate || (tool == .masks && vm.panMode) }
 
-    /// Pinch, pan, double-tap, tap-to-hide-the-panels and press-to-compare on the photo itself.
+    /// Tap = hide/show the panels, double-tap = zoom to that spot (or back), press and hold = see the original until
+    /// you let go, drag = pan when zoomed, swipe sideways = next/previous photo.
     @ViewBuilder
     private func gestureLayer(_ xform: ViewXform) -> some View {
         Color.clear.contentShape(Rectangle())
-            .onTapGesture(count: 2) { withAnimation(.easeOut(duration: 0.2)) { resetZoom() } }
-            .onTapGesture { if canNavigate { withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() } } }
-            .gesture(zoomGesture)
-            .gesture(panGesture, including: (canNavigate && zoom > 1) ? .all : .none)
+            .gesture(
+                SpatialTapGesture(count: 2)
+                    .exclusively(before: TapGesture(count: 1))
+                    .onEnded { value in
+                        switch value {
+                        case .first(let tap): toggleZoom(at: tap.location, xform)
+                        case .second: if canNavigate { withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() } }
+                        }
+                    },
+                including: tool == .crop ? .none : .all)
+            .gesture(panGesture(xform), including: (canPan && zoom > 1.01) ? .all : .none)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 50).onEnded { v in
-                    guard canNavigate, zoom <= 1.05, abs(v.translation.width) > 110, abs(v.translation.height) < 70 else { return }
+                    guard canNavigate, zoom <= 1.05, Date().timeIntervalSince(lastHoldEnd) > 0.5,
+                          abs(v.translation.width) > 110, abs(v.translation.height) < 70 else { return }
                     go(v.translation.width < 0 ? 1 : -1)
                 })
             .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.35, maximumDistance: 30)
-                    .onChanged { _ in if canNavigate { vm.showOriginal = true } }
-                    .onEnded { _ in vm.showOriginal = false },
+                LongPressGesture(minimumDuration: 0.3, maximumDistance: 25)
+                    .sequenced(before: DragGesture(minimumDistance: 0))
+                    .updating($holding) { value, state, _ in
+                        if case .second(true, _) = value { state = true }
+                    },
                 including: canNavigate ? .all : .none)
     }
 
@@ -314,22 +387,60 @@ struct EditorView: View {
     }
 
     private func resetZoom() {
-        zoom = 1; lastZoom = 1; pan = .zero; lastPan = .zero
+        zoom = 1; pan = .zero; pinchBase = nil; panBase = nil
     }
 
-    private var zoomGesture: some Gesture {
+    /// Keeps the photo from being dragged away: it can only move as far as its edges reach the edges of the view.
+    private func clampPan(_ p: CGSize, zoom z: CGFloat, _ xf: ViewXform) -> CGSize {
+        guard z > 1.001, xf.image.width > 0, xf.image.height > 0 else { return .zero }
+        let fit = min(xf.canvas.width / xf.image.width, xf.canvas.height / xf.image.height)
+        let w = xf.image.width * fit * z, h = xf.image.height * fit * z
+        let mx = max((w - xf.canvas.width) / 2, 0), my = max((h - xf.canvas.height) / 2, 0)
+        return CGSize(width: min(max(p.width, -mx), mx), height: min(max(p.height, -my), my))
+    }
+
+    /// Zooms to `z` keeping the image point under `anchor` where it was.
+    private func setZoom(_ z: CGFloat, anchor: CGPoint, from base: (zoom: CGFloat, pan: CGSize), _ xf: ViewXform) {
+        let nz = min(max(z, 1), maxZoom)
+        let c = CGPoint(x: xf.canvas.width / 2, y: xf.canvas.height / 2)
+        let ratio = nz / base.zoom
+        let dx = anchor.x - c.x, dy = anchor.y - c.y
+        let p = CGSize(width: dx - (dx - base.pan.width) * ratio, height: dy - (dy - base.pan.height) * ratio)
+        zoom = nz
+        pan = clampPan(p, zoom: nz, xf)
+    }
+
+    private func toggleZoom(at p: CGPoint, _ xf: ViewXform) {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            if zoom > 1.05 { resetZoom() } else { setZoom(3, anchor: p, from: (1, .zero), xf) }
+        }
+    }
+
+    private func zoomGesture(_ xf: ViewXform) -> some Gesture {
         MagnifyGesture()
-            .onChanged { v in zoom = min(max(lastZoom * v.magnification, 1), 6) }
+            .onChanged { v in
+                if pinchBase == nil {
+                    pinchBase = (zoom, pan)
+                    if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
+                }
+                if let b = pinchBase { setZoom(b.zoom * v.magnification, anchor: v.startLocation, from: b, xf) }
+            }
             .onEnded { _ in
-                lastZoom = zoom
-                if zoom <= 1 { pan = .zero; lastPan = .zero }
+                pinchBase = nil
+                if zoom < 1.02 { withAnimation(.easeOut(duration: 0.15)) { resetZoom() } }
             }
     }
 
-    private var panGesture: some Gesture {
-        DragGesture()
-            .onChanged { v in pan = CGSize(width: lastPan.width + v.translation.width, height: lastPan.height + v.translation.height) }
-            .onEnded { _ in lastPan = pan }
+    private func panGesture(_ xf: ViewXform) -> some Gesture {
+        DragGesture(minimumDistance: 6)
+            .onChanged { v in
+                if panBase == nil { panBase = pan }
+                if let b = panBase {
+                    pan = clampPan(CGSize(width: b.width + v.translation.width, height: b.height + v.translation.height),
+                                   zoom: zoom, xf)
+                }
+            }
+            .onEnded { _ in panBase = nil }
     }
 
     // MARK: Tools

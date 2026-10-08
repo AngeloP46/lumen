@@ -11,7 +11,7 @@ extension EditorViewModel {
     }
 }
 
-private struct PillButton: View {
+struct PillButton: View {
     let title: String
     var system: String
     var active = false
@@ -120,7 +120,16 @@ struct HSLPanel: View {
                           track: [Color(white: 0.5), color(band)]),
                 ParamItem(id: "Lum", title: "Luminance", value: bandBinding(\.lum),
                           track: [.black, color(band), .white]),
-            ], selected: $sel, header: nil)
+            ], selected: $sel, header: AnyView(
+                HStack(spacing: 6) {
+                    PillButton(title: "Reset \(HSLSettings.names[band])", system: "arrow.counterclockwise") {
+                        vm.settings.hsl.bands[band] = HSLBand()
+                    }
+                    PillButton(title: "Reset all colours", system: "arrow.counterclockwise") {
+                        vm.settings.hsl = HSLSettings()
+                    }
+                    Spacer()
+                }))
         }
     }
 
@@ -293,6 +302,11 @@ struct GradePanel: View {
                 HStack(spacing: 14) {
                     LabeledSlider(title: "Blend", value: gb(\.blending), range: 0...100, neutral: 50, labelWidth: 38)
                     LabeledSlider(title: "Balance", value: gb(\.balance), range: -100...100, neutral: 0, labelWidth: 50)
+                }
+                .padding(.horizontal, 14)
+                HStack {
+                    Spacer()
+                    PillButton(title: "Reset all", system: "arrow.counterclockwise") { vm.settings.grading = ColorGrading() }
                 }
                 .padding(.horizontal, 14)
             }

@@ -44,8 +44,9 @@ struct CurvePanel: View {
                 }
                 HStack(spacing: 6) {
                     Chip(title: "Lift") { set([(0, 0), (0.3, 0.38), (1, 1)]) }
-                    Chip(title: "Linear") { vm.settings.curves.set(channel, ToneCurves.identity) }
+                    Chip(title: "Reset channel") { vm.settings.curves.set(channel, ToneCurves.identity) }
                 }
+                Chip(title: "Reset all curves") { vm.settings.curves = ToneCurves() }
                 Text("Drag to bend the curve. Double-tap a point to remove it.")
                     .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }

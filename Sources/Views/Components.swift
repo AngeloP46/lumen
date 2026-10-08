@@ -39,7 +39,7 @@ extension EnvironmentValues {
 // MARK: - Slider
 
 /// A wide, forgiving slider. Drag anywhere to move relative to where you started; drag your finger *away* from the
-/// track (up or down) to scrub in finer steps; double-tap to reset; a light tick marks the neutral point.
+/// track (up or down) to scrub in finer steps; double-tap anywhere on it to reset; a light tick marks the neutral point.
 struct ScrubSlider: View {
     @Binding var value: Double
     var range: ClosedRange<Double> = -100...100
@@ -48,13 +48,18 @@ struct ScrubSlider: View {
     var track: [Color]?
     var height: CGFloat = 40
     var bubble = true
+    var onActive: ((Bool) -> Void)?
 
     @State private var base: Double = 0
     @State private var acc: Double = 0
     @State private var lastX: CGFloat = 0
     @State private var dragging = false
+    @State private var moved = false
+    @State private var ignoring = false
     @State private var wasAtNeutral = false
     @State private var fine: Double = 1
+    @State private var lastTap: Date?
+    @State private var lastTapX: CGFloat = 0
 
     private var neutralValue: Double { neutral ?? (range.contains(0) ? 0 : range.lowerBound) }
 
@@ -77,10 +82,10 @@ struct ScrubSlider: View {
                 Rectangle().fill(Color.white.opacity(0.45)).frame(width: 1.5, height: 10).offset(x: nFrac * w - 0.75)
                 Circle()
                     .fill(Color.white)
-                    .frame(width: dragging ? 26 : 22, height: dragging ? 26 : 22)
+                    .frame(width: moved ? 26 : 22, height: moved ? 26 : 22)
                     .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
-                    .offset(x: frac * w - (dragging ? 13 : 11))
-                if dragging && bubble {
+                    .offset(x: frac * w - (moved ? 13 : 11))
+                if moved && bubble {
                     Text(valueText)
                         .font(.system(size: 13, weight: .semibold).monospacedDigit())
                         .padding(.horizontal, 9).padding(.vertical, 4)
@@ -98,17 +103,33 @@ struct ScrubSlider: View {
             }
             .frame(height: geo.size.height)
             .contentShape(Rectangle())
-            .gesture(
+            // simultaneous, so a vertical swipe on a slider still scrolls a list underneath it
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
                         if !dragging {
                             dragging = true
-                            lastX = v.startLocation.x
+                            moved = false
+                            ignoring = false
+                            // a second touch shortly after a tap means reset
+                            if let t = lastTap, Date().timeIntervalSince(t) < 0.4, abs(v.startLocation.x - lastTapX) < 44 {
+                                value = neutralValue
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                ignoring = true
+                                lastTap = nil
+                            }
                             base = value
                             acc = 0
-                            if abs(v.startLocation.x - frac * w) > 34 {
-                                base = clamp(range.lowerBound + Double(v.startLocation.x / w) * span)
-                            }
+                            lastX = v.startLocation.x
+                            onActive?(true)
+                        }
+                        if ignoring { return }
+                        let dx = v.location.x - v.startLocation.x
+                        if !moved {
+                            guard abs(dx) > 5 else { return }   // dead zone: taps and scrolling never nudge the value
+                            moved = true
+                            lastX = v.location.x
+                            return
                         }
                         let dy = abs(v.location.y - v.startLocation.y)
                         fine = dy < 36 ? 1 : (dy < 96 ? 0.5 : 0.2)
@@ -126,9 +147,20 @@ struct ScrubSlider: View {
                         nv = (nv * f).rounded() / f
                         if nv != value { value = nv }
                     }
-                    .onEnded { _ in dragging = false; fine = 1 }
+                    .onEnded { v in
+                        if !moved && !ignoring && abs(v.translation.height) < 12 {
+                            lastTap = Date()
+                            lastTapX = v.startLocation.x
+                        } else if moved {
+                            lastTap = nil
+                        }
+                        dragging = false
+                        moved = false
+                        ignoring = false
+                        fine = 1
+                        onActive?(false)
+                    }
             )
-            .onTapGesture(count: 2) { value = neutralValue }
         }
         .frame(height: height)
     }
@@ -169,9 +201,15 @@ struct ParamPanel: View {
     var header: AnyView?
     @Environment(\.sliderLayout) private var layout
     @Environment(\.listRowHeight) private var rowHeight
+    @State private var sliding = false
 
     var body: some View {
         if layout == .list { listBody } else { stripBody }
+    }
+
+    private func reset(_ it: ParamItem) {
+        it.value.wrappedValue = it.neutral ?? (it.range.contains(0) ? 0 : it.range.lowerBound)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     // MARK: list
@@ -183,21 +221,28 @@ struct ParamPanel: View {
                     header.padding(.horizontal, 14).padding(.bottom, 4)
                 }
                 ForEach(items) { it in
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         HStack(spacing: 5) {
                             if let dot = it.dot { Circle().fill(dot).frame(width: 8, height: 8) }
                             Text(it.title).font(.system(size: 13)).lineLimit(1)
                         }
-                        .frame(width: 84, alignment: .leading)
+                        .frame(width: 80, alignment: .leading)
                         .foregroundStyle(Color(white: 0.82))
                         .contentShape(Rectangle())
-                        .onTapGesture(count: 2) { it.value.wrappedValue = it.neutral ?? (it.range.contains(0) ? 0 : it.range.lowerBound) }
+                        .onTapGesture(count: 2) { reset(it) }
                         ScrubSlider(value: it.value, range: it.range, neutral: it.neutral, decimals: it.decimals,
-                                    track: it.track, height: 34, bubble: false)
-                        Text(it.display)
-                            .font(.system(size: 13, weight: .medium).monospacedDigit())
+                                    track: it.track, height: 34, bubble: false) { sliding = $0 }
+                        // the value doubles as a reset button once the slider has been moved
+                        Button { reset(it) } label: {
+                            HStack(spacing: 3) {
+                                if !it.isNeutral { Image(systemName: "arrow.counterclockwise").font(.system(size: 9, weight: .bold)) }
+                                Text(it.display).font(.system(size: 13, weight: .medium).monospacedDigit())
+                            }
                             .foregroundStyle(it.isNeutral ? Color.secondary : Theme.accent)
-                            .frame(width: 44, alignment: .trailing)
+                            .frame(width: 58, height: rowHeight, alignment: .trailing)
+                            .contentShape(Rectangle())
+                        }
+                        .disabled(it.isNeutral)
                     }
                     .padding(.horizontal, 14)
                     .frame(height: rowHeight)
@@ -205,6 +250,7 @@ struct ParamPanel: View {
             }
             .padding(.vertical, 4)
         }
+        .scrollDisabled(sliding)
     }
 
     // MARK: strip
@@ -234,6 +280,7 @@ struct ParamPanel: View {
                                 .foregroundStyle(it.id == current?.id ? Color.white : Color(white: 0.75))
                             }
                             .id(it.id)
+                            .contextMenu { Button("Reset \(it.title)") { reset(it) } }
                         }
                     }
                     .padding(.horizontal, 12)
@@ -241,8 +288,17 @@ struct ParamPanel: View {
                 .onChange(of: selected) { _, new in withAnimation { proxy.scrollTo(new, anchor: .center) } }
             }
             if let c = current {
-                ScrubSlider(value: c.value, range: c.range, neutral: c.neutral, decimals: c.decimals, track: c.track)
-                    .padding(.horizontal, 22)
+                HStack(spacing: 6) {
+                    ScrubSlider(value: c.value, range: c.range, neutral: c.neutral, decimals: c.decimals, track: c.track)
+                    Button { reset(c) } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 34, height: 34)
+                            .foregroundStyle(c.isNeutral ? Color(white: 0.3) : Theme.accent)
+                    }
+                    .disabled(c.isNeutral)
+                }
+                .padding(.leading, 22).padding(.trailing, 10)
             }
         }
         .padding(.top, 4)
