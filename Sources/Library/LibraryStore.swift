@@ -48,6 +48,15 @@ final class LibraryStore: ObservableObject {
         if let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
            let decoded = try? JSONDecoder().decode([UserPreset].self, from: data) {
             userPresets = decoded
+        } else if let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
+                  let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] {
+            // Presets saved by an older version: migrate their settings like old sidecars.
+            userPresets = list.compactMap { p -> UserPreset? in
+                guard let name = p["name"] as? String, let s = p["settings"] as? [String: Any],
+                      let d = try? JSONSerialization.data(withJSONObject: s) else { return nil }
+                let id = (p["id"] as? String).flatMap { UUID(uuidString: $0) } ?? UUID()
+                return UserPreset(id: id, name: name, settings: Self.decodeSettings(d))
+            }
         }
     }
 
@@ -61,6 +70,10 @@ final class LibraryStore: ObservableObject {
 
     func settings(for item: LibraryItem) -> EditSettings {
         guard let data = try? Data(contentsOf: editURL(item)) else { return EditSettings() }
+        return Self.decodeSettings(data)
+    }
+
+    private static func decodeSettings(_ data: Data) -> EditSettings {
         let decoder = JSONDecoder()
         if let s = try? decoder.decode(EditSettings.self, from: data) { return s }
         // Older sidecar: lay its values over today's defaults, dropping anything that no longer fits.
