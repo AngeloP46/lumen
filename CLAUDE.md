@@ -77,3 +77,9 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 
 ## Roadmap ideas
 Batch sync/copy-paste to many photos, before/after split, AI sky model via CoreML, lens-free vignette correction, histogram-based tone-curve backdrop, Metal tile export for 48 MP ProRAW.
+
+## Overnight loops and the CI courier (set up 2026-10-09)
+- Three unattended loops work in git worktrees `C:\Users\pc user\Downloads\lumen-night-bugs`, `...-tests`, `...-hdr` on branches `night/bugs`, `night/tests`, `night/hdr` (instructions in each folder's PROMPT.md / TODO.md / PROGRESS.md). Scripts and the full explanation are in `C:\Users\pc user\Downloads\lumen-night\`: read its PROGRESS.md and README.md. `Start Lumen night.cmd` / `Stop Lumen night.cmd` there start/stop everything.
+- The loops cannot push. `lumen-night\ci_courier.py` pushes their branches, waits for GitHub's Mac CI (Build IPA, Engine test, and UI tests dispatched only for night/tests) and writes `CI-FEEDBACK.md` into each worktree. Budget and caps are in `lumen-night\ci-config.json` (40 macOS minutes a night by default: macOS minutes are scarce on the free plan and about 144 were already used on 2026-10-08). Results: `lumen-night\CI-SUMMARY.md`, `ci-state.json`, `ci-courier.log`.
+- `engine-test.yml` / `uitest.yml` now propagate the real exit code (the old lldb fallback hid failures), download samples with `.github/ci/get.sh`, and cancel superseded runs.
+- Nothing from the night branches was reviewed by a human: merge them into a new branch and re-run CI before they go to `main`.
