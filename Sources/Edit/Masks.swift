@@ -83,7 +83,7 @@ extension EditSession {
                                                               CIVector(x: 0, y: 0, z: 0, w: 0)]) ?? zero
         case .radial:
             let ctr = Self.pixel(c.x0, c.y0, ext)
-            let ang = c.angle * .pi / 180
+            let ang = -c.angle * .pi / 180   // UI angle is clockwise on screen
             img = k.radialMask.apply(extent: ext, arguments: [
                 source.base,
                 CIVector(x: ctr.x, y: ctr.y, z: max(0.01, c.x1) * ext.width, w: max(0.01, c.y1) * ext.height),
