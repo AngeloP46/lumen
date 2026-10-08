@@ -1,0 +1,67 @@
+name: UI screenshots
+on:
+  workflow_dispatch:
+  push:
+    branches: [v2]
+    paths:
+      - 'Sources/**'
+      - 'project.yml'
+      - '.github/workflows/ui-test.yml'
+jobs:
+  shots:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Sample photos
+        run: |
+          mkdir -p demo
+          curl -sL -o demo/1-a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW"
+          curl -sL -o demo/2-cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000"
+          curl -sL -o demo/3-matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000"
+          ls -la demo
+      - name: Build for simulator
+        run: |
+          xcodegen generate
+          xcodebuild -project Lumen.xcodeproj -scheme Lumen -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO ARCHS=arm64 | tail -5
+      - name: Boot simulator
+        run: |
+          xcrun simctl list devices available | grep -i "iPhone" | head -20
+          UDID=$(xcrun simctl list devices available | grep -E "iPhone 16 Pro Max" | head -1 | grep -oE '[0-9A-F-]{36}')
+          echo "UDID=$UDID" >> $GITHUB_ENV
+          xcrun simctl boot $UDID
+          xcrun simctl bootstatus $UDID -b
+          xcrun simctl install $UDID build/Build/Products/Release-iphonesimulator/Lumen.app
+          CONTAINER=$(xcrun simctl get_app_container $UDID com.example.lumen data)
+          mkdir -p "$CONTAINER/Documents/demo"
+          cp demo/* "$CONTAINER/Documents/demo/"
+          echo "DEMO=$CONTAINER/Documents/demo" >> $GITHUB_ENV
+      - name: Screenshots
+        run: |
+          mkdir -p shots
+          shot() { # name, args...
+            name=$1; shift
+            xcrun simctl terminate $UDID com.example.lumen 2>/dev/null || true
+            xcrun simctl launch $UDID com.example.lumen -lumenDemoDir "$DEMO" "$@"
+            sleep 14
+            xcrun simctl io $UDID screenshot shots/$name.png
+          }
+          shot 00-library
+          shot 01-light -lumenDemoOpen 1 -lumenDemoTool Light -lumenDemoEdit 1
+          shot 02-masks-subject -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject
+          shot 03-masks-adjust -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject -lumenDemoMaskTab adjust
+          shot 04-masks-luminance -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask luminance
+          shot 05-masks-sky -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask sky
+          shot 06-masks-linear -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask linear
+          shot 07-curve -lumenDemoOpen 0 -lumenDemoTool Curve
+          shot 08-mix -lumenDemoOpen 0 -lumenDemoTool Mix
+          shot 09-presets -lumenDemoOpen 0 -lumenDemoTool Presets
+          shot 10-crop -lumenDemoOpen 0 -lumenDemoTool Crop
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: shots

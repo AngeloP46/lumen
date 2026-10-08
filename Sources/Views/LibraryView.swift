@@ -22,13 +22,14 @@ struct LibraryView: View {
     @State private var showFileImporter = false
     @State private var showPhotoPicker = false
     @State private var filter: LibraryFilter = .all
+    @State private var path: [LibraryItem] = []
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
 
     private var visible: [LibraryItem] { store.items.filter { filter.matches($0) } }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if store.items.isEmpty {
                     ContentUnavailableView("No photos yet",
@@ -54,6 +55,17 @@ struct LibraryView: View {
             }
             .navigationTitle(filter == .all ? "Lumen" : filter.rawValue)
             .navigationDestination(for: LibraryItem.self) { EditorView(item: $0) }
+            .task {
+                guard let dir = DemoMode.value("-lumenDemoDir") else { return }
+                if store.items.isEmpty {
+                    let urls = (try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil)) ?? []
+                    store.importFiles(urls.sorted { $0.lastPathComponent < $1.lastPathComponent })
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                }
+                if let n = DemoMode.value("-lumenDemoOpen"), let i = Int(n), store.items.indices.contains(i) {
+                    path = [store.items[i]]
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {

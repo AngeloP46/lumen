@@ -25,7 +25,7 @@ struct EditorView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var vm: EditorViewModel
     @AppStorage("showHistogram") private var showHistogram = true
-    @State private var tool: Tool? = .light
+    @State private var tool: Tool? = Tool(rawValue: DemoMode.value("-lumenDemoTool") ?? "") ?? .light
 
     // pinch-zoom / pan of the preview
     @State private var zoom: CGFloat = 1
@@ -55,7 +55,10 @@ struct EditorView: View {
         }
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
-        .onAppear { vm.start(store: store) }
+        .onAppear {
+            vm.start(store: store)
+            if DemoMode.isOn { applyDemo() }
+        }
         .onDisappear { vm.flushSave(); store.refreshThumbnail(item) }
         .onChange(of: tool) { _, new in
             vm.maskEditing = (new == .masks)
@@ -68,6 +71,25 @@ struct EditorView: View {
                                              set: { if !$0 { vm.message = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(vm.message ?? "") }
+    }
+
+    /// CI-only: pre-build some edits so the screenshot shows the interesting panels.
+    private func applyDemo() {
+        if tool == .masks { vm.maskEditing = true }
+        if let kind = DemoMode.value("-lumenDemoMask").flatMap({ MaskKind(rawValue: $0) }) {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                vm.addMask(kind)
+                if kind == .luminance { vm.updateComponent(vm.selectedComponent!.id) { $0.lumHigh = 0.4; $0.lumLow = 0.05 } }
+                if DemoMode.value("-lumenDemoMaskTab") == "adjust" {
+                    vm.updateMask(vm.selectedMask!.id) { $0.adjust.exposure = 1.0 }
+                    vm.maskTab = .adjust
+                }
+            }
+        }
+        if DemoMode.value("-lumenDemoEdit") != nil {
+            vm.settings.exposure = 0.3; vm.settings.contrast = 20; vm.settings.highlights = -30; vm.settings.vibrance = 25
+        }
     }
 
     private func panelHeight(_ t: Tool) -> CGFloat {
