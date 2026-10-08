@@ -186,7 +186,7 @@ extension EditSession {
             "inputRVector": v, "inputGVector": v, "inputBVector": v,
             "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
             "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1),
-        ])
+        ]).cropped(to: i.extent)
     }
 
     static func fit(_ img: CIImage, to ext: CGRect) -> CIImage {
