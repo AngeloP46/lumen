@@ -117,6 +117,9 @@ final class LibraryStore: ObservableObject {
 
     func delete(_ item: LibraryItem) {
         for u in [fileURL(item), thumbURL(item), editURL(item)] { try? fm.removeItem(at: u) }
+        // The thumbnail queue is serial: this runs after any render already in flight for this photo.
+        let thumb = thumbURL(item)
+        thumbQueue.async { try? FileManager.default.removeItem(at: thumb) }
         items.removeAll { $0.id == item.id }
         saveIndex()
     }
@@ -240,6 +243,7 @@ final class LibraryStore: ObservableObject {
             guard let session = EditSession(url: src),
                   let cg = session.renderCGImage(settings, maxEdge: 640),
                   let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else { return }
+            guard FileManager.default.fileExists(atPath: src.path) else { return }
             try? jpg.write(to: dst, options: .atomic)
             Task { @MainActor [weak self] in self?.thumbVersion += 1 }
         }
