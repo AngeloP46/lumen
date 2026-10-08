@@ -2,6 +2,10 @@
 
 Read this first. It records what exists, how it's built and shipped, and what to do next.
 
+## Housekeeping (do this every session)
+- Before finishing any session, update the **Status**, **Things to verify** and **Troubleshooting** sections below with what changed or was learned, then commit and push (`git add -A; git commit; git push`) so the next session starts current.
+- Keep this file factual and short; remove items once they're fixed or verified. Never put passwords, tokens or Apple ID credentials in it.
+
 ## What this is
 **Lumen**: a free, subscription-less Lightroom/Photomator-style RAW photo editor for iPhone, written in native Swift/SwiftUI on Core Image + Vision. The owner (not a developer, "not techy") is sick of subscriptions and wants a Lightroom-Premium-level app with all the sliders, masks and an intuitive design, sideloaded onto their own phone.
 
