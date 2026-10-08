@@ -161,6 +161,21 @@ func meanChannelSpread(_ cg: CGImage) -> Double? {
     return sum / Double(n)
 }
 
+/// Float values (0...1, red channel) of a finished mask image, `width` pixels wide, rows in whatever order Core Image
+/// writes them. Rendered with no colour management so the numbers are the raw mask values.
+func maskValues(_ img: CIImage, width: Int = 64) -> (v: [Float], w: Int, h: Int)? {
+    let k = CGFloat(width) / img.extent.width
+    let scaled = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+    let r = scaled.extent.integral
+    let w = Int(r.width), h = Int(r.height)
+    guard w > 0, h > 0 else { return nil }
+    var buf = [Float](repeating: 0, count: w * h * 4)
+    buf.withUnsafeMutableBytes { p in
+        LumenGPU.context.render(scaled, toBitmap: p.baseAddress!, rowBytes: w * 16, bounds: r, format: .RGBAf, colorSpace: nil)
+    }
+    return ((0..<(w * h)).map { buf[$0 * 4] }, w, h)
+}
+
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
 var opened = 0
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
@@ -352,6 +367,83 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             }
         } else {
             check(false, "\(stem) mono: could not render the B&W / saturation cases")
+        }
+    }
+
+    // Mask maths: a mask plus its inverted copy sums to 1 everywhere, opacity scales the mask, a linear gradient is
+    // monotonic along its axis, and subtract / intersect results stay inside 0...1 and below their first component.
+    do {
+        let gain = 1.0
+        func mv(_ m: Mask) -> (v: [Float], w: Int, h: Int)? {
+            guard let img = session.maskImage(m, source: source, gain: gain) else { return nil }
+            return maskValues(img)
+        }
+        var vertical = Mask.make(.linear)
+        vertical.components[0].x0 = 0.5; vertical.components[0].y0 = 0.2
+        vertical.components[0].x1 = 0.5; vertical.components[0].y1 = 0.8
+        var lumRange = Mask.make(.luminance); lumRange.components[0].lumLow = 0.2; lumRange.components[0].lumHigh = 0.7
+        var brushM = Mask.make(.brush)
+        brushM.components[0].strokes = [BrushStroke(points: (0...10).map { Pt(x: 0.3 + 0.04 * Double($0), y: 0.5) }, size: 0.1, erase: false)]
+        let sumCases: [(String, Mask)] = [("linear", vertical), ("radial", Mask.make(.radial)), ("luminance", lumRange), ("brush", brushM)]
+        for (label, m) in sumCases {
+            var inv = m; inv.invert = true
+            guard let a = mv(m), let b = mv(inv), a.v.count == b.v.count, !a.v.isEmpty else {
+                check(false, "\(stem) mask '\(label)': could not render the mask or its inverted copy"); continue
+            }
+            var worst: Float = 0
+            for i in 0..<a.v.count { worst = max(worst, abs(a.v[i] + b.v[i] - 1)) }
+            check(worst < 0.02, "\(stem) mask '\(label)' + inverted copy deviates from 1 by up to \(worst)")
+            check(a.v.allSatisfy { $0 >= -0.001 && $0 <= 1.001 }, "\(stem) mask '\(label)' has values outside 0...1")
+            var half = m; half.amount = 50
+            if let h = mv(half), h.v.count == a.v.count {
+                let mx = h.v.max() ?? 0, fullMax = a.v.max() ?? 0
+                check(mx <= 0.51, "\(stem) mask '\(label)' at 50% opacity reaches \(mx) (limit 0.5)")
+                if fullMax > 0.9 { check(mx > 0.45, "\(stem) mask '\(label)' at 50% opacity only reaches \(mx)") }
+            } else {
+                check(false, "\(stem) mask '\(label)': could not render the 50% opacity mask")
+            }
+        }
+        // Linear gradient: constant along the axis' perpendicular, monotonic along it, spanning nearly 0 to 1.
+        if let g = mv(vertical) {
+            var rowMean = [Float](repeating: 0, count: g.h)
+            var spreadAcross: Float = 0
+            for y in 0..<g.h {
+                let row = g.v[(y * g.w)..<((y + 1) * g.w)]
+                rowMean[y] = row.reduce(0, +) / Float(g.w)
+                spreadAcross = max(spreadAcross, (row.max() ?? 0) - (row.min() ?? 0))
+            }
+            let nonInc = zip(rowMean, rowMean.dropFirst()).allSatisfy { $1 <= $0 + 0.01 }
+            let nonDec = zip(rowMean, rowMean.dropFirst()).allSatisfy { $1 >= $0 - 0.01 }
+            check(nonInc || nonDec, "\(stem) linear mask is not monotonic along its axis: \(rowMean.map { String(format: "%.2f", $0) })")
+            check(abs(rowMean[0] - rowMean[g.h - 1]) > 0.8, "\(stem) linear mask does not span 0...1 (ends \(rowMean[0]) and \(rowMean[g.h - 1]))")
+            check(spreadAcross < 0.02, "\(stem) vertical linear mask varies by \(spreadAcross) along a row")
+        } else {
+            check(false, "\(stem) linear mask: could not render")
+        }
+        // Subtract / intersect.
+        var radialC = MaskComponent.make(.radial)
+        radialC.x1 = 0.4; radialC.y1 = 0.4
+        var subC = radialC; subC.op = .subtract
+        var interC = radialC; interC.op = .intersect
+        var first = Mask.make(.linear)
+        first.components[0] = vertical.components[0]
+        var sub = first; sub.components.append(subC)
+        var inter = first; inter.components.append(interC)
+        var radialOnly = first; radialOnly.components = [radialC]
+        if let f = mv(first), let sb = mv(sub), let it = mv(inter), let r = mv(radialOnly),
+           f.v.count == sb.v.count, f.v.count == it.v.count, f.v.count == r.v.count {
+            check(sb.v.allSatisfy { $0 >= -0.001 && $0 <= 1.001 } && it.v.allSatisfy { $0 >= -0.001 && $0 <= 1.001 },
+                  "\(stem) subtract/intersect mask has values outside 0...1")
+            var subOver: Float = 0, interOver: Float = 0
+            for i in 0..<f.v.count {
+                subOver = max(subOver, sb.v[i] - f.v[i])
+                interOver = max(interOver, it.v[i] - min(f.v[i], r.v[i]))
+            }
+            check(subOver < 0.02, "\(stem) subtract mask exceeds its first component by \(subOver)")
+            check(interOver < 0.02, "\(stem) intersect mask exceeds min(first, second) by \(interOver)")
+            check(sb.v.reduce(0, +) < f.v.reduce(0, +), "\(stem) subtracting a radial mask did not reduce the mask area")
+        } else {
+            check(false, "\(stem) subtract/intersect: could not render the masks")
         }
     }
 
