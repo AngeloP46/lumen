@@ -36,7 +36,7 @@ struct LumRangeBar: View {
         GeometryReader { geo in
             let w = geo.size.width
             let barH: CGFloat = 26
-            func x(_ v: Double) -> CGFloat { CGFloat(min(max(v, 0), 1)) * w }
+            let x: (Double) -> CGFloat = { CGFloat(min(max($0, 0), 1)) * w }
             ZStack(alignment: .topLeading) {
                 LinearGradient(colors: [.black, .white], startPoint: .leading, endPoint: .trailing)
                     .frame(height: barH).clipShape(RoundedRectangle(cornerRadius: 5))
