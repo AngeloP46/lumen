@@ -232,7 +232,7 @@ float4 lumenMainLocal(sample_t img, sample_t l1, sample_t l2, sample_t ch,
 // g0 = (vignette amount, midpoint, feather, roundness)
 // g1 = (width, height, grain amount, grain cell size)
 // g2 = (grain roughness, output gamma-encoded? 1 : 0, seed, 0)
-float4 lumenFinish(sample_t s, destination dest, float4 g0, float4 g1, float4 g2) {
+float4 lumenFinish(sample_t s, float4 g0, float4 g1, float4 g2, destination dest) {
     float3 c = max(s.rgb, 0.0);
     float2 size = g1.xy;
     float2 p = dest.coord();
@@ -281,7 +281,7 @@ float4 lumenAccum(sample_t acc, sample_t m, float4 v) {
 // ------------------------------------------------------------------ masks
 
 // p = (x0, y0, x1, y1) in pixels (y up). Full effect at p0, none at p1.
-float4 lumenLinearMask(sample_t s, destination dest, float4 p, float4 q) {
+float4 lumenLinearMask(sample_t s, float4 p, float4 q, destination dest) {
     float2 a = p.xy, b = p.zw;
     float2 ab = b - a;
     float len2 = max(dot(ab, ab), 1e-3);
@@ -291,7 +291,7 @@ float4 lumenLinearMask(sample_t s, destination dest, float4 p, float4 q) {
 }
 
 // p = (cx, cy, rx, ry) pixels; q = (cos, sin, feather, 0)
-float4 lumenRadialMask(sample_t s, destination dest, float4 p, float4 q) {
+float4 lumenRadialMask(sample_t s, float4 p, float4 q, destination dest) {
     float2 d = dest.coord() - p.xy;
     float x = d.x * q.x + d.y * q.y;
     float y = -d.x * q.y + d.y * q.x;
