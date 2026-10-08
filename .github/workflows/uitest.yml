@@ -1,0 +1,43 @@
+name: UI tests
+on:
+  workflow_dispatch:
+  push:
+    branches: [v4, v5]
+    paths:
+      - 'Sources/**'
+      - 'Tests/ui/**'
+      - 'project.yml'
+      - '.github/workflows/uitest.yml'
+jobs:
+  uitest:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Sample photos
+        run: |
+          mkdir -p demo
+          curl -sL -o demo/1-a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW"
+          curl -sL -o demo/2-cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000"
+          curl -sL -o demo/3-matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000"
+      - name: Run UI tests
+        env:
+          TEST_RUNNER_DEMO_DIR: ${{ github.workspace }}/demo
+          TEST_RUNNER_OUT_DIR: ${{ github.workspace }}/uiout
+        run: |
+          mkdir -p uiout
+          xcodegen generate
+          UDID=$(xcrun simctl list devices available | grep -E "iPhone 16 Pro Max" | head -1 | grep -oE '[0-9A-F-]{36}')
+          xcrun simctl boot $UDID
+          xcrun simctl bootstatus $UDID -b
+          set -o pipefail
+          xcodebuild test -project Lumen.xcodeproj -scheme Lumen \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee uiout/xcodebuild.log | grep -E "Test Case|error:|failed|passed|XCTAssert|Executed" | head -150
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: uitest
+          path: uiout

@@ -35,3 +35,23 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         MTL_COMPILER_FLAGS: "-fcikernel"
         MTLLINKER_FLAGS: "-cikernel"
+  LumenUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - Tests/ui
+    dependencies:
+      - target: Lumen
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.lumen.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Lumen
+schemes:
+  Lumen:
+    build:
+      targets:
+        Lumen: all
+    test:
+      targets:
+        - LumenUITests

@@ -182,6 +182,8 @@ struct EditorView: View {
             .frame(maxWidth: .infinity)
             .frame(height: 24)
             .contentShape(Rectangle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier("panel-handle")
             .gesture(
                 DragGesture(minimumDistance: 2, coordinateSpace: .global)
                     .onChanged { v in
@@ -208,6 +210,8 @@ struct EditorView: View {
         }
         .frame(height: plan.height + 24)
         .background(Theme.panel, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("panel")
     }
 
     /// CI-only: pre-build some edits so the screenshot shows the interesting panels.
@@ -267,6 +271,8 @@ struct EditorView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("canvas")
             // pinch works over every tool (including the mask and crop overlays), anchored on your fingers
             .simultaneousGesture(zoomGesture(xform), including: tool == .crop ? .none : .all)
             .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
@@ -278,7 +284,7 @@ struct EditorView: View {
             }
             .overlay(alignment: .bottom) {
                 if vm.showOriginal {
-                    Text("ORIGINAL").font(.caption2.bold()).padding(.horizontal, 10).padding(.vertical, 5)
+                    Text("ORIGINAL").accessibilityIdentifier("original-label").font(.caption2.bold()).padding(.horizontal, 10).padding(.vertical, 5)
                         .background(.ultraThinMaterial, in: Capsule()).padding(10)
                         .allowsHitTesting(false)
                 }
@@ -290,10 +296,10 @@ struct EditorView: View {
 
     private var floatingBar: some View {
         HStack(spacing: 8) {
-            FloatButton(system: "chevron.left") { dismiss() }
+            FloatButton(system: "chevron.left") { dismiss() }.accessibilityIdentifier("btn-back")
             Spacer()
-            FloatButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }
-            FloatButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }
+            FloatButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }.accessibilityIdentifier("btn-undo")
+            FloatButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }.accessibilityIdentifier("btn-redo")
             Menu {
                 Toggle("Histogram", isOn: $showHistogram)
                 Picker("Sliders", selection: $sliderStyle) {
@@ -346,6 +352,10 @@ struct EditorView: View {
     @ViewBuilder
     private func gestureLayer(_ xform: ViewXform) -> some View {
         Color.clear.contentShape(Rectangle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier("photo")
+            .accessibilityLabel(item.displayName)
+            .accessibilityValue("zoom \(String(format: "%.1f", Double(zoom))) original \(vm.showOriginal) chrome \(chromeHidden ? "hidden" : "shown")")
             .gesture(
                 SpatialTapGesture(count: 2)
                     .exclusively(before: TapGesture(count: 1))
@@ -458,6 +468,7 @@ struct EditorView: View {
                     .frame(height: toolbarHeight)
                     .foregroundStyle(tool == t ? Theme.accent : Color(white: 0.6))
                 }
+                .accessibilityIdentifier("tool-\(t.rawValue)")
             }
         }
         .padding(.horizontal, 2)

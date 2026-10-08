@@ -49,6 +49,7 @@ struct ScrubSlider: View {
     var height: CGFloat = 40
     var bubble = true
     var onActive: ((Bool) -> Void)?
+    var axID = ""
 
     @State private var base: Double = 0
     @State private var acc: Double = 0
@@ -163,6 +164,14 @@ struct ScrubSlider: View {
             )
         }
         .frame(height: height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier(axID.isEmpty ? "slider" : "slider-\(axID)")
+        .accessibilityLabel(axID)
+        .accessibilityValue(valueText)
+        .accessibilityAdjustableAction { dir in
+            let step = decimals == 0 ? 1.0 : pow(10.0, -Double(decimals))
+            value = clamp(value + (dir == .increment ? step : -step))
+        }
     }
 
     private var valueText: String {
@@ -231,7 +240,7 @@ struct ParamPanel: View {
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2) { reset(it) }
                         ScrubSlider(value: it.value, range: it.range, neutral: it.neutral, decimals: it.decimals,
-                                    track: it.track, height: 34, bubble: false) { sliding = $0 }
+                                    track: it.track, height: 34, bubble: false, onActive: { sliding = $0 }, axID: it.id)
                         // the value doubles as a reset button once the slider has been moved
                         Button { reset(it) } label: {
                             HStack(spacing: 3) {
@@ -243,6 +252,8 @@ struct ParamPanel: View {
                             .contentShape(Rectangle())
                         }
                         .disabled(it.isNeutral)
+                        .accessibilityIdentifier("reset-\(it.id)")
+                        .accessibilityValue(it.display)
                     }
                     .padding(.horizontal, 14)
                     .frame(height: rowHeight)
@@ -289,7 +300,7 @@ struct ParamPanel: View {
             }
             if let c = current {
                 HStack(spacing: 6) {
-                    ScrubSlider(value: c.value, range: c.range, neutral: c.neutral, decimals: c.decimals, track: c.track)
+                    ScrubSlider(value: c.value, range: c.range, neutral: c.neutral, decimals: c.decimals, track: c.track, axID: c.id)
                     Button { reset(c) } label: {
                         Image(systemName: "arrow.counterclockwise")
                             .font(.system(size: 13, weight: .semibold))

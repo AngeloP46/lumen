@@ -12,3 +12,20 @@ enum DemoMode {
 
     static var isOn: Bool { value("-lumenDemoDir") != nil }
 }
+
+extension DemoMode {
+    /// CI-only event log (`-lumenDemoLog <path>`): lets the UI tests check *when* something happened, e.g. that the
+    /// original stays visible for as long as the finger is down.
+    static func log(_ message: String) {
+        guard let path = value("-lumenDemoLog") else { return }
+        let line = "\(Date().timeIntervalSince1970) \(message)
+"
+        if let h = FileHandle(forWritingAtPath: path) {
+            h.seekToEndOfFile()
+            h.write(Data(line.utf8))
+            try? h.close()
+        } else {
+            try? Data(line.utf8).write(to: URL(fileURLWithPath: path))
+        }
+    }
+}

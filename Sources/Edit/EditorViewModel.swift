@@ -23,7 +23,7 @@ final class EditorViewModel: ObservableObject {
     @Published var settings = EditSettings() {
         didSet { if settings != oldValue { settingsChanged(from: oldValue) } }
     }
-    @Published var showOriginal = false { didSet { requestRender() } }
+    @Published var showOriginal = false { didSet { requestRender(); if DemoMode.isOn { DemoMode.log("original \(showOriginal)") } } }
     @Published private(set) var histogram: HistogramData?
     @Published private(set) var imageSize: CGSize = .zero
     @Published private(set) var isLoading = true
