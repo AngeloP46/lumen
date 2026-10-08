@@ -26,6 +26,8 @@ enum LumenGPU {
 struct LumenKernels {
     let logLum, minChannel, pack3, main, mainLocal, finish, toLinear, accum: CIColorKernel
     let linearMask, radialMask, lumMask, colorMask, similarMask, combine, maskFinish, maskMul, overlay: CIColorKernel
+    /// HDR kernels are optional: a broken one must only disable HDR, never SDR editing.
+    var gain, gainLocal, applyGain: CIColorKernel?
 
     static let shared: LumenKernels? = {
         var url = LumenGPU.libraryURL
@@ -44,7 +46,8 @@ struct LumenKernels {
               let q = k("lumenMaskMul"), let r = k("lumenOverlay") else { return nil }
         return LumenKernels(logLum: a, minChannel: b, pack3: c, main: d, mainLocal: e, finish: f, toLinear: g,
                             accum: h, linearMask: i, radialMask: j, lumMask: l, colorMask: m, similarMask: n,
-                            combine: o, maskFinish: p, maskMul: q, overlay: r)
+                            combine: o, maskFinish: p, maskMul: q, overlay: r,
+                            gain: k("lumenGain"), gainLocal: k("lumenGainLocal"), applyGain: k("lumenApplyGain"))
     }()
 }
 
