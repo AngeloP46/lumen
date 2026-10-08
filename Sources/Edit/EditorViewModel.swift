@@ -287,7 +287,8 @@ final class EditorViewModel: ObservableObject {
                 self.autoMaskMissing = missing
                 self.syncDetailMasks()
                 self.requestRender()
-                self.prepareAutoMasksIfNeeded()   // masks may have changed while we were busy
+                // masks may have changed while we were busy
+                if self.settings.masks != snapshot.masks { self.prepareAutoMasksIfNeeded() }
             }
         }
     }
