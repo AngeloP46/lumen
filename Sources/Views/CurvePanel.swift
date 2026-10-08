@@ -4,7 +4,7 @@ struct CurvePanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var channel = 0
     @State private var dragIndex: Int?
-    private let side: CGFloat = 180
+    private let side: CGFloat = 170
 
     private var channelColor: Color {
         switch channel {
@@ -16,29 +16,27 @@ struct CurvePanel: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Picker("Channel", selection: $channel) {
-                    Text("RGB").tag(0)
-                    Text("R").tag(1)
-                    Text("G").tag(2)
-                    Text("B").tag(3)
-                }
-                .pickerStyle(.segmented)
-                Button { vm.settings.curves.set(channel, ToneCurves.identity) } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                }
-                .buttonStyle(.bordered)
-            }
+        HStack(alignment: .top, spacing: 14) {
             curveCanvas
                 .frame(width: side, height: side)
                 .background(Color.black.opacity(0.4))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .gesture(dragGesture)
                 .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { v in removePoint(near: v.location) })
-            Text("Drag to bend. Double-tap a point to remove it.").font(.caption2).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    ForEach([(0, "RGB"), (1, "R"), (2, "G"), (3, "B")], id: \.0) { c, name in
+                        Chip(title: name, selected: channel == c) { channel = c }
+                    }
+                }
+                Button { vm.settings.curves.set(channel, ToneCurves.identity) } label: {
+                    Label("Reset curve", systemImage: "arrow.counterclockwise").font(.caption)
+                }
+                .buttonStyle(.bordered)
+                Text("Drag to bend. Double-tap a point to remove it.").font(.caption2).foregroundStyle(.secondary)
+            }
         }
-        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 14)
     }
 
     private var curveCanvas: some View {

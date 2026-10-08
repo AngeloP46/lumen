@@ -2,7 +2,7 @@ import SwiftUI
 
 private enum Tool: String, CaseIterable, Identifiable {
     case presets = "Presets", crop = "Crop", light = "Light", color = "Color", mix = "Mix"
-    case curve = "Curve", grade = "Grading", effects = "Effects", detail = "Detail", masks = "Masks"
+    case curve = "Curve", grade = "Grade", effects = "Effects", detail = "Detail", masks = "Masks"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -22,6 +22,7 @@ private enum Tool: String, CaseIterable, Identifiable {
 
 struct EditorView: View {
     @EnvironmentObject var store: LibraryStore
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var vm: EditorViewModel
     @AppStorage("showHistogram") private var showHistogram = true
     @State private var tool: Tool? = .light
@@ -42,23 +43,23 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            topBar
             canvas
             if let tool {
-                ScrollView { panel(for: tool).padding(.horizontal, 16).padding(.vertical, 8) }
-                    .frame(height: 270)
-                    .background(Color(white: 0.07))
+                panel(for: tool)
+                    .frame(height: panelHeight(tool))
+                    .frame(maxWidth: .infinity)
+                    .background(Theme.panel)
             }
             toolStrip
         }
-        .background(Color.black)
-        .navigationTitle(item.displayName)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbar }
+        .background(Color.black.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
         .onAppear { vm.start(store: store) }
-        .onDisappear { store.refreshThumbnail(item) }
+        .onDisappear { vm.flushSave(); store.refreshThumbnail(item) }
         .onChange(of: tool) { _, new in
             vm.maskEditing = (new == .masks)
-            if new == .masks, vm.selectedMaskID == nil { vm.selectedMaskID = vm.settings.masks.first?.id }
+            if new == .masks, vm.selectedMaskID == nil, let first = vm.settings.masks.first { vm.selectMask(first.id) }
             if new == .presets { vm.loadPresetThumbs(user: store.userPresets) }
             if new == .masks || new == .crop { resetZoom() }
         }
@@ -69,27 +70,78 @@ struct EditorView: View {
         } message: { Text(vm.message ?? "") }
     }
 
+    private func panelHeight(_ t: Tool) -> CGFloat {
+        switch t {
+        case .light, .color, .effects, .detail: return 96
+        case .presets: return 118
+        case .crop: return 156
+        case .curve: return 196
+        case .mix, .grade: return 142
+        case .masks:
+            if vm.settings.masks.isEmpty || vm.selectedMask == nil { return 170 }
+            return vm.maskTab == .shape ? 270 : 150
+        }
+    }
+
+    // MARK: Top bar
+
+    private var topBar: some View {
+        HStack(spacing: 0) {
+            IconButton(system: "chevron.left") { dismiss() }
+            Text(item.displayName).font(.system(size: 14, weight: .medium)).lineLimit(1).foregroundStyle(Color(white: 0.8))
+            Spacer()
+            IconButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }
+            IconButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }
+            Image(systemName: "eye")
+                .font(.system(size: 17))
+                .frame(width: 38, height: 38)
+                .foregroundStyle(vm.showOriginal ? Theme.accent : Color.white)
+                .contentShape(Rectangle())
+                .onLongPressGesture(minimumDuration: 0, maximumDistance: 200, pressing: { vm.showOriginal = $0 }, perform: {})
+            Menu {
+                Toggle("Histogram", isOn: $showHistogram)
+                Menu("Rating") {
+                    let current = store.item(item.id) ?? item
+                    ForEach(0...5, id: \.self) { n in
+                        Button { store.setRating(current, n == current.rating ? 0 : n) } label: {
+                            Label(n == 0 ? "No rating" : String(repeating: "★", count: n),
+                                  systemImage: current.rating == n ? "checkmark" : "star")
+                        }
+                    }
+                    Button { store.setFlag(current, 1) } label: { Label("Pick", systemImage: "flag") }
+                    Button { store.setFlag(current, -1) } label: { Label("Reject", systemImage: "flag.slash") }
+                }
+                Divider()
+                Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
+                Button { if let c = store.clipboard { vm.settings = c } } label: {
+                    Label("Paste edits", systemImage: "doc.on.clipboard")
+                }.disabled(store.clipboard == nil)
+                Button(role: .destructive) { vm.reset() } label: { Label("Reset all", systemImage: "arrow.counterclockwise") }
+                Divider()
+                ForEach(ExportFormat.allCases) { f in
+                    Button { vm.export(f) } label: { Label("Export \(f.label)", systemImage: "square.and.arrow.up") }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.system(size: 17)).frame(width: 38, height: 38).foregroundStyle(.white)
+            }
+        }
+        .padding(.horizontal, 4)
+        .frame(height: 40)
+        .background(Color.black)
+    }
+
     // MARK: Canvas
 
     private var canvas: some View {
         GeometryReader { geo in
+            let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan)
             ZStack {
                 Color.black
-                if let img = vm.preview {
-                    let size = fit(img.size, in: geo.size)
-                    ZStack {
-                        Image(uiImage: img).resizable().frame(width: size.width, height: size.height)
-                        if tool == .masks, !vm.showOriginal {
-                            MaskOverlay(vm: vm, size: size)
-                        }
-                    }
-                    .frame(width: size.width, height: size.height)
-                    .scaleEffect(zoom)
-                    .offset(pan)
-                    .onTapGesture(count: 2) { resetZoom() }
-                    .gesture(zoomGesture, including: canNavigate ? .all : .none)
-                    .gesture(panGesture, including: (canNavigate && zoom > 1) ? .all : .none)
-                    .gesture(cropDrag(size: size), including: tool == .crop ? .all : .none)
+                CanvasView(model: vm.canvas, xform: xform)
+                    .allowsHitTesting(false)
+                if vm.imageSize != .zero {
+                    gestureLayer(xform)
+                    if tool == .masks { MaskOverlay(vm: vm, xform: xform) }
                 }
                 if vm.isLoading || vm.isExporting { ProgressView().tint(.white) }
                 if vm.loadFailed { Text("This file couldn't be opened.").foregroundStyle(.secondary) }
@@ -98,7 +150,7 @@ struct EditorView: View {
             .clipped()
             .overlay(alignment: .topLeading) {
                 if showHistogram {
-                    HistogramView(data: vm.histogram).frame(width: 110, height: 52).padding(8).allowsHitTesting(false)
+                    HistogramView(data: vm.histogram).frame(width: 96, height: 44).padding(8).allowsHitTesting(false)
                 }
             }
             .overlay(alignment: .topTrailing) {
@@ -107,16 +159,24 @@ struct EditorView: View {
                         .background(.ultraThinMaterial, in: Capsule()).padding(8)
                 }
             }
-            .overlay(alignment: .bottom) { ratingBar.padding(.bottom, 6) }
         }
     }
 
     private var canNavigate: Bool { tool != .masks && tool != .crop }
 
-    private func fit(_ img: CGSize, in box: CGSize) -> CGSize {
-        guard img.width > 0, img.height > 0, box.width > 0, box.height > 0 else { return .zero }
-        let s = min(box.width / img.width, box.height / img.height)
-        return CGSize(width: img.width * s, height: img.height * s)
+    /// Pinch, pan, double-tap and press-to-compare on the photo itself.
+    @ViewBuilder
+    private func gestureLayer(_ xform: ViewXform) -> some View {
+        Color.clear.contentShape(Rectangle())
+            .onTapGesture(count: 2) { withAnimation(.easeOut(duration: 0.2)) { resetZoom() } }
+            .gesture(zoomGesture)
+            .gesture(panGesture, including: (canNavigate && zoom > 1) ? .all : .none)
+            .gesture(cropDrag(size: xform.rect.size), including: tool == .crop ? .all : .none)
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.35, maximumDistance: 30)
+                    .onChanged { _ in if canNavigate { vm.showOriginal = true } }
+                    .onEnded { _ in vm.showOriginal = false },
+                including: canNavigate ? .all : .none)
     }
 
     private func resetZoom() {
@@ -142,7 +202,7 @@ struct EditorView: View {
         DragGesture()
             .onChanged { v in
                 if cropStart == nil { cropStart = (vm.settings.cropX, vm.settings.cropY) }
-                guard let start = cropStart else { return }
+                guard let start = cropStart, size.width > 0, size.height > 0 else { return }
                 let k = 2 * max(1, vm.settings.cropZoom)
                 vm.settings.cropX = min(max(start.0 - Double(v.translation.width / size.width) * k, -1), 1)
                 vm.settings.cropY = min(max(start.1 + Double(v.translation.height / size.height) * k, -1), 1)
@@ -150,72 +210,26 @@ struct EditorView: View {
             .onEnded { _ in cropStart = nil }
     }
 
-    private var ratingBar: some View {
-        let current = store.item(item.id) ?? item
-        return HStack(spacing: 14) {
-            Button { store.setFlag(current, -1) } label: {
-                Image(systemName: current.flag == -1 ? "flag.fill" : "flag").foregroundStyle(current.flag == -1 ? .red : .white)
-            }
-            ForEach(1...5, id: \.self) { n in
-                Button { store.setRating(current, n) } label: {
-                    Image(systemName: n <= current.rating ? "star.fill" : "star")
-                        .foregroundStyle(n <= current.rating ? .yellow : .white)
-                }
-            }
-            Button { store.setFlag(current, 1) } label: {
-                Image(systemName: current.flag == 1 ? "flag.fill" : "flag").foregroundStyle(current.flag == 1 ? .green : .white)
-            }
-        }
-        .font(.callout)
-        .padding(.horizontal, 14).padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule())
-    }
-
-    // MARK: Toolbar
-
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button { vm.undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!vm.canUndo)
-            Button { vm.redo() } label: { Image(systemName: "arrow.uturn.forward") }.disabled(!vm.canRedo)
-            Image(systemName: "eye")
-                .onLongPressGesture(minimumDuration: 0, maximumDistance: 200, pressing: { vm.showOriginal = $0 }, perform: {})
-            Menu {
-                Toggle("Histogram", isOn: $showHistogram)
-                Divider()
-                Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
-                Button { if let c = store.clipboard { vm.settings = c } } label: {
-                    Label("Paste edits", systemImage: "doc.on.clipboard")
-                }.disabled(store.clipboard == nil)
-                Button(role: .destructive) { vm.reset() } label: { Label("Reset all", systemImage: "arrow.counterclockwise") }
-                Divider()
-                ForEach(ExportFormat.allCases) { f in
-                    Button { vm.export(f) } label: { Label("Export \(f.label)", systemImage: "square.and.arrow.up") }
-                }
-            } label: { Image(systemName: "ellipsis.circle") }
-        }
-    }
-
-    // MARK: Panels
+    // MARK: Tools
 
     private var toolStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 ForEach(Tool.allCases) { t in
-                    Button { tool = (tool == t) ? nil : t } label: {
-                        VStack(spacing: 3) {
-                            Image(systemName: t.icon).font(.title3)
-                            Text(t.rawValue).font(.caption2)
+                    Button { withAnimation(.easeOut(duration: 0.15)) { tool = (tool == t) ? nil : t } } label: {
+                        VStack(spacing: 2) {
+                            Image(systemName: t.icon).font(.system(size: 19))
+                            Text(t.rawValue).font(.system(size: 10))
                         }
-                        .frame(width: 66, height: 48)
-                        .foregroundStyle(tool == t ? Color.accentColor : Color.secondary)
+                        .frame(width: 62, height: 46)
+                        .foregroundStyle(tool == t ? Theme.accent : Color(white: 0.6))
                     }
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 6)
         }
-        .padding(.vertical, 6)
-        .background(Color(white: 0.1))
+        .frame(height: 50)
+        .background(Theme.bar)
     }
 
     @ViewBuilder

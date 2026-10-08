@@ -1,32 +1,31 @@
 import SwiftUI
 import Photos
+import CoreImage
 
-private let renderQueue = DispatchQueue(label: "lumen.render", qos: .userInitiated)
-
-/// Lets a queued render notice it has been superseded by a newer slider value.
-private final class Generation: @unchecked Sendable {
-    private var v = 0
-    private let lock = NSLock()
-    func next() -> Int { lock.lock(); defer { lock.unlock() }; v += 1; return v }
-    var value: Int { lock.lock(); defer { lock.unlock() }; return v }
-}
+private let histQueue = DispatchQueue(label: "lumen.hist", qos: .utility)
+private let workQueue = DispatchQueue(label: "lumen.work", qos: .userInitiated)
 
 struct ExportResult: Identifiable {
     let id = UUID()
     let url: URL
 }
 
+enum MaskTab: String, CaseIterable, Identifiable {
+    case shape = "Shape", adjust = "Adjust"
+    var id: String { rawValue }
+}
+
 @MainActor
 final class EditorViewModel: ObservableObject {
     let item: LibraryItem
+    let canvas = CanvasModel()
 
     @Published var settings = EditSettings() {
         didSet { if settings != oldValue { settingsChanged(from: oldValue) } }
     }
     @Published var showOriginal = false { didSet { requestRender() } }
-    @Published private(set) var preview: UIImage?
     @Published private(set) var histogram: HistogramData?
-    @Published private(set) var maskOverlay: UIImage?
+    @Published private(set) var imageSize: CGSize = .zero
     @Published private(set) var isLoading = true
     @Published private(set) var loadFailed = false
     @Published var isExporting = false
@@ -36,14 +35,24 @@ final class EditorViewModel: ObservableObject {
 
     // Mask editing
     @Published var maskEditing = false { didSet { requestRender() } }
+    @Published var maskTab: MaskTab = .shape { didSet { requestRender() } }
+    @Published var overlayEnabled = true { didSet { requestRender() } }
+    @Published var peekOverlay = false { didSet { requestRender() } }
     @Published var selectedMaskID: UUID? { didSet { requestRender() } }
-    @Published var brushSize = 0.05
+    @Published var selectedComponentID: UUID?
+    @Published var brushSize = 0.06
     @Published var brushErase = false
+    @Published var colorAddMode = false
+    @Published private(set) var autoMaskBusy = false
+    @Published private(set) var autoMaskMissing: Set<String> = []
 
     private var session: EditSession?
+    private var source: ImageSource?
     private weak var store: LibraryStore?
-    private let generation = Generation()
     private var started = false
+    private var histPending = false
+    private var histImage: CIImage?
+    private var saveWork: DispatchWorkItem?
 
     // Undo / redo
     private var undoStack: [EditSettings] = []
@@ -56,6 +65,15 @@ final class EditorViewModel: ObservableObject {
     init(item: LibraryItem) { self.item = item }
 
     var selectedMask: Mask? { settings.masks.first { $0.id == selectedMaskID } }
+    var selectedComponent: MaskComponent? {
+        guard let m = selectedMask else { return nil }
+        return m.components.first { $0.id == selectedComponentID } ?? m.components.first
+    }
+    var overlayVisible: Bool {
+        maskEditing && !showOriginal && selectedMask != nil && ((maskTab == .shape && overlayEnabled) || peekOverlay)
+    }
+
+    // MARK: Loading
 
     func start(store: LibraryStore) {
         guard !started else { return }
@@ -65,14 +83,18 @@ final class EditorViewModel: ObservableObject {
         settings = store.settings(for: item)
         applyingHistory = false
         let url = store.fileURL(item)
-        renderQueue.async {
+        workQueue.async {
             let s = EditSession(url: url)
+            let src = s?.makeSource(maxEdge: 2560, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.session = s
+                self.source = src
                 self.isLoading = false
-                self.loadFailed = (s == nil)
+                self.loadFailed = (src == nil)
+                if let src { self.imageSize = src.size }
                 self.requestRender()
+                self.prepareAutoMasksIfNeeded()
             }
         }
     }
@@ -86,32 +108,77 @@ final class EditorViewModel: ObservableObject {
             }
             lastChange = Date()
         }
-        store?.save(settings, for: item)
+        scheduleSave()
         requestRender()
+        if settings.masks != old.masks { prepareAutoMasksIfNeeded() }
     }
 
-    private func requestRender() {
-        guard let session else { return }
-        let gen = generation.next()
-        let editing = showOriginal ? EditSettings() : settings
+    private func scheduleSave() {
+        saveWork?.cancel()
+        let s = settings, item = item
+        let work = DispatchWorkItem { [weak store] in
+            Task { @MainActor in store?.save(s, for: item) }
+        }
+        saveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    func flushSave() {
+        saveWork?.cancel()
+        store?.save(settings, for: item)
+    }
+
+    // MARK: Rendering
+
+    /// Rebuilds the (lazy) graph and hands it to the Metal view. Cheap enough to call on every slider tick.
+    func requestRender() {
+        guard let session, let source else { return }
+        let s = showOriginal ? EditSettings() : settings
         let skipGeometry = maskEditing && !showOriginal
-        let overlayMask = (maskEditing && !showOriginal) ? selectedMask : nil
-        let generation = generation
-        renderQueue.async {
-            if generation.value != gen { return }
-            guard let cg = session.render(editing, maxEdge: 2200, skipGeometry: skipGeometry) else { return }
-            if generation.value != gen { return }
-            let img = UIImage(cgImage: cg)
-            let hist = Histogram.compute(cg)
-            var overlay: UIImage?
-            if let overlayMask, let o = session.renderMaskOverlay(editing, mask: overlayMask, maxEdge: 2200) {
-                overlay = UIImage(cgImage: o)
+        var img = session.develop(s, source: source, geometry: !skipGeometry)
+        let base = img
+        if overlayVisible, let m = selectedMask {
+            img = session.overlay(img, mask: m, source: source, gain: exp2(s.exposure))
+        }
+        if img.extent.size != imageSize { imageSize = img.extent.size }
+        canvas.update(img)
+        scheduleHistogram(base)
+    }
+
+    private func scheduleHistogram(_ img: CIImage) {
+        histImage = img
+        guard !histPending else { return }
+        histPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self, let img = self.histImage else { return }
+            self.histPending = false
+            histQueue.async {
+                let e = img.extent
+                let k = 160 / max(e.width, e.height)
+                let small = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+                guard let cg = LumenGPU.context.createCGImage(small, from: small.extent, format: .RGBA8,
+                                                              colorSpace: LumenGPU.displaySpace) else { return }
+                let h = Histogram.compute(cg)
+                Task { @MainActor [weak self] in self?.histogram = h }
             }
+        }
+    }
+
+    private func prepareAutoMasksIfNeeded() {
+        guard let session, let source, !autoMaskBusy else { return }
+        let needs = settings.masks.contains { m in m.components.contains { $0.kind.isAutomatic } }
+        guard needs else { return }
+        let snapshot = settings
+        autoMaskBusy = true
+        workQueue.async {
+            session.prepareAutoMasks(snapshot, source: source)
+            let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky].filter { source.hasTried($0) && source.cachedMask($0) == nil })
             Task { @MainActor [weak self] in
-                guard generation.value == gen else { return }
-                self?.preview = img
-                self?.histogram = hist
-                self?.maskOverlay = overlay
+                guard let self else { return }
+                self.autoMaskBusy = false
+                self.autoMaskMissing = missing
+                self.requestRender()
+                self.prepareAutoMasksIfNeeded()   // masks may have changed while we were busy
             }
         }
     }
@@ -138,14 +205,15 @@ final class EditorViewModel: ObservableObject {
 
     func reset() { settings = EditSettings() }
 
+    func auto() {
+        guard let session, let source else { return }
+        settings = session.autoSettings(source: source, current: settings)
+    }
+
     // MARK: Presets
 
-    func apply(preset edits: EditSettings, keepsWhiteBalance: Bool = true) {
+    func apply(preset edits: EditSettings) {
         var s = edits
-        if keepsWhiteBalance && s.temperature == 0 && s.tint == 0 {
-            s.temperature = settings.temperature
-            s.tint = settings.tint
-        }
         s.masks = settings.masks
         s.straighten = settings.straighten
         s.quarterTurns = settings.quarterTurns
@@ -153,6 +221,10 @@ final class EditorViewModel: ObservableObject {
         s.cropZoom = settings.cropZoom
         s.cropX = settings.cropX
         s.cropY = settings.cropY
+        if s.temperature == 0 && s.tint == 0 {
+            s.temperature = settings.temperature
+            s.tint = settings.tint
+        }
         settings = s
     }
 
@@ -163,7 +235,7 @@ final class EditorViewModel: ObservableObject {
     }
 
     func loadPresetThumbs(user: [UserPreset]) {
-        guard let session else { return }
+        guard let session, presetThumbs.isEmpty || presetThumbs.count < Preset.all.count + user.count else { return }
         var jobs: [(String, EditSettings)] = Preset.all.map { p in
             var s = EditSettings()
             p.apply(&s)
@@ -171,11 +243,12 @@ final class EditorViewModel: ObservableObject {
         }
         jobs += user.map { ($0.id.uuidString, $0.settings) }
         let turns = settings.quarterTurns
-        renderQueue.async {
+        workQueue.async {
+            guard let thumbSource = session.makeSource(maxEdge: 200, materialize: false) else { return }
             for (key, var s) in jobs {
                 s.masks = []
                 s.quarterTurns = turns
-                guard let cg = session.render(s, maxEdge: 180) else { continue }
+                guard let cg = session.renderCGImage(s, source: thumbSource) else { continue }
                 let img = UIImage(cgImage: cg)
                 Task { @MainActor [weak self] in self?.presetThumbs[key] = img }
             }
@@ -185,9 +258,39 @@ final class EditorViewModel: ObservableObject {
     // MARK: Masks
 
     func addMask(_ kind: MaskKind) {
-        let m = Mask.make(kind)
+        var m = Mask.make(kind)
+        m.name = uniqueName(kind.title)
         settings.masks.append(m)
         selectedMaskID = m.id
+        selectedComponentID = m.components.first?.id
+        maskTab = .shape
+        overlayEnabled = true
+    }
+
+    private func uniqueName(_ base: String) -> String {
+        let n = settings.masks.filter { $0.name.hasPrefix(base) }.count
+        return n == 0 ? base : "\(base) \(n + 1)"
+    }
+
+    func selectMask(_ id: UUID) {
+        selectedMaskID = id
+        selectedComponentID = settings.masks.first { $0.id == id }?.components.first?.id
+    }
+
+    func addComponent(_ kind: MaskKind, op: MaskOp) {
+        guard let id = selectedMaskID else { return }
+        let c = MaskComponent.make(kind, op: op)
+        updateMask(id) { $0.components.append(c) }
+        selectedComponentID = c.id
+        overlayEnabled = true
+    }
+
+    func deleteComponent(_ cid: UUID) {
+        guard let id = selectedMaskID else { return }
+        updateMask(id) { m in
+            if m.components.count > 1 { m.components.removeAll { $0.id == cid } }
+        }
+        selectedComponentID = selectedMask?.components.first?.id
     }
 
     func updateMask(_ id: UUID, _ change: (inout Mask) -> Void) {
@@ -195,33 +298,67 @@ final class EditorViewModel: ObservableObject {
         change(&settings.masks[i])
     }
 
-    func deleteMask(_ id: UUID) {
-        settings.masks.removeAll { $0.id == id }
-        if selectedMaskID == id { selectedMaskID = settings.masks.last?.id }
-    }
-
-    func beginStroke(_ p: Pt) {
-        guard let id = selectedMaskID else { return }
-        let stroke = BrushStroke(points: [p], size: brushSize, erase: brushErase)
-        updateMask(id) { $0.strokes.append(stroke) }
-    }
-
-    func extendStroke(_ p: Pt) {
+    func updateComponent(_ cid: UUID, _ change: (inout MaskComponent) -> Void) {
         guard let id = selectedMaskID else { return }
         updateMask(id) { m in
-            guard var last = m.strokes.popLast() else { return }
-            if let prev = last.points.last, hypot(prev.x - p.x, prev.y - p.y) < 0.002 {
-                m.strokes.append(last)
-                return
-            }
-            last.points.append(p)
-            m.strokes.append(last)
+            guard let i = m.components.firstIndex(where: { $0.id == cid }) else { return }
+            change(&m.components[i])
         }
     }
 
-    func pickColor(at p: Pt) {
-        guard let id = selectedMaskID, let c = preview?.rgb(atNormalized: CGPoint(x: p.x, y: p.y)) else { return }
-        updateMask(id) { $0.colorR = c.0; $0.colorG = c.1; $0.colorB = c.2 }
+    func deleteMask(_ id: UUID) {
+        settings.masks.removeAll { $0.id == id }
+        if selectedMaskID == id {
+            if let last = settings.masks.last { selectMask(last.id) } else { selectedMaskID = nil; selectedComponentID = nil }
+        }
+    }
+
+    func beginStroke(_ p: Pt) {
+        guard let c = selectedComponent, c.kind == .brush else { return }
+        let stroke = BrushStroke(points: [p], size: brushSize, erase: brushErase)
+        updateComponent(c.id) { $0.strokes.append(stroke) }
+    }
+
+    func extendStroke(_ p: Pt) {
+        guard let c = selectedComponent, c.kind == .brush else { return }
+        updateComponent(c.id) { comp in
+            guard var last = comp.strokes.popLast() else { return }
+            if let prev = last.points.last, hypot(prev.x - p.x, prev.y - p.y) < 0.002 {
+                comp.strokes.append(last)
+                return
+            }
+            last.points.append(p)
+            comp.strokes.append(last)
+        }
+    }
+
+    /// Tap on the photo while a colour or luminance mask is selected.
+    func pick(at p: Pt, addToSelection: Bool = false) {
+        guard let c = selectedComponent, let source else { return }
+        let rgb = source.stats.average(atNormalized: p.x, p.y, radius: 1)
+        switch c.kind {
+        case .color:
+            let sample = ColorSample(r: Double(rgb.x), g: Double(rgb.y), b: Double(rgb.z))
+            updateComponent(c.id) { comp in
+                if addToSelection && comp.samples.count < 4 { comp.samples.append(sample) } else { comp.samples = [sample] }
+            }
+        case .luminance:
+            let y = Double(Ok.encode(0.22897 * rgb.x * Float(exp2(settings.exposure))
+                                     + 0.69174 * rgb.y * Float(exp2(settings.exposure))
+                                     + 0.07929 * rgb.z * Float(exp2(settings.exposure))))
+            updateComponent(c.id) { comp in
+                comp.lumLow = max(0, y - 0.12)
+                comp.lumHigh = min(1, y + 0.12)
+                comp.lumLowFeather = 0.12
+                comp.lumHighFeather = 0.12
+            }
+        default: break
+        }
+    }
+
+    /// Display colour of a stored sample (for swatches).
+    static func swatch(_ s: ColorSample) -> Color {
+        Color(.displayP3, red: Double(Ok.encode(Float(s.r))), green: Double(Ok.encode(Float(s.g))), blue: Double(Ok.encode(Float(s.b))))
     }
 
     // MARK: Export
@@ -231,7 +368,7 @@ final class EditorViewModel: ObservableObject {
         isExporting = true
         let s = settings
         let name = item.displayName
-        renderQueue.async {
+        workQueue.async {
             let data = session.renderData(s, format: format, quality: 0.92)
             var url: URL?
             if let data {
@@ -259,28 +396,5 @@ final class EditorViewModel: ObservableObject {
         } catch {
             message = "Couldn't save: \(error.localizedDescription)"
         }
-    }
-}
-
-extension UIImage {
-    /// Average colour of a small window around a normalised point (0...1, top-left origin).
-    func rgb(atNormalized p: CGPoint) -> (Double, Double, Double)? {
-        guard let cg = cgImage else { return nil }
-        let half = 4
-        let x = Int(min(max(p.x, 0), 1) * CGFloat(cg.width - 1))
-        let y = Int(min(max(p.y, 0), 1) * CGFloat(cg.height - 1))
-        let rect = CGRect(x: max(0, x - half), y: max(0, y - half), width: half * 2 + 1, height: half * 2 + 1)
-            .intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
-        guard let crop = cg.cropping(to: rect), let cs = CGColorSpace(name: CGColorSpace.displayP3) else { return nil }
-        var px = [UInt8](repeating: 0, count: 4)
-        let ok: Bool = px.withUnsafeMutableBytes { ptr in
-            guard let ctx = CGContext(data: ptr.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
-                                      space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
-            ctx.interpolationQuality = .high
-            ctx.draw(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-            return true
-        }
-        guard ok else { return nil }
-        return (Double(px[0]) / 255, Double(px[1]) / 255, Double(px[2]) / 255)
     }
 }

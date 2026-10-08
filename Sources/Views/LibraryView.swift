@@ -20,6 +20,7 @@ struct LibraryView: View {
     @EnvironmentObject var store: LibraryStore
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var showFileImporter = false
+    @State private var showPhotoPicker = false
     @State private var filter: LibraryFilter = .all
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
@@ -63,13 +64,26 @@ struct LibraryView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        PhotosPicker(selection: $pickerItems, matching: .images, photoLibrary: .shared()) {
+                        Button { showPhotoPicker = true } label: {
                             Label("From Photos", systemImage: "photo")
                         }
                         Button { showFileImporter = true } label: {
                             Label("From Files / SD card", systemImage: "folder")
                         }
                     } label: { Image(systemName: "plus") }
+                }
+            }
+            // The picker must live outside the Menu: inside it, the picker is torn down as the menu closes.
+            .photosPicker(isPresented: $showPhotoPicker, selection: $pickerItems, maxSelectionCount: 50,
+                          matching: .images, preferredItemEncoding: .current, photoLibrary: .shared())
+            .overlay {
+                if store.importing {
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("Importing \(min(store.importDone + 1, store.importTotal)) of \(store.importTotal)…").font(.footnote)
+                    }
+                    .padding(22)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
                 }
             }
             .onChange(of: pickerItems) { _, new in

@@ -22,6 +22,9 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var userPresets: [UserPreset] = []
     @Published var clipboard: EditSettings?
     @Published var lastError: String?
+    @Published var importing = false
+    @Published var importTotal = 0
+    @Published var importDone = 0
 
     private let fm = FileManager.default
     private let root: URL
@@ -57,9 +60,21 @@ final class LibraryStore: ObservableObject {
     // MARK: Edits
 
     func settings(for item: LibraryItem) -> EditSettings {
-        guard let data = try? Data(contentsOf: editURL(item)),
-              let s = try? JSONDecoder().decode(EditSettings.self, from: data) else { return EditSettings() }
-        return s
+        guard let data = try? Data(contentsOf: editURL(item)) else { return EditSettings() }
+        let decoder = JSONDecoder()
+        if let s = try? decoder.decode(EditSettings.self, from: data) { return s }
+        // Older sidecar: lay its values over today's defaults, dropping anything that no longer fits.
+        guard var old = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let defaults = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(EditSettings()))) as? [String: Any]
+        else { return EditSettings() }
+        old = old.filter { defaults[$0.key] != nil }
+        for dropping in [[], ["masks"]] as [[String]] {
+            var merged = defaults
+            for (k, v) in old where !dropping.contains(k) { merged[k] = v }
+            if let d = try? JSONSerialization.data(withJSONObject: merged),
+               let s = try? decoder.decode(EditSettings.self, from: d) { return s }
+        }
+        return EditSettings()
     }
 
     func save(_ s: EditSettings, for item: LibraryItem) {
@@ -124,19 +139,25 @@ final class LibraryStore: ObservableObject {
     }
 
     func importPicked(_ picked: [PhotosPickerItem]) async {
+        guard !picked.isEmpty else { return }
+        importing = true
+        importTotal = picked.count
+        importDone = 0
+        defer { importing = false }
+        // Asking for read access lets us fetch the true RAW/ProRAW original; the picker works without it too.
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         let canFetch = status == .authorized || status == .limited
         for p in picked {
+            defer { importDone += 1 }
             if canFetch, let id = p.itemIdentifier, await importAsset(identifier: id) { continue }
-            // Fallback: whatever version the picker hands us (may not be the RAW original).
-            if let data = try? await p.loadTransferable(type: Data.self) {
-                let ext = p.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
-                let tmp = fm.temporaryDirectory.appendingPathComponent("picked-\(UUID().uuidString).\(ext)")
+            // Fallback: whatever the picker hands us (RAW file when it has one, otherwise the rendered photo).
+            if let file = try? await p.loadTransferable(type: PickedFile.self) {
                 do {
-                    try data.write(to: tmp)
-                    try add(copying: tmp, name: "Photo")
-                    try? fm.removeItem(at: tmp)
+                    try add(copying: file.url, name: file.name)
+                    try? fm.removeItem(at: file.url)
                 } catch { lastError = error.localizedDescription }
+            } else {
+                lastError = "Couldn't read that photo from your library."
             }
         }
     }
@@ -184,14 +205,31 @@ final class LibraryStore: ObservableObject {
 
     func refreshThumbnail(_ item: LibraryItem) {
         let src = fileURL(item), dst = thumbURL(item)
-        var settings = settings(for: item)
-        settings.masks = settings.masks.filter { $0.kind != .subject && $0.kind != .background } // avoid Vision per thumbnail
+        let settings = settings(for: item)
         thumbQueue.async {
             guard let session = EditSession(url: src),
-                  let cg = session.render(settings, maxEdge: 600),
+                  let cg = session.renderCGImage(settings, maxEdge: 640),
                   let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else { return }
             try? jpg.write(to: dst, options: .atomic)
             Task { @MainActor [weak self] in self?.thumbVersion += 1 }
         }
+    }
+}
+
+/// A photo handed over by the Photos picker, copied somewhere we can keep it.
+struct PickedFile: Transferable {
+    let url: URL
+    let name: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .rawImage) { received in try Self.copy(received.file) }
+        FileRepresentation(importedContentType: .image) { received in try Self.copy(received.file) }
+    }
+
+    private static func copy(_ src: URL) throws -> PickedFile {
+        let ext = src.pathExtension.isEmpty ? "jpg" : src.pathExtension
+        let dst = FileManager.default.temporaryDirectory.appendingPathComponent("picked-\(UUID().uuidString).\(ext)")
+        try FileManager.default.copyItem(at: src, to: dst)
+        return PickedFile(url: dst, name: src.deletingPathExtension().lastPathComponent)
     }
 }
