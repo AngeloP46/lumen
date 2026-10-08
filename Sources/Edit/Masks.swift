@@ -3,81 +3,184 @@ import CoreImage.CIFilterBuiltins
 import CoreGraphics
 import Vision
 
-/// Local adjustments: each Mask is rendered to an opaque grey image (white = fully affected),
-/// the mask's own adjustments are applied to a copy of the picture, and the two are blended through the mask.
+/// Local adjustments. Every mask becomes one grey image (white = fully affected). Each mask's slider offsets are
+/// multiplied by that image and summed into five "parameter planes" the develop kernel reads per pixel, so any
+/// number of overlapping masks cost almost nothing at render time.
 extension EditSession {
-    func applyMasks(_ input: CIImage, _ s: EditSettings, scale: CGFloat) -> CIImage {
-        var cur = input
-        let ext = input.extent
-        for m in s.masks where !m.adjust.isNeutral {
-            let mask = maskImage(m, over: cur)
-            let local = localAdjust(cur, m.adjust, scale: scale).cropped(to: ext)
-            cur = local.applyingFilter("CIBlendWithMask", parameters: [
-                kCIInputBackgroundImageKey: cur,
-                kCIInputMaskImageKey: mask,
-            ])
-        }
-        return cur
-    }
+    static let aiSubject = "subject"
+    static let aiSky = "sky"
 
-    /// Linear in, linear out.
-    private func localAdjust(_ img: CIImage, _ a: LocalAdjust, scale: CGFloat) -> CIImage {
-        var x = img
-        if a.exposure != 0 { x = x.applyingFilter("CIExposureAdjust", parameters: [kCIInputEVKey: a.exposure]) }
-        x = Self.temperatureTint(x, a.temperature, a.tint)
-        x = Self.toGamma(x)
-        x = Self.toneAdjust(x, blacks: 0, shadows: a.shadows, highlights: a.highlights, whites: 0)
-        x = Self.colorControls(x, saturation: a.saturation, contrast: a.contrast)
-        if a.clarity != 0 { x = Self.localContrast(x, radius: max(2, 40 * scale), amount: a.clarity / 100 * 0.8) }
-        if a.sharpness > 0 {
-            let f = CIFilter.sharpenLuminance()
-            f.inputImage = x
-            f.sharpness = Float(a.sharpness / 100 * 1.5)
-            f.radius = Float(max(0.6, 1.2 * scale))
-            x = f.outputImage ?? x
+    // MARK: Planes
+
+    func localPlanes(_ s: EditSettings, source: ImageSource) -> [CIImage]? {
+        guard let k = LumenKernels.shared else { return nil }
+        let active = s.masks.filter { !$0.adjust.isNeutral }
+        guard !active.isEmpty else { return nil }
+        let ext = source.extent
+        var planes = (0..<5).map { _ in Self.constant(0, ext) }
+        let gain = exp2(s.exposure)
+        for m in active {
+            guard let mask = maskImage(m, source: source, gain: gain) else { continue }
+            let a = m.adjust
+            let vs: [CIVector] = [
+                CIVector(x: a.exposure / 4, y: a.contrast / 100, z: a.highlights / 100, w: 0),
+                CIVector(x: a.shadows / 100, y: a.whites / 100, z: a.blacks / 100, w: 0),
+                CIVector(x: a.temperature / 100, y: a.tint / 100, z: a.saturation / 100, w: 0),
+                CIVector(x: a.clarity / 100, y: a.texture / 100, z: a.dehaze / 100, w: 0),
+                CIVector(x: a.sharpness / 100 * 0.9, y: a.noise / 100, z: 0, w: 0),
+            ]
+            for i in 0..<5 where vs[i].x != 0 || vs[i].y != 0 || vs[i].z != 0 {
+                planes[i] = k.accum.apply(extent: ext, arguments: [planes[i], mask, vs[i]]) ?? planes[i]
+            }
         }
-        return Self.toLinear(x)
+        return planes
     }
 
     // MARK: Mask images
 
-    func maskImage(_ m: Mask, over base: CIImage) -> CIImage {
-        let ext = base.extent
-        var mask: CIImage
-        switch m.kind {
-        case .linear: mask = linearMask(m, ext)
-        case .radial: mask = radialMask(m, ext)
-        case .brush: mask = brushMask(m, ext)
-        case .subject: mask = subjectMask(base, ext) ?? Self.constant(0, ext)
-        case .background:
-            let subject = subjectMask(base, ext) ?? Self.constant(0, ext)
-            mask = subject.applyingFilter("CIColorInvert")
-        case .luminance: mask = luminanceMask(m, base)
-        case .color: mask = colorMask(m, base)
+    /// The finished grey image for a whole mask (components combined, inverted, opacity applied).
+    func maskImage(_ m: Mask, source: ImageSource, gain: Double) -> CIImage? {
+        guard let k = LumenKernels.shared else { return nil }
+        var acc: CIImage?
+        for c in m.components {
+            var ci = componentImage(c, source: source, gain: gain)
+            if c.invert { ci = k.maskFinish.apply(extent: source.extent, arguments: [ci, CIVector(x: 1, y: 1, z: 0, w: 0)]) ?? ci }
+            if let a = acc {
+                let op: Double = c.op == .add ? 0 : (c.op == .subtract ? 1 : 2)
+                acc = k.combine.apply(extent: source.extent, arguments: [a, ci, CIVector(x: op, y: 0, z: 0, w: 0)])
+            } else {
+                acc = ci
+            }
         }
-        if m.invert { mask = mask.applyingFilter("CIColorInvert") }
-        if m.amount < 100 {
-            let k = m.amount / 100
-            mask = mask.applyingFilter("CIColorMatrix", parameters: [
-                "inputRVector": CIVector(x: k, y: 0, z: 0, w: 0),
-                "inputGVector": CIVector(x: 0, y: k, z: 0, w: 0),
-                "inputBVector": CIVector(x: 0, y: 0, z: k, w: 0),
-            ])
+        guard let a = acc else { return nil }
+        if m.invert || m.amount < 100 {
+            return k.maskFinish.apply(extent: source.extent,
+                                      arguments: [a, CIVector(x: m.invert ? 1 : 0, y: m.amount / 100, z: 0, w: 0)]) ?? a
         }
-        return mask.cropped(to: ext)
+        return a
     }
 
-    private static func constant(_ v: CGFloat, _ ext: CGRect) -> CIImage {
-        CIImage(color: CIColor(red: v, green: v, blue: v)).cropped(to: ext)
+    /// Red tint over `img` showing where `mask` applies.
+    func overlay(_ img: CIImage, mask: Mask, source: ImageSource, gain: Double) -> CIImage {
+        guard let k = LumenKernels.shared, let m = maskImage(mask, source: source, gain: gain) else { return img }
+        return k.overlay.apply(extent: img.extent, arguments: [img, m, CIVector(x: 1.0, y: 0.1, z: 0.12, w: 0.55)]) ?? img
     }
 
-    /// Normalised (top-left origin) point -> Core Image pixel coordinates.
     private static func pixel(_ x: Double, _ y: Double, _ ext: CGRect) -> CGPoint {
         CGPoint(x: ext.minX + CGFloat(x) * ext.width, y: ext.minY + CGFloat(1 - y) * ext.height)
     }
 
+    func componentImage(_ c: MaskComponent, source: ImageSource, gain: Double) -> CIImage {
+        let k = LumenKernels.shared!
+        let ext = source.extent
+        let zero = Self.constant(0, ext)
+        var img: CIImage
+        switch c.kind {
+        case .linear:
+            let a = Self.pixel(c.x0, c.y0, ext), b = Self.pixel(c.x1, c.y1, ext)
+            img = k.linearMask.apply(extent: ext, arguments: [source.base,
+                                                              CIVector(x: a.x, y: a.y, z: b.x, w: b.y),
+                                                              CIVector(x: 0, y: 0, z: 0, w: 0)]) ?? zero
+        case .radial:
+            let ctr = Self.pixel(c.x0, c.y0, ext)
+            let ang = c.angle * .pi / 180
+            img = k.radialMask.apply(extent: ext, arguments: [
+                source.base,
+                CIVector(x: ctr.x, y: ctr.y, z: max(0.01, c.x1) * ext.width, w: max(0.01, c.y1) * ext.height),
+                CIVector(x: cos(ang), y: sin(ang), z: c.feather / 100, w: 0)]) ?? zero
+        case .brush:
+            img = brushImage(c, source: source) ?? zero
+        case .subject:
+            img = source.cachedMask(Self.aiSubject) ?? zero
+        case .background:
+            let subject = source.cachedMask(Self.aiSubject)
+            img = subject.map { k.maskFinish.apply(extent: ext, arguments: [$0, CIVector(x: 1, y: 1, z: 0, w: 0)]) ?? $0 } ?? zero
+        case .sky:
+            img = source.cachedMask(Self.aiSky) ?? zero
+        case .luminance:
+            img = k.lumMask.apply(extent: ext, arguments: [
+                source.base,
+                CIVector(x: c.lumLow, y: c.lumHigh, z: c.lumLowFeather, w: c.lumHighFeather),
+                CIVector(x: gain, y: 0, z: 0, w: 0)]) ?? zero
+        case .color:
+            var vs = [CIVector](repeating: CIVector(x: 0, y: 0, z: 0, w: 0), count: 4)
+            for (i, smp) in c.samples.prefix(4).enumerated() {
+                let lab = Self.lab(of: SIMD3(Float(smp.r), Float(smp.g), Float(smp.b)), gain: gain)
+                vs[i] = CIVector(x: Double(lab.0), y: Double(lab.1), z: Double(lab.2), w: 1)
+            }
+            img = k.colorMask.apply(extent: ext, arguments: [
+                source.base, vs[0], vs[1], vs[2], vs[3],
+                CIVector(x: c.tolerance, y: 0.3 + c.feather / 100 * 0.7, z: 0, w: 0),
+                CIVector(x: gain, y: 0, z: 0, w: 0)]) ?? zero
+        }
+        if c.kind.isAutomatic, c.feather > 0 {
+            img = Self.blur(img, c.feather / 100 * 0.006 * source.longEdge, ext)
+        }
+        return img
+    }
+
+    /// OkLab of a linear colour after the same soft compression the colour-range kernel uses.
+    static func lab(of rgb: SIMD3<Float>, gain: Double) -> (Float, Float, Float) {
+        let c = SIMD3(max(rgb.x * Float(gain), 0), max(rgb.y * Float(gain), 0), max(rgb.z * Float(gain), 0))
+        let t = c / (SIMD3<Float>(1, 1, 1) + c)
+        return Ok.toLab(t.x, t.y, t.z)
+    }
+
+    // MARK: Brush
+
+    private func brushImage(_ c: MaskComponent, source: ImageSource) -> CIImage? {
+        if let hit = source.cachedRaster(c) { return hit }
+        let ext = source.extent
+        let longSide = max(ext.width, ext.height)
+        let mw = max(1, Int(1024 * ext.width / longSide))
+        let mh = max(1, Int(1024 * ext.height / longSide))
+        guard let gctx = CGContext(data: nil, width: mw, height: mh, bitsPerComponent: 8, bytesPerRow: 0,
+                                   space: CGColorSpaceCreateDeviceGray(),
+                                   bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        gctx.setFillColor(gray: 0, alpha: 1)
+        gctx.fill(CGRect(x: 0, y: 0, width: mw, height: mh))
+        gctx.setLineCap(.round)
+        gctx.setLineJoin(.round)
+        let side = CGFloat(max(mw, mh))
+        func cg(_ p: Pt) -> CGPoint { CGPoint(x: CGFloat(p.x) * CGFloat(mw), y: CGFloat(1 - p.y) * CGFloat(mh)) }
+        var refPoints: [Pt] = []
+        for st in c.strokes {
+            guard let first = st.points.first else { continue }
+            gctx.setStrokeColor(gray: st.erase ? 0 : 1, alpha: 1)
+            gctx.setLineWidth(max(1, CGFloat(st.size) * side))
+            gctx.beginPath()
+            gctx.move(to: cg(first))
+            gctx.addLine(to: cg(first))
+            for p in st.points.dropFirst() { gctx.addLine(to: cg(p)) }
+            gctx.strokePath()
+            if !st.erase { refPoints.append(contentsOf: st.points) }
+        }
+        guard let image = gctx.makeImage() else { return nil }
+        var ci = Self.expandRed(CIImage(cgImage: image, options: [.colorSpace: NSNull()]))
+        let blurRadius = c.feather / 100 * 0.03 * Double(side)
+        if blurRadius > 0.5 { ci = Self.blur(ci, CGFloat(blurRadius), ci.extent) }
+        var out = Self.fit(ci, to: ext)
+
+        if c.autoMask, !refPoints.isEmpty, let k = LumenKernels.shared {
+            // Edge-aware: keep only pixels whose colour resembles what was painted over.
+            var sum = SIMD3<Float>(0, 0, 0)
+            let step = max(1, refPoints.count / 24)
+            var n: Float = 0
+            for (i, p) in refPoints.enumerated() where i % step == 0 {
+                sum += source.stats.average(atNormalized: p.x, p.y, radius: 1)
+                n += 1
+            }
+            let lab = Self.lab(of: sum / max(n, 1), gain: 1)
+            let sim = k.similarMask.apply(extent: ext, arguments: [
+                source.base, CIVector(x: Double(lab.0), y: Double(lab.1), z: Double(lab.2), w: 0.16)])
+            if let sim { out = k.maskMul.apply(extent: ext, arguments: [out, sim]) ?? out }
+        }
+        source.storeRaster(c, out)
+        return out
+    }
+
     /// Single-channel images come in as (v,0,0); copy red into all channels and make it opaque.
-    private static func expandRed(_ i: CIImage) -> CIImage {
+    static func expandRed(_ i: CIImage) -> CIImage {
         let v = CIVector(x: 1, y: 0, z: 0, w: 0)
         return i.applyingFilter("CIColorMatrix", parameters: [
             "inputRVector": v, "inputGVector": v, "inputBVector": v,
@@ -86,7 +189,7 @@ extension EditSession {
         ])
     }
 
-    private static func fit(_ img: CIImage, to ext: CGRect) -> CIImage {
+    static func fit(_ img: CIImage, to ext: CGRect) -> CIImage {
         let e = img.extent
         return img
             .transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
@@ -94,134 +197,46 @@ extension EditSession {
             .transformed(by: CGAffineTransform(translationX: ext.minX, y: ext.minY))
     }
 
-    private func linearMask(_ m: Mask, _ ext: CGRect) -> CIImage {
-        let p0 = Self.pixel(m.x0, m.y0, ext)
-        let p1 = Self.pixel(m.x1, m.y1, ext)
-        guard hypot(p1.x - p0.x, p1.y - p0.y) > 1 else { return Self.constant(1, ext) }
-        let f = CIFilter.linearGradient()
-        f.point0 = p0
-        f.point1 = p1
-        f.color0 = CIColor(red: 1, green: 1, blue: 1)
-        f.color1 = CIColor(red: 0, green: 0, blue: 0)
-        return (f.outputImage ?? Self.constant(0, ext)).cropped(to: ext)
-    }
+    // MARK: Automatic masks (subject, sky)
 
-    private func radialMask(_ m: Mask, _ ext: CGRect) -> CIImage {
-        let unit: CGFloat = 100
-        let inner = max(0, 1 - m.feather / 100)
-        let f = CIFilter.radialGradient()
-        f.center = .zero
-        f.radius0 = Float(inner * Double(unit))
-        f.radius1 = Float(unit)
-        f.color0 = CIColor(red: 1, green: 1, blue: 1)
-        f.color1 = CIColor(red: 0, green: 0, blue: 0)
-        guard let g = f.outputImage else { return Self.constant(0, ext) }
-        let c = Self.pixel(m.x0, m.y0, ext)
-        let rx = CGFloat(max(0.01, m.x1)) * ext.width / unit
-        let ry = CGFloat(max(0.01, m.y1)) * ext.height / unit
-        let t = CGAffineTransform(scaleX: rx, y: ry).concatenating(CGAffineTransform(translationX: c.x, y: c.y))
-        return g.transformed(by: t).cropped(to: ext)
-    }
-
-    private func brushMask(_ m: Mask, _ ext: CGRect) -> CIImage {
-        let longSide = max(ext.width, ext.height)
-        let mw = max(1, Int(1024 * ext.width / longSide))
-        let mh = max(1, Int(1024 * ext.height / longSide))
-        guard let ctx = CGContext(data: nil, width: mw, height: mh, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpaceCreateDeviceGray(),
-                                  bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return Self.constant(0, ext) }
-        ctx.setFillColor(gray: 0, alpha: 1)
-        ctx.fill(CGRect(x: 0, y: 0, width: mw, height: mh))
-        ctx.setLineCap(.round)
-        ctx.setLineJoin(.round)
-        let side = CGFloat(max(mw, mh))
-        func cg(_ p: Pt) -> CGPoint { CGPoint(x: CGFloat(p.x) * CGFloat(mw), y: CGFloat(1 - p.y) * CGFloat(mh)) }
-        for st in m.strokes {
-            guard let first = st.points.first else { continue }
-            ctx.setStrokeColor(gray: st.erase ? 0 : 1, alpha: 1)
-            ctx.setLineWidth(max(1, CGFloat(st.size) * side))
-            ctx.beginPath()
-            ctx.move(to: cg(first))
-            ctx.addLine(to: cg(first))
-            for p in st.points.dropFirst() { ctx.addLine(to: cg(p)) }
-            ctx.strokePath()
+    /// Computes any automatic masks `s` needs and caches them on `source`. Call off the main thread.
+    @discardableResult
+    func prepareAutoMasks(_ s: EditSettings, source: ImageSource) -> Bool {
+        var needSubject = false, needSky = false
+        for m in s.masks {
+            for c in m.components {
+                if c.kind == .subject || c.kind == .background { needSubject = true }
+                if c.kind == .sky { needSky = true }
+            }
         }
-        guard let image = ctx.makeImage() else { return Self.constant(0, ext) }
-        var ci = Self.expandRed(CIImage(cgImage: image, options: [.colorSpace: NSNull()]))
-        let blurRadius = m.feather / 100 * 0.03 * Double(side)
-        if blurRadius > 0.5 {
-            let e = ci.extent
-            let blur = CIFilter.gaussianBlur()
-            blur.inputImage = ci.clampedToExtent()
-            blur.radius = Float(blurRadius)
-            ci = blur.outputImage?.cropped(to: e) ?? ci
+        var computed = false
+        if needSubject, !source.hasTried(Self.aiSubject) {
+            source.storeMask(Self.aiSubject, computeSubject(source))
+            computed = true
         }
-        return Self.fit(ci, to: ext)
-    }
-
-    private func subjectMask(_ base: CIImage, _ ext: CGRect) -> CIImage? {
-        if subjectCache == nil && !subjectTried {
-            subjectTried = true
-            subjectCache = computeSubjectMask(base)
+        if needSky, !source.hasTried(Self.aiSky) {
+            source.storeMask(Self.aiSky, computeSky(source))
+            computed = true
         }
-        guard let c = subjectCache else { return nil }
-        return Self.fit(c, to: ext)
+        return computed
     }
 
     /// Apple's on-device foreground segmentation (Vision, iOS 17+).
-    private func computeSubjectMask(_ base: CIImage) -> CIImage? {
-        let e = base.extent
-        let k = min(1, 1024 / max(e.width, e.height))
-        let small = base.transformed(by: CGAffineTransform(scaleX: k, y: k))
-        guard let cg = Self.context.createCGImage(small, from: small.extent, format: .RGBA8,
-                                                  colorSpace: Self.outputSpace) else { return nil }
+    private func computeSubject(_ source: ImageSource) -> CIImage? {
+        let ext = source.extent
+        let k = min(1, 1024 / max(ext.width, ext.height))
+        let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
+        guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+        else { return nil }
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
         let request = VNGenerateForegroundInstanceMaskRequest()
         do { try handler.perform([request]) } catch { return nil }
         guard let obs = request.results?.first,
               let buffer = try? obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler)
         else { return nil }
-        let ci = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
-        let blur = CIFilter.gaussianBlur()
-        blur.inputImage = ci.clampedToExtent()
-        blur.radius = 1.5
-        return blur.outputImage?.cropped(to: ci.extent) ?? ci
-    }
-
-    private func luminanceMask(_ m: Mask, _ base: CIImage) -> CIImage {
-        let g = Self.toGamma(base)
-        let sm = max(0.02, m.smooth)
-        func luma(_ k: Double, _ b: Double) -> CIImage {
-            let r = CIVector(x: 0.2126 * k, y: 0.7152 * k, z: 0.0722 * k, w: 0)
-            return g.applyingFilter("CIColorMatrix", parameters: [
-                "inputRVector": r, "inputGVector": r, "inputBVector": r,
-                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
-                "inputBiasVector": CIVector(x: b, y: b, z: b, w: 1),
-            ]).applyingFilter("CIColorClamp")
-        }
-        let up = luma(1 / sm, -(m.lumLow - sm) / sm)
-        let down = luma(-1 / sm, (m.lumHigh + sm) / sm)
-        return up.applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: down])
-    }
-
-    private func colorMask(_ m: Mask, _ base: CIImage) -> CIImage {
-        let g = Self.toGamma(base)
-        let shifted = g.applyingFilter("CIColorMatrix", parameters: [
-            "inputBiasVector": CIVector(x: -m.colorR, y: -m.colorG, z: -m.colorB, w: 0),
-        ])
-        let squared = shifted.applyingFilter("CIColorPolynomial", parameters: [
-            "inputRedCoefficients": CIVector(x: 0, y: 0, z: 1, w: 0),
-            "inputGreenCoefficients": CIVector(x: 0, y: 0, z: 1, w: 0),
-            "inputBlueCoefficients": CIVector(x: 0, y: 0, z: 1, w: 0),
-            "inputAlphaCoefficients": CIVector(x: 0, y: 1, z: 0, w: 0),
-        ])
-        let t = max(0.03, m.tolerance)
-        let k = -1 / (t * t)
-        let v = CIVector(x: k, y: k, z: k, w: 0)
-        return squared.applyingFilter("CIColorMatrix", parameters: [
-            "inputRVector": v, "inputGVector": v, "inputBVector": v,
-            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
-            "inputBiasVector": CIVector(x: 1, y: 1, z: 1, w: 1),
-        ]).applyingFilter("CIColorClamp")
+        var ci = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
+        ci = Self.blur(ci, 1.2, ci.extent)
+        if let m = Self.materialized(ci) { ci = m }
+        return Self.fit(ci, to: ext)
     }
 }

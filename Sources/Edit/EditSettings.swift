@@ -41,29 +41,52 @@ struct ColorGrading: Codable, Equatable, Hashable {
 // MARK: - Masks
 
 enum MaskKind: String, Codable, CaseIterable, Identifiable {
-    case brush, linear, radial, subject, background, luminance, color
+    case subject, sky, background, brush, linear, radial, luminance, color
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .subject: "Subject"
+        case .sky: "Sky"
+        case .background: "Background"
         case .brush: "Brush"
         case .linear: "Linear"
         case .radial: "Radial"
-        case .subject: "Subject"
-        case .background: "Background"
         case .luminance: "Luminance"
-        case .color: "Color"
+        case .color: "Colour"
         }
     }
     var icon: String {
         switch self {
+        case .subject: "person.crop.rectangle"
+        case .sky: "cloud.sun"
+        case .background: "mountain.2"
         case .brush: "paintbrush.pointed"
         case .linear: "square.tophalf.filled"
         case .radial: "circle.dashed"
-        case .subject: "person.crop.rectangle"
-        case .background: "mountain.2"
         case .luminance: "circle.lefthalf.filled"
         case .color: "eyedropper"
+        }
+    }
+    /// Kinds that are found automatically and need no shape editing.
+    var isAutomatic: Bool { self == .subject || self == .sky || self == .background }
+}
+
+enum MaskOp: String, Codable, CaseIterable, Identifiable {
+    case add, subtract, intersect
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .add: "Add"
+        case .subtract: "Subtract"
+        case .intersect: "Intersect"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .add: "plus"
+        case .subtract: "minus"
+        case .intersect: "multiply"
         }
     }
 }
@@ -74,43 +97,71 @@ struct BrushStroke: Codable, Equatable, Hashable {
     var erase: Bool
 }
 
-/// Adjustments that only apply inside a mask.
+struct ColorSample: Codable, Equatable, Hashable {
+    var r: Double
+    var g: Double
+    var b: Double
+}
+
+/// Adjustments that only apply inside a mask. Same scale as the global sliders.
 struct LocalAdjust: Codable, Equatable, Hashable {
     var exposure: Double = 0
     var contrast: Double = 0
     var highlights: Double = 0
     var shadows: Double = 0
+    var whites: Double = 0
+    var blacks: Double = 0
     var temperature: Double = 0
     var tint: Double = 0
     var saturation: Double = 0
     var clarity: Double = 0
+    var texture: Double = 0
+    var dehaze: Double = 0
     var sharpness: Double = 0
+    var noise: Double = 0
 
     var isNeutral: Bool { self == LocalAdjust() }
 }
 
-struct Mask: Codable, Equatable, Identifiable, Hashable {
+/// One shape inside a mask. A mask is built by combining components (add / subtract / intersect).
+struct MaskComponent: Codable, Equatable, Identifiable, Hashable {
     var id = UUID()
     var kind: MaskKind
-    var name: String
+    var op: MaskOp = .add
     var invert = false
-    var amount: Double = 100          // overall mask opacity, %
-    var feather: Double = 50          // radial / brush softness, %
+    var feather: Double = 50          // softness, %
     // linear: (x0,y0) = full effect, (x1,y1) = no effect.  radial: centre (x0,y0), radii (x1,y1) as fractions of width/height.
     var x0 = 0.5, y0 = 0.5, x1 = 0.5, y1 = 0.5
+    var angle: Double = 0             // radial rotation, degrees
     var strokes: [BrushStroke] = []
-    var lumLow = 0.0, lumHigh = 0.5, smooth = 0.15
-    var colorR = 0.5, colorG = 0.5, colorB = 0.5, tolerance = 0.3
+    var autoMask = false              // brush: only stick to areas similar to what you painted over
+    var lumLow = 0.0, lumHigh = 0.5   // luminance range (display brightness, 0...1)
+    var lumLowFeather = 0.1, lumHighFeather = 0.1
+    var samples: [ColorSample] = []   // colour range
+    var tolerance = 0.18              // colour range
+
+    static func make(_ kind: MaskKind, op: MaskOp = .add) -> MaskComponent {
+        var c = MaskComponent(kind: kind, op: op)
+        switch kind {
+        case .linear: c.x0 = 0.5; c.y0 = 0.25; c.x1 = 0.5; c.y1 = 0.55
+        case .radial: c.x0 = 0.5; c.y0 = 0.5; c.x1 = 0.3; c.y1 = 0.3
+        case .luminance: c.lumLow = 0.0; c.lumHigh = 0.35
+        default: break
+        }
+        return c
+    }
+}
+
+struct Mask: Codable, Equatable, Identifiable, Hashable {
+    var id = UUID()
+    var name: String
+    var components: [MaskComponent]
+    var invert = false
+    var amount: Double = 100          // overall mask opacity, %
     var adjust = LocalAdjust()
 
     static func make(_ kind: MaskKind) -> Mask {
-        var m = Mask(kind: kind, name: kind.title)
-        switch kind {
-        case .linear: m.x0 = 0.5; m.y0 = 0.25; m.x1 = 0.5; m.y1 = 0.55
-        case .radial: m.x0 = 0.5; m.y0 = 0.5; m.x1 = 0.3; m.y1 = 0.3
-        default: break
-        }
-        return m
+        Mask(name: kind.title, components: [MaskComponent.make(kind)])
     }
 }
 
@@ -130,15 +181,23 @@ struct EditSettings: Codable, Equatable {
     var tint: Double = 0
     var vibrance: Double = 0
     var saturation: Double = 0
+    var blackAndWhite = false
     // Effects
     var texture: Double = 0
     var clarity: Double = 0
     var dehaze: Double = 0
     var vignette: Double = 0       // negative = darker edges
+    var vignetteMidpoint: Double = 50
+    var vignetteFeather: Double = 50
+    var vignetteRoundness: Double = 0
     var grain: Double = 0          // 0...100
+    var grainSize: Double = 25
+    var grainRoughness: Double = 50
     // Detail
     var sharpness: Double = 0      // 0...100
-    var noiseReduction: Double = 0 // 0...100
+    var sharpenMasking: Double = 0 // 0...100
+    var noiseReduction: Double = 0 // 0...100 (luminance)
+    var colorNoise: Double = 0     // 0...100
     // Looks
     var curves = ToneCurves()
     var hsl = HSLSettings()

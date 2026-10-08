@@ -1,0 +1,37 @@
+name: Engine test
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'Sources/Edit/**'
+      - 'Tests/engine/**'
+      - '.github/workflows/engine-test.yml'
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch sample photos
+        run: |
+          mkdir -p samples
+          curl -sL -o samples/a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW"
+          curl -sL -o samples/cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000"
+          curl -sL -o samples/matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000"
+          curl -sL -o samples/falls.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Hopetoun_falls.jpg?width=2000"
+          ls -la samples
+      - name: Build kernels and test tool
+        run: |
+          mkdir -p out
+          xcrun -sdk macosx metal -fcikernel -c Sources/Edit/Kernels.metal -o out/k.air
+          xcrun -sdk macosx metallib -cikernel out/k.air -o out/k.metallib
+          swiftc -O -o out/engine-test \
+            Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift \
+            Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift \
+            Tests/engine/main.swift
+      - name: Run
+        run: ./out/engine-test out/k.metallib samples out/render
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-renders
+          path: out/render
