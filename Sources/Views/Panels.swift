@@ -55,10 +55,9 @@ struct LightPanel: View {
 struct ColorPanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var sel = "Temp"
-    @State private var mix = DemoMode.value("-lumenDemoMix") != nil
     var body: some View {
-        if mix {
-            HSLPanel(vm: vm, back: { mix = false })
+        if vm.colorMix {
+            HSLPanel(vm: vm, back: { vm.colorMix = false })
         } else {
             ParamPanel(items: [
                 vm.param("Temp", \.temperature, track: Tracks.temperature),
@@ -70,7 +69,7 @@ struct ColorPanel: View {
                     PillButton(title: "B&W", system: "circle.lefthalf.filled", active: vm.settings.blackAndWhite) {
                         vm.settings.blackAndWhite.toggle()
                     }
-                    PillButton(title: "Colour mix", system: "paintpalette") { mix = true }
+                    PillButton(title: "Colour mix", system: "paintpalette") { vm.colorMix = true }
                     PillButton(title: "Reset", system: "arrow.counterclockwise") {
                         vm.settings.temperature = 0; vm.settings.tint = 0
                         vm.settings.vibrance = 0; vm.settings.saturation = 0; vm.settings.blackAndWhite = false

@@ -23,24 +23,52 @@ struct LabeledSlider: View {
 
 // MARK: - Luminance range selector
 
-/// Lightroom-style range bar: the brightness spectrum with four handles — soft edge, start, end, soft edge.
-struct LumRangeBar: View {
+/// Pick a band of brightness. The bar shows the photo's brightness spectrum with the selected band on it; drag the two
+/// white handles for the band. The soft edges on the dark and the light side are two plain sliders, so either end can
+/// be feathered no matter where the band sits. Quick presets for shadows / midtones / highlights.
+struct LumRangeEditor: View {
     @Binding var low: Double
     @Binding var high: Double
     @Binding var lowFeather: Double
     @Binding var highFeather: Double
     let histogram: [Float]?
 
-    @State private var active: Int?
+    @State private var active: Int?   // 0 = start handle, 1 = end handle
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            bar
+            HStack(spacing: 6) {
+                preset("Shadows", 0, 0.30, 0, 0.15)
+                preset("Midtones", 0.30, 0.70, 0.15, 0.15)
+                preset("Highlights", 0.70, 1, 0.15, 0)
+                preset("Whites", 0.88, 1, 0.10, 0)
+            }
+            LabeledSlider(title: "Dark edge", value: soft($lowFeather, limit: { low }), range: 0...50, neutral: 0, labelWidth: 66)
+                .opacity(low <= 0.001 ? 0.35 : 1).allowsHitTesting(low > 0.001)
+            LabeledSlider(title: "Light edge", value: soft($highFeather, limit: { 1 - high }), range: 0...50, neutral: 0, labelWidth: 66)
+                .opacity(high >= 0.999 ? 0.35 : 1).allowsHitTesting(high < 0.999)
+        }
+    }
+
+    /// Feather stored as 0...0.5, shown as 0...50 %, never reaching past the end of the scale.
+    private func soft(_ b: Binding<Double>, limit: @escaping () -> Double) -> Binding<Double> {
+        Binding(get: { b.wrappedValue * 100 }, set: { b.wrappedValue = min($0 / 100, max(limit(), 0)) })
+    }
+
+    private func preset(_ title: String, _ lo: Double, _ hi: Double, _ lf: Double, _ hf: Double) -> some View {
+        let on = abs(low - lo) < 0.02 && abs(high - hi) < 0.02
+        return Chip(title: title, selected: on) { low = lo; high = hi; lowFeather = lf; highFeather = hf }
+    }
+
+    private var bar: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let barH: CGFloat = 26
+            let barH: CGFloat = 30
             let x: (Double) -> CGFloat = { CGFloat(min(max($0, 0), 1)) * w }
             ZStack(alignment: .topLeading) {
                 LinearGradient(colors: [.black, .white], startPoint: .leading, endPoint: .trailing)
-                    .frame(height: barH).clipShape(RoundedRectangle(cornerRadius: 5))
+                    .frame(height: barH).clipShape(RoundedRectangle(cornerRadius: 6))
                 if let h = histogram {
                     Canvas { ctx, size in
                         var p = Path()
@@ -49,11 +77,11 @@ struct LumRangeBar: View {
                             p.addLine(to: CGPoint(x: size.width * CGFloat(i) / CGFloat(h.count - 1), y: barH * (1 - CGFloat(v))))
                         }
                         p.addLine(to: CGPoint(x: size.width, y: barH))
-                        ctx.fill(p, with: .color(Theme.accent.opacity(0.45)))
+                        ctx.fill(p, with: .color(Theme.accent.opacity(0.5)))
                     }
                     .frame(height: barH).allowsHitTesting(false)
                 }
-                // selected range as a trapezoid
+                // the selected band, with its two sloping soft edges
                 Path { p in
                     p.move(to: CGPoint(x: x(low - lowFeather), y: barH))
                     p.addLine(to: CGPoint(x: x(low), y: 0))
@@ -61,57 +89,46 @@ struct LumRangeBar: View {
                     p.addLine(to: CGPoint(x: x(high + highFeather), y: barH))
                     p.closeSubpath()
                 }
-                .fill(Theme.accent.opacity(0.35))
+                .fill(Theme.accent.opacity(0.4))
                 .overlay(Path { p in
                     p.move(to: CGPoint(x: x(low - lowFeather), y: barH))
                     p.addLine(to: CGPoint(x: x(low), y: 0))
                     p.addLine(to: CGPoint(x: x(high), y: 0))
                     p.addLine(to: CGPoint(x: x(high + highFeather), y: barH))
-                }.stroke(Theme.accent, lineWidth: 1.5))
+                }.stroke(Theme.accent, lineWidth: 1.6))
                 .allowsHitTesting(false)
 
-                ForEach(0..<4, id: \.self) { i in
-                    let v = handleValue(i)
-                    Circle()
-                        .fill(i == 1 || i == 2 ? Color.white : Theme.accent)
-                        .frame(width: i == 1 || i == 2 ? 20 : 14, height: i == 1 || i == 2 ? 20 : 14)
-                        .overlay(Circle().stroke(Color.black.opacity(0.4), lineWidth: 1))
-                        .position(x: x(v), y: barH + 14)
+                // the two range handles
+                ForEach(0..<2, id: \.self) { i in
+                    let v = i == 0 ? low : high
+                    Rectangle().fill(Color.white).frame(width: 2, height: barH + 8)
+                        .position(x: x(v), y: barH / 2 + 4)
+                    Circle().fill(Color.white).frame(width: 24, height: 24)
+                        .overlay(Circle().stroke(Color.black.opacity(0.35), lineWidth: 1))
+                        .shadow(radius: 2)
+                        .position(x: min(max(x(v), 12), w - 12), y: barH + 16)
                 }
             }
-            .frame(height: barH + 28)
+            .frame(height: barH + 30)
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { g in
                     if active == nil {
-                        let xs = (0..<4).map { x(handleValue($0)) }
-                        let d = xs.map { abs($0 - g.startLocation.x) }
-                        var best = d.indices.min { d[$0] < d[$1] }!
-                        // when handles overlap, pick the one on the side we are dragging towards
-                        if low <= 0.001 && best == 0 { best = 1 }
-                        active = best
+                        let dl = abs(g.startLocation.x - x(low)), dh = abs(g.startLocation.x - x(high))
+                        if abs(dl - dh) < 1 { active = g.startLocation.x < x(low) ? 0 : 1 } else { active = dl < dh ? 0 : 1 }
                     }
                     let v = Double(min(max(g.location.x / w, 0), 1))
-                    switch active {
-                    case 0: lowFeather = min(max(low - v, 0), low)
-                    case 1: low = min(v, high - 0.01); lowFeather = min(lowFeather, low)
-                    case 2: high = max(v, low + 0.01); highFeather = min(highFeather, 1 - high)
-                    case 3: highFeather = min(max(v - high, 0), 1 - high)
-                    default: break
+                    if active == 0 {
+                        low = min(v, high - 0.02)
+                        lowFeather = min(lowFeather, low)
+                    } else {
+                        high = max(v, low + 0.02)
+                        highFeather = min(highFeather, 1 - high)
                     }
                 }
                 .onEnded { _ in active = nil })
         }
-        .frame(height: 54)
-    }
-
-    private func handleValue(_ i: Int) -> Double {
-        switch i {
-        case 0: return low - lowFeather
-        case 1: return low
-        case 2: return high
-        default: return high + highFeather
-        }
+        .frame(height: 60)
     }
 }
 
@@ -123,15 +140,23 @@ struct MaskPanel: View {
     @State private var sel = "Exposure"
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             if vm.settings.masks.isEmpty || adding {
                 typeGrid
             } else if let m = vm.selectedMask {
                 header(m)
-                Picker("", selection: $vm.maskTab) {
-                    ForEach(MaskTab.allCases) { Text($0.rawValue).tag($0) }
+                HStack(spacing: 0) {
+                    ForEach(MaskTab.allCases) { t in
+                        Button { vm.maskTab = t } label: {
+                            Text(t.rawValue).font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity).frame(height: 30)
+                                .background(vm.maskTab == t ? Color.white.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                                .foregroundStyle(vm.maskTab == t ? Color.white : Color(white: 0.6))
+                        }
+                    }
                 }
-                .pickerStyle(.segmented)
+                .padding(2)
+                .background(Theme.chip, in: RoundedRectangle(cornerRadius: 9))
                 .padding(.horizontal, 12)
                 if vm.maskTab == .shape {
                     ScrollView { shapeControls(m).padding(.horizontal, 14).padding(.bottom, 8) }
@@ -330,10 +355,10 @@ struct MaskPanel: View {
             }
             LabeledSlider(title: "Soften", value: cb(c, \.feather), range: 0...100, neutral: 0)
         case .luminance:
-            hint("Select by brightness. Drag the white handles for the range, the blue ones for the soft edges — or tap the photo to pick a brightness.")
-            LumRangeBar(low: cb(c, \.lumLow), high: cb(c, \.lumHigh),
-                        lowFeather: cb(c, \.lumLowFeather), highFeather: cb(c, \.lumHighFeather),
-                        histogram: vm.histogram?.luma)
+            hint("Choose a band of brightness: drag the two white handles, or tap the photo to pick one. Soften either edge below.")
+            LumRangeEditor(low: cb(c, \.lumLow), high: cb(c, \.lumHigh),
+                           lowFeather: cb(c, \.lumLowFeather), highFeather: cb(c, \.lumHighFeather),
+                           histogram: vm.histogram?.luma)
         case .color:
             hint("Tap the photo to pick a colour. Hold the + to add more colours (up to 4).")
             HStack(spacing: 8) {

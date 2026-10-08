@@ -121,12 +121,16 @@ struct EditorView: View {
         case .grade: return ToolSpec(compact: 250, roomy: 262)
         case .curve: return ToolSpec(compact: 216, roomy: 236)
         case .light: return ToolSpec(compact: 100, roomy: 0, rows: 6, header: 44)
-        case .color: return ToolSpec(compact: 100, roomy: 0, rows: 4, header: 44)
+        case .color:
+            // the colour mixer has a row of swatches above its three sliders
+            return vm.colorMix ? ToolSpec(compact: 150, roomy: 0, rows: 3, header: 44 + 46)
+                               : ToolSpec(compact: 100, roomy: 0, rows: 4, header: 44)
         case .detail: return ToolSpec(compact: 100, roomy: 0, rows: 14, header: 44)
         case .masks:
             if vm.settings.masks.isEmpty || vm.selectedMask == nil { return ToolSpec(compact: 150, roomy: 176) }
+            // header rows (mask chips + Shape/Adjust tabs) sit above the sliders; the list also has a Reset row
             return vm.maskTab == .shape ? ToolSpec(compact: 250, roomy: 330)
-                                        : ToolSpec(compact: 100, roomy: 0, rows: 14, header: 40)
+                                        : ToolSpec(compact: 190, roomy: 0, rows: 14, header: 82 + 44)
         }
     }
 
@@ -146,7 +150,7 @@ struct EditorView: View {
             let cap = avail * 0.6
             let usable = sliderStyle == "list" ? cap : min(free, cap)
             let fit = Int((usable - sp.header - pad) / 40)
-            if sliderStyle == "strip" || fit < 4 {
+            if sliderStyle == "strip" || fit < min(4, sp.rows) {
                 auto = sp.compact
             } else {
                 let n = min(sp.rows, fit)
@@ -158,14 +162,14 @@ struct EditorView: View {
         }
 
         let key = tool.rawValue + (tool == .masks ? vm.maskTab.rawValue : "")
-        let minH: CGFloat = sp.rows > 0 ? 100 : min(sp.compact, 120)
+        let minH: CGFloat = sp.rows > 0 ? sp.compact : min(sp.compact, 120)
         let maxH = max(avail * 0.78, minH)
         let base = panelUser[key] ?? auto
         let h = min(max(panelLive ?? base, minH), maxH)
 
         var layout = SliderLayout.strip
         var rowH: CGFloat = 40
-        if sp.rows > 0, sliderStyle != "strip", h >= sp.header + 4 * 40 + pad {
+        if sp.rows > 0, sliderStyle != "strip", h >= sp.header + CGFloat(min(4, sp.rows)) * 40 + pad {
             layout = .list
             let all = sp.header + CGFloat(sp.rows) * 40 + pad
             rowH = h >= all ? min(max((h - sp.header - pad) / CGFloat(sp.rows), 40), 48) : 40
@@ -209,6 +213,7 @@ struct EditorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(height: plan.height + 24)
+        .clipped()   // nothing may ever spill over the tool bar
         .background(Theme.panel, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("panel")
@@ -233,6 +238,7 @@ struct EditorView: View {
             vm.settings.grading.shadows = GradeZone(hue: 215, sat: 55, lum: 0)
             vm.settings.grading.highlights = GradeZone(hue: 40, sat: 45, lum: 5)
         }
+        if DemoMode.value("-lumenDemoMix") != nil { vm.colorMix = true }
         if let z = DemoMode.value("-lumenDemoZoom").flatMap(Double.init) { zoom = CGFloat(z) }
         if let r = DemoMode.value("-lumenDemoCrop").flatMap(Double.init) {
             Task { @MainActor in

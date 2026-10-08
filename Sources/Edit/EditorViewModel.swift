@@ -43,6 +43,7 @@ final class EditorViewModel: ObservableObject {
     @Published var brushSize = 0.06
     @Published var brushErase = false
     @Published var colorAddMode = false
+    @Published var colorMix = false           // Color tool is showing the colour mixer
     @Published var panMode = false          // single finger pans the zoomed photo instead of painting / dragging handles
     private var strokeStart: Date?
     @Published private(set) var autoMaskBusy = false
