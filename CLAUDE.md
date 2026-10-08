@@ -57,18 +57,23 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - `Views/MaskViews.swift`: mask panel (type grid, Shape/Adjust tabs, components with add/subtract/intersect, luminance range bar with histogram, colour samples), on-photo handles. Red overlay shows only on the Shape tab (eye button toggles; the Adjust tab hides it, eye peeks).
 - `Library/LibraryStore.swift`: imports from Photos (fetches RAW original resource, falls back to `PickedFile` transferable) or Files; thumbnails via the same engine.
 
-## Status (2026-10-08, merged to `main`)
-- Engine v2 + UI revamp done and verified on CI (engine renders of an A9 ARW + JPEGs; iPhone-simulator screenshots of every panel). Preview render ~10-25 ms on the CI GPU; full-res 24 MP export ~1.4 s.
-- Photos import fix (picker moved out of the Menu; RAW fallback via `PickedFile`) cannot be exercised in CI - needs the phone.
-- Subject mask (Vision) works on macOS CI but the simulator is too slow to show it; sky mask is a classical heuristic (works on clear/overcast skies, not magic).
+## Status (end of 2026-10-08 session; everything is merged to `main`; latest IPA is `C:\Users\pc user\Downloads\GP work\LumenIPA\Lumen.ipa`)
+- Done and verified in CI: fused Metal engine, Lightroom-mobile UI (floating buttons, 8 tools, adaptive/draggable panel, list or one-slider layout), colour wheels, HSL swatches, curve with histogram, masks (subject/sky/background/brush/linear/radial/luminance/colour, add/subtract/intersect, overlay only on the Shape tab), crop frame editor, 100% zoom, swipe/next-prev photo, per-slider and per-group resets, hold-to-compare, anchored pinch zoom. 12 automated UI tests + engine render tests all pass.
+- NOT checkable in CI, so unverified: Photos import from the real library, real-finger feel, real-display colour vs Apple Photos, ProRAW DNG, subject-mask speed on the phone (Vision is too slow in the simulator).
+- The owner tests on the phone and reports bugs/feel issues in chat. Fix them, add a UI test for any gesture/layout bug, push, rebuild, and replace `LumenIPA\Lumen.ipa` (download the Build IPA artifact to a scratch folder, then `cp -f` it over the old file; do not use `rm` or `bash -c` with timeouts, the safety check blocks them).
+
+## How to continue in a new session
+1. Open the session with working directory `C:\Users\pc user\Downloads\GP work\Lumen` and tell it to read CLAUDE.md first.
+2. Work on a new branch (`git checkout -b v5`; CI runs on every branch). When green: `git checkout main; git merge --ff-only v5; git push origin main`. The simulator workflows only run on the branches listed in their `branches:` lines (`.github/workflows/ui-test.yml`, `uitest.yml`); edit those lists for a new branch name.
+3. Watch CI with `gh run list --repo AngeloP46/lumen --branch <branch>`; fetch artifacts with `gh run download <id> --name <artifact>` (engine-renders, screenshots, uitest, Lumen-ipa) and look at the images.
+4. Update this file before finishing.
 
 ## Things to verify on the phone
-- Smoothness while dragging sliders; zoom/pan crispness; first-open time of a 24 MP ARW (preview source build ~1-2 s).
+- Smoothness while dragging sliders; zoom/pan crispness; first-open time of a 24 MP ARW (preview source build ~1-2 s) and the "Loading full resolution" delay when zooming in.
 - Photos import (permission prompt on first use); ProRAW DNG and ARW from Files.
-- Canvas orientation/colours on the real display (simulator is correct; macOS probe differs, iOS is not flipped).
 - `CIRAWFilter` `extendedDynamicRangeAmount = 1.0` plus our highlight shoulder: default look vs Apple Photos, highlight recovery.
-- Temperature/tint strength and direction; sharpen/clarity strength at 100% (no 100% zoom yet).
-- Colour-wheel feel, curve touch targets, mask handle sizes.
+- Temperature/tint strength and direction; sharpen/clarity strength at 100%.
+- Colour-wheel feel, curve touch targets, mask handle sizes, panel drag feel.
 
 ## Roadmap ideas
 Batch sync/copy-paste to many photos, before/after split, AI sky model via CoreML, lens-free vignette correction, histogram-based tone-curve backdrop, Metal tile export for 48 MP ProRAW.
