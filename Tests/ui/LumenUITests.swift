@@ -211,4 +211,35 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         shot("lum-mask-shadows")
     }
+
+    // MARK: export and menu
+
+    func testExportButtonOffersFormats() {
+        launch(open: 0, tool: "Light")
+        XCTAssertTrue(el("btn-export").waitForExistence(timeout: 10), "the top bar should have its own Export button")
+        el("btn-export").tap()
+        XCTAssertTrue(app.buttons["JPEG"].waitForExistence(timeout: 10), "Export should offer JPEG")
+        XCTAssertTrue(app.buttons["HEIC"].exists, "Export should offer HEIC")
+        XCTAssertTrue(app.buttons["TIFF"].exists, "Export should offer TIFF")
+        shot("export-choices")
+        app.buttons["Cancel"].tap()
+        sleep(1)
+        XCTAssertFalse(app.buttons["JPEG"].exists, "Cancel should close the export choices")
+    }
+
+    func testMoreMenuIsShortAndEveryItemIsOnScreen() {
+        launch(open: 0, tool: "Light")
+        XCTAssertTrue(el("btn-menu").waitForExistence(timeout: 10))
+        el("btn-menu").tap()
+        XCTAssertTrue(app.buttons["Copy edits"].waitForExistence(timeout: 10), "the menu should open with Copy edits")
+        shot("more-menu")
+        let screen = app.windows.firstMatch.frame
+        for name in ["Copy edits", "Paste edits", "Reset all edits", "Previous photo", "Next photo", "Rating and flags", "View"] {
+            let b = app.buttons[name]
+            XCTAssertTrue(b.exists, "menu item \(name) is missing")
+            if b.exists {
+                XCTAssertTrue(screen.contains(b.frame), "menu item \(name) is off screen: \(b.frame)")
+            }
+        }
+    }
 }

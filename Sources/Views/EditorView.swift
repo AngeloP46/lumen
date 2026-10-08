@@ -45,6 +45,7 @@ struct EditorView: View {
     @AppStorage("sliderStyle") private var sliderStyle = "auto"   // auto | strip | list
     @State private var tool: Tool? = Tool(rawValue: DemoMode.value("-lumenDemoTool") ?? "") ?? .light
     @State private var chromeHidden = false
+    @State private var showExportChoices = false
 
     // panel height the user chose by dragging the handle (per tool); nil = automatic
     @State private var panelUser: [String: CGFloat] = [:]
@@ -104,6 +105,14 @@ struct EditorView: View {
         .onChange(of: holding) { _, h in
             vm.showOriginal = h
             if !h { lastHoldEnd = Date() }
+        }
+        .confirmationDialog("Export", isPresented: $showExportChoices, titleVisibility: .visible) {
+            ForEach(ExportFormat.allCases) { f in
+                Button(f.label) { vm.export(f) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Saves a full-size copy with your edits.")
         }
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },
@@ -306,16 +315,20 @@ struct EditorView: View {
             Spacer()
             FloatButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }.accessibilityIdentifier("btn-undo")
             FloatButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }.accessibilityIdentifier("btn-redo")
+            // Export has its own button: it used to be the last entry of a long menu that could not always be scrolled.
+            FloatButton(system: "square.and.arrow.up") { showExportChoices = true }.accessibilityIdentifier("btn-export")
             Menu {
-                Toggle("Histogram", isOn: $showHistogram)
-                Picker("Sliders", selection: $sliderStyle) {
-                    Text("Automatic").tag("auto")
-                    Text("One at a time").tag("strip")
-                    Text("Full list").tag("list")
-                }
+                // Short, flat, most-used first. Nothing in here changes while the menu is open.
+                Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
+                Button { if let c = store.clipboard { vm.settings = c } } label: {
+                    Label("Paste edits", systemImage: "doc.on.clipboard")
+                }.disabled(store.clipboard == nil)
+                Button(role: .destructive) { vm.reset() } label: { Label("Reset all edits", systemImage: "arrow.counterclockwise") }
+                Divider()
                 Button { go(-1) } label: { Label("Previous photo", systemImage: "chevron.left") }.disabled(neighbour(-1) == nil)
                 Button { go(1) } label: { Label("Next photo", systemImage: "chevron.right") }.disabled(neighbour(1) == nil)
-                Menu("Rating") {
+                Divider()
+                Menu {
                     let current = store.item(item.id) ?? item
                     ForEach(0...5, id: \.self) { n in
                         Button { store.setRating(current, n == current.rating ? 0 : n) } label: {
@@ -325,17 +338,21 @@ struct EditorView: View {
                     }
                     Button { store.setFlag(current, 1) } label: { Label("Pick", systemImage: "flag") }
                     Button { store.setFlag(current, -1) } label: { Label("Reject", systemImage: "flag.slash") }
-                }
-                Divider()
-                Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
-                Button { if let c = store.clipboard { vm.settings = c } } label: {
-                    Label("Paste edits", systemImage: "doc.on.clipboard")
-                }.disabled(store.clipboard == nil)
-                Button(role: .destructive) { vm.reset() } label: { Label("Reset all", systemImage: "arrow.counterclockwise") }
-                Divider()
-                ForEach(ExportFormat.allCases) { f in
-                    Button { vm.export(f) } label: { Label("Export \(f.label)", systemImage: "square.and.arrow.up") }
-                }
+                } label: { Label("Rating and flags", systemImage: "star") }
+                Menu {
+                    Button { showHistogram.toggle() } label: {
+                        Label("Histogram", systemImage: showHistogram ? "checkmark" : "chart.bar")
+                    }
+                    Button { sliderStyle = "auto" } label: {
+                        Label("Sliders: automatic", systemImage: sliderStyle == "auto" ? "checkmark" : "slider.horizontal.3")
+                    }
+                    Button { sliderStyle = "strip" } label: {
+                        Label("Sliders: one at a time", systemImage: sliderStyle == "strip" ? "checkmark" : "slider.horizontal.3")
+                    }
+                    Button { sliderStyle = "list" } label: {
+                        Label("Sliders: full list", systemImage: sliderStyle == "list" ? "checkmark" : "slider.horizontal.3")
+                    }
+                } label: { Label("View", systemImage: "eye") }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .medium))
@@ -344,6 +361,7 @@ struct EditorView: View {
                     .background(Color.black.opacity(0.25), in: Circle())
                     .foregroundStyle(.white)
             }
+            .accessibilityIdentifier("btn-menu")
         }
         .padding(.horizontal, 10).padding(.top, 6)
     }
