@@ -6,7 +6,7 @@ struct CropPanel: View {
     @ObservedObject var vm: EditorViewModel
 
     private let ratios: [(String, Double)] = [
-        ("1:1", 1), ("4:5", 0.8), ("5:4", 1.25), ("3:2", 1.5), ("2:3", 2.0 / 3), ("16:9", 16.0 / 9), ("9:16", 9.0 / 16),
+        ("1:1", 1), ("5:4", 1.25), ("4:3", 4.0 / 3), ("3:2", 1.5), ("16:9", 16.0 / 9), ("2:1", 2),
     ]
 
     var body: some View {

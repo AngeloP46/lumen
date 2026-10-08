@@ -202,6 +202,7 @@ struct PresetsPanel: View {
             }
             .padding(.horizontal, 12).padding(.top, 8)
         }
+        .onAppear { vm.loadPresetThumbs(user: store.userPresets) }
         .alert("Save preset", isPresented: $naming) {
             TextField("Name", text: $newName)
             Button("Save") {
