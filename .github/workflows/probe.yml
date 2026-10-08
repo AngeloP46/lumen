@@ -1,0 +1,17 @@
+name: Engine probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version; xcrun --find metal || true
+      - name: Build + run
+        run: |
+          mkdir -p out
+          xcrun -sdk macosx metal -fcikernel -c Tests/probe/k.metal -o out/k.air
+          xcrun -sdk macosx metallib -cikernel out/k.air -o out/k.metallib
+          swiftc -O Tests/probe/main.swift -o out/probe
+          ./out/probe out/k.metallib out
+      - uses: actions/upload-artifact@v4
+        with: { name: probe, path: out/*.png }
