@@ -1,8 +1,8 @@
 import SwiftUI
 
 private enum Tool: String, CaseIterable, Identifiable {
-    case presets = "Presets", crop = "Crop", light = "Light", color = "Color", mix = "Mix"
-    case curve = "Curve", grade = "Grade", effects = "Effects", detail = "Detail", masks = "Masks"
+    case presets = "Presets", crop = "Crop", light = "Light", color = "Color"
+    case grade = "Grade", curve = "Curve", detail = "Detail", masks = "Masks"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -10,14 +10,18 @@ private enum Tool: String, CaseIterable, Identifiable {
         case .crop: return "crop.rotate"
         case .light: return "sun.max"
         case .color: return "thermometer.medium"
-        case .mix: return "paintpalette"
-        case .curve: return "point.topleft.down.curvedto.point.bottomright.up"
         case .grade: return "circle.hexagongrid"
-        case .effects: return "sparkles"
+        case .curve: return "point.topleft.down.curvedto.point.bottomright.up"
         case .detail: return "triangle"
         case .masks: return "circle.dashed.inset.filled"
         }
     }
+}
+
+/// How tall the panel is and whether it shows every slider (list) or one at a time (strip).
+private struct PanelPlan {
+    var height: CGFloat
+    var layout: SliderLayout
 }
 
 struct EditorView: View {
@@ -25,7 +29,9 @@ struct EditorView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var vm: EditorViewModel
     @AppStorage("showHistogram") private var showHistogram = true
+    @AppStorage("sliderStyle") private var sliderStyle = "auto"   // auto | strip | list
     @State private var tool: Tool? = Tool(rawValue: DemoMode.value("-lumenDemoTool") ?? "") ?? .light
+    @State private var chromeHidden = false
 
     // pinch-zoom / pan of the preview
     @State private var zoom: CGFloat = 1
@@ -35,6 +41,7 @@ struct EditorView: View {
     @State private var cropStart: (Double, Double)?
 
     private let item: LibraryItem
+    private let toolbarHeight: CGFloat = 52
 
     init(item: LibraryItem) {
         self.item = item
@@ -42,18 +49,23 @@ struct EditorView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            canvas
-            if let tool {
-                panel(for: tool)
-                    .frame(height: panelHeight(tool))
-                    .frame(maxWidth: .infinity)
-                    .background(Theme.panel)
+        GeometryReader { root in
+            let plan = panelPlan(in: root.size)
+            VStack(spacing: 0) {
+                canvas
+                if !chromeHidden {
+                    VStack(spacing: 0) {
+                        if let tool {
+                            panelContainer(tool, plan: plan)
+                        }
+                        toolBar
+                    }
+                    .background(Theme.bar.ignoresSafeArea(edges: .bottom))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
-            toolStrip
+            .background(Color.black.ignoresSafeArea())
         }
-        .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             vm.start(store: store)
@@ -73,6 +85,65 @@ struct EditorView: View {
         } message: { Text(vm.message ?? "") }
     }
 
+    // MARK: Layout planning
+
+    /// The panel takes whatever vertical room the photo does not need.
+    private func panelPlan(in size: CGSize) -> PanelPlan {
+        guard let tool else { return PanelPlan(height: 0, layout: .strip) }
+        let aspect = vm.imageSize.height > 0 ? vm.imageSize.width / vm.imageSize.height : 1.5
+        let avail = size.height - toolbarHeight
+        let photoH = size.width / max(aspect, 0.2)
+        let free = avail - photoH - 6
+        let cap = avail * 0.6
+
+        // (compact height, roomy height). Roomy is the full list of sliders / full controls.
+        func spec() -> (CGFloat, CGFloat, Bool) {
+            switch tool {
+            case .presets: return (112, 112, false)
+            case .crop: return (158, 190, false)
+            case .light: return (100, 6 * 38 + 14 + 40, true)
+            case .color: return (100, 4 * 38 + 14 + 40, true)
+            case .grade: return (240, 292, false)
+            case .curve: return (216, 236, false)
+            case .detail: return (100, 14 * 38 + 14, true)
+            case .masks:
+                if vm.settings.masks.isEmpty || vm.selectedMask == nil { return (150, 176, false) }
+                return vm.maskTab == .shape ? (230, 300, false) : (100, 14 * 38 + 14, true)
+            }
+        }
+        let (compact, roomy, listable) = spec()
+        var h = compact
+        var layout = SliderLayout.strip
+        switch sliderStyle {
+        case "strip":
+            h = compact
+        case "list":
+            h = min(roomy, cap); layout = listable ? .list : .strip
+        default:
+            if free > compact + 70 { h = min(roomy, max(free, compact), cap) }
+            if listable && h > compact + 70 { layout = .list }
+            if !listable { h = max(compact, min(roomy, max(free, compact))) }
+        }
+        if !listable { layout = .strip }
+        return PanelPlan(height: max(h, compact), layout: layout)
+    }
+
+    private func panelContainer(_ t: Tool, plan: PanelPlan) -> some View {
+        VStack(spacing: 0) {
+            Capsule().fill(Color.white.opacity(0.25)).frame(width: 36, height: 4).padding(.top, 5).padding(.bottom, 3)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 8).onEnded { v in
+                    if v.translation.height > 24 { withAnimation(.easeOut(duration: 0.18)) { tool = nil } }
+                })
+            panel(for: t)
+                .environment(\.sliderLayout, plan.layout)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .frame(height: plan.height + 12)
+        .background(Theme.panel, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
+    }
+
     /// CI-only: pre-build some edits so the screenshot shows the interesting panels.
     private func applyDemo() {
         if tool == .masks { vm.maskEditing = true }
@@ -89,39 +160,81 @@ struct EditorView: View {
         }
         if DemoMode.value("-lumenDemoEdit") != nil {
             vm.settings.exposure = 0.3; vm.settings.contrast = 20; vm.settings.highlights = -30; vm.settings.vibrance = 25
+            vm.settings.grading.shadows = GradeZone(hue: 215, sat: 55, lum: 0)
+            vm.settings.grading.highlights = GradeZone(hue: 40, sat: 45, lum: 5)
+        }
+        if let s = DemoMode.value("-lumenDemoSlider") { sliderStyle = s }
+    }
+
+    // MARK: Canvas
+
+    private var canvas: some View {
+        GeometryReader { geo in
+            let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan)
+            ZStack {
+                Color.black
+                CanvasView(model: vm.canvas, xform: xform)
+                    .allowsHitTesting(false)
+                if vm.imageSize != .zero {
+                    gestureLayer(xform)
+                    if tool == .crop { cropGrid(xform.rect) }
+                    if tool == .masks { MaskOverlay(vm: vm, xform: xform) }
+                }
+                if vm.isLoading || vm.isExporting { ProgressView().tint(.white) }
+                if vm.loadFailed { Text("This file couldn't be opened.").foregroundStyle(.secondary) }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
+            .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
+            .overlay(alignment: .topLeading) {
+                if showHistogram && !chromeHidden {
+                    HistogramView(data: vm.histogram).frame(width: 90, height: 40).padding(.leading, 10).padding(.top, 50)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if vm.showOriginal {
+                    Text("ORIGINAL").font(.caption2.bold()).padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(.ultraThinMaterial, in: Capsule()).padding(10)
+                }
+            }
         }
     }
 
-    private func panelHeight(_ t: Tool) -> CGFloat {
-        switch t {
-        case .light, .color, .effects, .detail: return 96
-        case .presets: return 118
-        case .crop: return 156
-        case .curve: return 196
-        case .mix, .grade: return 142
-        case .masks:
-            if vm.settings.masks.isEmpty || vm.selectedMask == nil { return 170 }
-            return vm.maskTab == .shape ? 270 : 150
+    private func cropGrid(_ r: CGRect) -> some View {
+        Path { p in
+            for i in 1..<3 {
+                let x = r.minX + r.width * CGFloat(i) / 3, y = r.minY + r.height * CGFloat(i) / 3
+                p.move(to: CGPoint(x: x, y: r.minY)); p.addLine(to: CGPoint(x: x, y: r.maxY))
+                p.move(to: CGPoint(x: r.minX, y: y)); p.addLine(to: CGPoint(x: r.maxX, y: y))
+            }
         }
+        .stroke(Color.white.opacity(0.35), lineWidth: 0.7)
+        .allowsHitTesting(false)
     }
 
-    // MARK: Top bar
+    // MARK: Floating top buttons
 
-    private var topBar: some View {
-        HStack(spacing: 0) {
-            IconButton(system: "chevron.left") { dismiss() }
-            Text(item.displayName).font(.system(size: 14, weight: .medium)).lineLimit(1).foregroundStyle(Color(white: 0.8))
+    private var floatingBar: some View {
+        HStack(spacing: 8) {
+            FloatButton(system: "chevron.left") { dismiss() }
             Spacer()
-            IconButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }
-            IconButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }
+            FloatButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }
+            FloatButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }
             Image(systemName: "eye")
-                .font(.system(size: 17))
-                .frame(width: 38, height: 38)
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 36, height: 36)
+                .background(.ultraThinMaterial, in: Circle())
+                .background(Color.black.opacity(0.25), in: Circle())
                 .foregroundStyle(vm.showOriginal ? Theme.accent : Color.white)
-                .contentShape(Rectangle())
                 .onLongPressGesture(minimumDuration: 0, maximumDistance: 200, pressing: { vm.showOriginal = $0 }, perform: {})
             Menu {
                 Toggle("Histogram", isOn: $showHistogram)
+                Picker("Sliders", selection: $sliderStyle) {
+                    Text("Automatic").tag("auto")
+                    Text("One at a time").tag("strip")
+                    Text("Full list").tag("list")
+                }
                 Menu("Rating") {
                     let current = store.item(item.id) ?? item
                     ForEach(0...5, id: \.self) { n in
@@ -144,53 +257,27 @@ struct EditorView: View {
                     Button { vm.export(f) } label: { Label("Export \(f.label)", systemImage: "square.and.arrow.up") }
                 }
             } label: {
-                Image(systemName: "ellipsis.circle").font(.system(size: 17)).frame(width: 38, height: 38).foregroundStyle(.white)
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 36, height: 36)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .background(Color.black.opacity(0.25), in: Circle())
+                    .foregroundStyle(.white)
             }
         }
-        .padding(.horizontal, 4)
-        .frame(height: 40)
-        .background(Color.black)
+        .padding(.horizontal, 10).padding(.top, 6)
     }
 
-    // MARK: Canvas
-
-    private var canvas: some View {
-        GeometryReader { geo in
-            let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan)
-            ZStack {
-                Color.black
-                CanvasView(model: vm.canvas, xform: xform)
-                    .allowsHitTesting(false)
-                if vm.imageSize != .zero {
-                    gestureLayer(xform)
-                    if tool == .masks { MaskOverlay(vm: vm, xform: xform) }
-                }
-                if vm.isLoading || vm.isExporting { ProgressView().tint(.white) }
-                if vm.loadFailed { Text("This file couldn't be opened.").foregroundStyle(.secondary) }
-            }
-            .frame(width: geo.size.width, height: geo.size.height)
-            .clipped()
-            .overlay(alignment: .topLeading) {
-                if showHistogram {
-                    HistogramView(data: vm.histogram).frame(width: 96, height: 44).padding(8).allowsHitTesting(false)
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                if vm.showOriginal {
-                    Text("ORIGINAL").font(.caption2.bold()).padding(6)
-                        .background(.ultraThinMaterial, in: Capsule()).padding(8)
-                }
-            }
-        }
-    }
+    // MARK: Gestures
 
     private var canNavigate: Bool { tool != .masks && tool != .crop }
 
-    /// Pinch, pan, double-tap and press-to-compare on the photo itself.
+    /// Pinch, pan, double-tap, tap-to-hide-the-panels and press-to-compare on the photo itself.
     @ViewBuilder
     private func gestureLayer(_ xform: ViewXform) -> some View {
         Color.clear.contentShape(Rectangle())
             .onTapGesture(count: 2) { withAnimation(.easeOut(duration: 0.2)) { resetZoom() } }
+            .onTapGesture { if canNavigate { withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() } } }
             .gesture(zoomGesture)
             .gesture(panGesture, including: (canNavigate && zoom > 1) ? .all : .none)
             .gesture(cropDrag(size: xform.rect.size), including: tool == .crop ? .all : .none)
@@ -234,24 +321,22 @@ struct EditorView: View {
 
     // MARK: Tools
 
-    private var toolStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(Tool.allCases) { t in
-                    Button { withAnimation(.easeOut(duration: 0.15)) { tool = (tool == t) ? nil : t } } label: {
-                        VStack(spacing: 2) {
-                            Image(systemName: t.icon).font(.system(size: 19))
-                            Text(t.rawValue).font(.system(size: 10))
-                        }
-                        .frame(width: 62, height: 46)
-                        .foregroundStyle(tool == t ? Theme.accent : Color(white: 0.6))
+    /// Eight tools, all visible at once.
+    private var toolBar: some View {
+        HStack(spacing: 0) {
+            ForEach(Tool.allCases) { t in
+                Button { withAnimation(.easeOut(duration: 0.15)) { tool = (tool == t) ? nil : t } } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: t.icon).font(.system(size: 18))
+                        Text(t.rawValue).font(.system(size: 9.5, weight: .medium))
                     }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: toolbarHeight)
+                    .foregroundStyle(tool == t ? Theme.accent : Color(white: 0.6))
                 }
             }
-            .padding(.horizontal, 6)
         }
-        .frame(height: 50)
-        .background(Theme.bar)
+        .padding(.horizontal, 2)
     }
 
     @ViewBuilder
@@ -261,10 +346,8 @@ struct EditorView: View {
         case .crop: CropPanel(vm: vm)
         case .light: LightPanel(vm: vm)
         case .color: ColorPanel(vm: vm)
-        case .mix: MixPanel(vm: vm)
-        case .curve: CurvePanel(vm: vm)
         case .grade: GradePanel(vm: vm)
-        case .effects: EffectsPanel(vm: vm)
+        case .curve: CurvePanel(vm: vm)
         case .detail: DetailPanel(vm: vm)
         case .masks: MaskPanel(vm: vm)
         }

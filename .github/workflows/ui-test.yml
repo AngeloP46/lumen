@@ -51,16 +51,20 @@ jobs:
             xcrun simctl io $UDID screenshot shots/$name.png
           }
           shot 00-library
-          shot 01-light -lumenDemoOpen 1 -lumenDemoTool Light -lumenDemoEdit 1
-          WAIT=50 shot 02-masks-subject -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject
-          WAIT=50 shot 03-masks-adjust -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject -lumenDemoMaskTab adjust
-          shot 04-masks-luminance -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask luminance
-          shot 05-masks-sky -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask sky
-          shot 06-masks-linear -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask linear
-          shot 07-curve -lumenDemoOpen 0 -lumenDemoTool Curve
-          shot 08-mix -lumenDemoOpen 0 -lumenDemoTool Mix
-          shot 09-presets -lumenDemoOpen 0 -lumenDemoTool Presets
-          shot 10-crop -lumenDemoOpen 0 -lumenDemoTool Crop
+          shot 01-light-landscape -lumenDemoOpen 0 -lumenDemoTool Light -lumenDemoEdit 1
+          shot 02-light-portrait -lumenDemoOpen 1 -lumenDemoTool Light -lumenDemoEdit 1
+          shot 03-light-strip -lumenDemoOpen 1 -lumenDemoTool Light -lumenDemoEdit 1 -lumenDemoSlider strip
+          shot 04-color-landscape -lumenDemoOpen 0 -lumenDemoTool Color -lumenDemoEdit 1
+          shot 05-hsl -lumenDemoOpen 2 -lumenDemoTool Color -lumenDemoMix 1
+          shot 06-grade -lumenDemoOpen 1 -lumenDemoTool Grade -lumenDemoEdit 1
+          shot 07-curve -lumenDemoOpen 2 -lumenDemoTool Curve
+          shot 08-detail -lumenDemoOpen 0 -lumenDemoTool Detail
+          shot 09-masks-linear -lumenDemoOpen 0 -lumenDemoTool Masks -lumenDemoMask linear
+          shot 10-masks-luminance -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask luminance
+          shot 11-masks-adjust -lumenDemoOpen 0 -lumenDemoTool Masks -lumenDemoMask radial -lumenDemoMaskTab adjust
+          shot 12-presets -lumenDemoOpen 0 -lumenDemoTool Presets
+          shot 13-crop -lumenDemoOpen 1 -lumenDemoTool Crop
+          WAIT=45 shot 14-masks-subject -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject
       - uses: actions/upload-artifact@v4
         if: always()
         with:

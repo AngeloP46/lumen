@@ -135,7 +135,7 @@ struct MaskPanel: View {
                 if vm.maskTab == .shape {
                     ScrollView { shapeControls(m).padding(.horizontal, 14).padding(.bottom, 8) }
                 } else {
-                    ParamStrip(items: localItems(m), selected: $sel, leading: nil)
+                    ParamPanel(items: localItems(m), selected: $sel, header: nil)
                 }
             } else {
                 header(nil)

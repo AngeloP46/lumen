@@ -2,24 +2,43 @@ import SwiftUI
 
 enum Theme {
     static let accent = Color(red: 0.25, green: 0.62, blue: 1.0)
-    static let panel = Color(white: 0.085)
-    static let bar = Color(white: 0.11)
-    static let chip = Color(white: 0.17)
+    static let panel = Color(white: 0.075)
+    static let bar = Color(white: 0.09)
+    static let chip = Color(white: 0.16)
+    static let separator = Color.white.opacity(0.07)
+}
+
+// MARK: - Slider layout (decided by the editor from the free space under the photo)
+
+enum SliderLayout { case strip, list }
+
+private struct SliderLayoutKey: EnvironmentKey { static let defaultValue: SliderLayout = .strip }
+extension EnvironmentValues {
+    var sliderLayout: SliderLayout {
+        get { self[SliderLayoutKey.self] }
+        set { self[SliderLayoutKey.self] = newValue }
+    }
 }
 
 // MARK: - Slider
 
-/// A wide, forgiving slider: drag anywhere to move relative to where you started, double-tap to reset,
-/// light haptic tick when it passes the neutral point.
+/// A wide, forgiving slider. Drag anywhere to move relative to where you started; drag your finger *away* from the
+/// track (up or down) to scrub in finer steps; double-tap to reset; a light tick marks the neutral point.
 struct ScrubSlider: View {
     @Binding var value: Double
     var range: ClosedRange<Double> = -100...100
     var neutral: Double?
     var decimals = 0
     var track: [Color]?
+    var height: CGFloat = 40
+    var bubble = true
 
-    @State private var startValue: Double?
+    @State private var base: Double = 0
+    @State private var acc: Double = 0
+    @State private var lastX: CGFloat = 0
+    @State private var dragging = false
     @State private var wasAtNeutral = false
+    @State private var fine: Double = 1
 
     private var neutralValue: Double { neutral ?? (range.contains(0) ? 0 : range.lowerBound) }
 
@@ -34,34 +53,52 @@ struct ScrubSlider: View {
                     LinearGradient(colors: track, startPoint: .leading, endPoint: .trailing)
                         .frame(height: 5).clipShape(Capsule())
                 } else {
-                    Capsule().fill(Color.white.opacity(0.18)).frame(height: 4)
+                    Capsule().fill(Color.white.opacity(0.16)).frame(height: 3)
                     Capsule().fill(Theme.accent)
-                        .frame(width: abs(frac - nFrac) * w, height: 4)
+                        .frame(width: abs(frac - nFrac) * w, height: 3)
                         .offset(x: min(frac, nFrac) * w)
                 }
-                Rectangle().fill(Color.white.opacity(0.5)).frame(width: 1.5, height: 12).offset(x: nFrac * w - 0.75)
+                Rectangle().fill(Color.white.opacity(0.45)).frame(width: 1.5, height: 10).offset(x: nFrac * w - 0.75)
                 Circle()
                     .fill(Color.white)
-                    .frame(width: 26, height: 26)
+                    .frame(width: dragging ? 26 : 22, height: dragging ? 26 : 22)
                     .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
-                    .offset(x: frac * w - 13)
+                    .offset(x: frac * w - (dragging ? 13 : 11))
+                if dragging && bubble {
+                    Text(valueText)
+                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                        .padding(.horizontal, 9).padding(.vertical, 4)
+                        .background(Color(white: 0.2), in: Capsule())
+                        .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
+                        .foregroundStyle(.white)
+                        .offset(x: min(max(frac * w - 22, 0), w - 46), y: -34)
+                    if fine < 1 {
+                        Text(fine < 0.3 ? "Fine ×0.2" : "Fine ×0.5")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .offset(x: min(max(frac * w - 20, 0), w - 60), y: 30)
+                    }
+                }
             }
             .frame(height: geo.size.height)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
-                        if startValue == nil {
-                            let thumbX = frac * w
-                            if abs(v.startLocation.x - thumbX) > 36 {
-                                startValue = clamp(range.lowerBound + Double(v.startLocation.x / w) * span)
-                            } else {
-                                startValue = value
+                        if !dragging {
+                            dragging = true
+                            lastX = v.startLocation.x
+                            base = value
+                            acc = 0
+                            if abs(v.startLocation.x - frac * w) > 34 {
+                                base = clamp(range.lowerBound + Double(v.startLocation.x / w) * span)
                             }
                         }
-                        guard let start = startValue else { return }
-                        var nv = start + Double(v.translation.width / w) * span
-                        nv = clamp(nv)
+                        let dy = abs(v.location.y - v.startLocation.y)
+                        fine = dy < 36 ? 1 : (dy < 96 ? 0.5 : 0.2)
+                        acc += Double((v.location.x - lastX) / w) * span * fine
+                        lastX = v.location.x
+                        var nv = clamp(base + acc)
                         if abs(nv - neutralValue) < span * 0.012 {
                             nv = neutralValue
                             if !wasAtNeutral { UISelectionFeedbackGenerator().selectionChanged() }
@@ -73,17 +110,21 @@ struct ScrubSlider: View {
                         nv = (nv * f).rounded() / f
                         if nv != value { value = nv }
                     }
-                    .onEnded { _ in startValue = nil }
+                    .onEnded { _ in dragging = false; fine = 1 }
             )
             .onTapGesture(count: 2) { value = neutralValue }
         }
-        .frame(height: 40)
+        .frame(height: height)
+    }
+
+    private var valueText: String {
+        decimals == 0 ? "\(Int(value.rounded()))" : String(format: "%.\(decimals)f", value)
     }
 
     private func clamp(_ v: Double) -> Double { min(max(v, range.lowerBound), range.upperBound) }
 }
 
-// MARK: - Parameter strip (chips + one big slider)
+// MARK: - Parameter panel
 
 struct ParamItem: Identifiable {
     let id: String
@@ -104,19 +145,60 @@ struct ParamItem: Identifiable {
     }
 }
 
-/// Lightroom-mobile-style editing strip: scroll the parameter names, one big slider underneath.
-struct ParamStrip: View {
+/// Either the compact strip (names scroll, one big slider) or the full list (every slider visible),
+/// depending on how much room the photo leaves.
+struct ParamPanel: View {
     let items: [ParamItem]
     @Binding var selected: String
-    var leading: AnyView?
+    var header: AnyView?
+    @Environment(\.sliderLayout) private var layout
 
     var body: some View {
+        if layout == .list { listBody } else { stripBody }
+    }
+
+    // MARK: list
+
+    private var listBody: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                if let header {
+                    header.padding(.horizontal, 14).padding(.bottom, 4)
+                }
+                ForEach(items) { it in
+                    HStack(spacing: 10) {
+                        HStack(spacing: 5) {
+                            if let dot = it.dot { Circle().fill(dot).frame(width: 8, height: 8) }
+                            Text(it.title).font(.system(size: 13)).lineLimit(1)
+                        }
+                        .frame(width: 84, alignment: .leading)
+                        .foregroundStyle(Color(white: 0.82))
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { it.value.wrappedValue = it.neutral ?? (it.range.contains(0) ? 0 : it.range.lowerBound) }
+                        ScrubSlider(value: it.value, range: it.range, neutral: it.neutral, decimals: it.decimals,
+                                    track: it.track, height: 34, bubble: false)
+                        Text(it.display)
+                            .font(.system(size: 13, weight: .medium).monospacedDigit())
+                            .foregroundStyle(it.isNeutral ? Color.secondary : Theme.accent)
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 38)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    // MARK: strip
+
+    private var stripBody: some View {
         let current = items.first { $0.id == selected } ?? items.first
-        VStack(spacing: 2) {
+        return VStack(spacing: 2) {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        if let leading { leading }
+                        if let header { header }
                         ForEach(items) { it in
                             Button { selected = it.id } label: {
                                 VStack(spacing: 1) {
@@ -129,7 +211,7 @@ struct ParamStrip: View {
                                         .foregroundStyle(it.isNeutral ? Color.secondary : Theme.accent)
                                 }
                                 .padding(.horizontal, 10).padding(.vertical, 5)
-                                .frame(minWidth: 64)
+                                .frame(minWidth: 62)
                                 .background(it.id == current?.id ? Color.white.opacity(0.16) : Theme.chip,
                                             in: RoundedRectangle(cornerRadius: 9))
                                 .foregroundStyle(it.id == current?.id ? Color.white : Color(white: 0.75))
@@ -143,11 +225,14 @@ struct ParamStrip: View {
             }
             if let c = current {
                 ScrubSlider(value: c.value, range: c.range, neutral: c.neutral, decimals: c.decimals, track: c.track)
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 22)
             }
         }
+        .padding(.top, 4)
     }
 }
+
+// MARK: - Buttons
 
 struct IconButton: View {
     let system: String
@@ -161,6 +246,26 @@ struct IconButton: View {
                 .font(.system(size: 17, weight: .regular))
                 .frame(width: 38, height: 38)
                 .foregroundStyle(disabled ? Color(white: 0.35) : (active ? Theme.accent : Color.white))
+        }
+        .disabled(disabled)
+    }
+}
+
+/// Round translucent button that floats over the photo.
+struct FloatButton: View {
+    let system: String
+    var active = false
+    var disabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 36, height: 36)
+                .background(.ultraThinMaterial, in: Circle())
+                .background(Color.black.opacity(0.25), in: Circle())
+                .foregroundStyle(disabled ? Color(white: 0.4) : (active ? Theme.accent : Color.white))
         }
         .disabled(disabled)
     }

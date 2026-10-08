@@ -137,10 +137,28 @@ enum ColorCube {
         return w
     }
 
+    /// The wheel shows ordinary HSV hues, so the tint direction is taken from that same colour in OkLab.
     private static func zoneTint(_ z: GradeZone) -> (a: Float, b: Float, l: Float) {
-        let h = Float(z.hue) * .pi / 180
-        let k = Float(z.sat / 100) * 0.08
-        return (k * cos(h), k * sin(h), Float(z.lum / 100) * 0.15)
+        let (r, g, b) = hsvToRGB(Float(z.hue) / 360, 1, 1)
+        let lab = Ok.toLab(Ok.decode(r), Ok.decode(g), Ok.decode(b))
+        let c = max((lab.1 * lab.1 + lab.2 * lab.2).squareRoot(), 1e-4)
+        let k = Float(z.sat / 100) * 0.09
+        return (lab.1 / c * k, lab.2 / c * k, Float(z.lum / 100) * 0.15)
+    }
+
+    static func hsvToRGB(_ h: Float, _ s: Float, _ v: Float) -> (Float, Float, Float) {
+        let hh = (h - floor(h)) * 6
+        let i = Int(hh) % 6
+        let f = hh - floor(hh)
+        let p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s)
+        switch i {
+        case 0: return (v, t, p)
+        case 1: return (q, v, p)
+        case 2: return (p, v, t)
+        case 3: return (p, q, v)
+        case 4: return (t, p, v)
+        default: return (v, p, q)
+        }
     }
 }
 

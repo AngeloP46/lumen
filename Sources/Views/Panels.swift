@@ -1,7 +1,7 @@
 import SwiftUI
 
 extension EditorViewModel {
-    /// A strip entry bound to one Double on EditSettings.
+    /// A panel entry bound to one Double on EditSettings.
     func param(_ title: String, _ kp: WritableKeyPath<EditSettings, Double>,
                range: ClosedRange<Double> = -100...100, decimals: Int = 0,
                neutral: Double? = nil, track: [Color]? = nil) -> ParamItem {
@@ -11,56 +11,130 @@ extension EditorViewModel {
     }
 }
 
-// MARK: - Light / Color / Effects / Detail
+private struct PillButton: View {
+    let title: String
+    var system: String
+    var active = false
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: system)
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 11).padding(.vertical, 8)
+                .background(active ? Theme.accent : Theme.chip, in: Capsule())
+                .foregroundStyle(.white)
+        }
+    }
+}
+
+// MARK: - Light / Colour / Detail
 
 struct LightPanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var sel = "Exposure"
     var body: some View {
-        ParamStrip(items: [
+        ParamPanel(items: [
             vm.param("Exposure", \.exposure, range: -5...5, decimals: 2),
             vm.param("Contrast", \.contrast),
             vm.param("Highlights", \.highlights),
             vm.param("Shadows", \.shadows),
             vm.param("Whites", \.whites),
             vm.param("Blacks", \.blacks),
-        ], selected: $sel, leading: AnyView(
-            Button { vm.auto() } label: {
-                Label("Auto", systemImage: "wand.and.stars").font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 10).padding(.vertical, 12)
-                    .background(Theme.accent.opacity(0.9), in: RoundedRectangle(cornerRadius: 9))
-                    .foregroundStyle(.white)
-            }))
+        ], selected: $sel, header: AnyView(
+            HStack { PillButton(title: "Auto", system: "wand.and.stars") { vm.auto() }; Spacer() }))
     }
 }
 
 struct ColorPanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var sel = "Temp"
+    @State private var mix = DemoMode.value("-lumenDemoMix") != nil
     var body: some View {
-        ParamStrip(items: [
-            vm.param("Temp", \.temperature, track: Tracks.temperature),
-            vm.param("Tint", \.tint, track: Tracks.tint),
-            vm.param("Vibrance", \.vibrance),
-            vm.param("Saturation", \.saturation),
-        ], selected: $sel, leading: AnyView(
-            Button { vm.settings.blackAndWhite.toggle() } label: {
-                Label("B&W", systemImage: "circle.lefthalf.filled").font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 10).padding(.vertical, 12)
-                    .background(vm.settings.blackAndWhite ? Theme.accent : Theme.chip, in: RoundedRectangle(cornerRadius: 9))
-                    .foregroundStyle(.white)
-            }))
+        if mix {
+            HSLPanel(vm: vm, back: { mix = false })
+        } else {
+            ParamPanel(items: [
+                vm.param("Temp", \.temperature, track: Tracks.temperature),
+                vm.param("Tint", \.tint, track: Tracks.tint),
+                vm.param("Vibrance", \.vibrance),
+                vm.param("Saturation", \.saturation),
+            ], selected: $sel, header: AnyView(
+                HStack(spacing: 6) {
+                    PillButton(title: "B&W", system: "circle.lefthalf.filled", active: vm.settings.blackAndWhite) {
+                        vm.settings.blackAndWhite.toggle()
+                    }
+                    PillButton(title: "Colour mix", system: "paintpalette") { mix = true }
+                    Spacer()
+                }))
+        }
     }
 }
 
-struct EffectsPanel: View {
+/// The 8-colour mixer: pick a colour, then adjust its hue, saturation and luminance together.
+struct HSLPanel: View {
+    @ObservedObject var vm: EditorViewModel
+    let back: () -> Void
+    @State private var band = 0
+    @State private var sel = "Hue"
+
+    private static let hues: [Double] = [0, 28, 55, 120, 180, 220, 275, 315]
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Button(action: back) {
+                    Image(systemName: "chevron.left").font(.system(size: 13, weight: .semibold))
+                        .frame(width: 30, height: 30).background(Theme.chip, in: Circle())
+                }
+                .foregroundStyle(.white)
+                ForEach(0..<8, id: \.self) { i in
+                    Button { band = i } label: {
+                        ZStack {
+                            Circle().fill(color(i)).frame(width: 28, height: 28)
+                            if vm.settings.hsl.bands[i] != HSLBand() {
+                                Circle().fill(Color.black.opacity(0.55)).frame(width: 7, height: 7)
+                            }
+                        }
+                        .padding(3)
+                        .overlay(Circle().stroke(i == band ? Color.white : Color.clear, lineWidth: 2))
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.horizontal, 12)
+            ParamPanel(items: [
+                ParamItem(id: "Hue", title: "Hue", value: bandBinding(\.hue),
+                          track: [hsv(wrap(Self.hues[band] - 40)), hsv(Self.hues[band]), hsv(wrap(Self.hues[band] + 40))]),
+                ParamItem(id: "Sat", title: "Saturation", value: bandBinding(\.sat),
+                          track: [Color(white: 0.5), color(band)]),
+                ParamItem(id: "Lum", title: "Luminance", value: bandBinding(\.lum),
+                          track: [.black, color(band), .white]),
+            ], selected: $sel, header: nil)
+        }
+    }
+
+    private func wrap(_ h: Double) -> Double { (h.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360) }
+    private func hsv(_ h: Double) -> Color { Color(hue: h / 360, saturation: 0.9, brightness: 1) }
+    private func color(_ i: Int) -> Color { hsv(Self.hues[i]) }
+
+    private func bandBinding(_ kp: WritableKeyPath<HSLBand, Double>) -> Binding<Double> {
+        let i = band
+        return Binding(get: { vm.settings.hsl.bands[i][keyPath: kp] }, set: { vm.settings.hsl.bands[i][keyPath: kp] = $0 })
+    }
+}
+
+struct DetailPanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var sel = "Texture"
     var body: some View {
-        ParamStrip(items: [
+        ParamPanel(items: [
             vm.param("Texture", \.texture),
             vm.param("Clarity", \.clarity),
             vm.param("Dehaze", \.dehaze),
+            vm.param("Sharpen", \.sharpness, range: 0...100),
+            vm.param("Masking", \.sharpenMasking, range: 0...100),
+            vm.param("Noise", \.noiseReduction, range: 0...100),
+            vm.param("Colour noise", \.colorNoise, range: 0...100),
             vm.param("Vignette", \.vignette),
             vm.param("Midpoint", \.vignetteMidpoint, range: 0...100, neutral: 50),
             vm.param("Feather", \.vignetteFeather, range: 0...100, neutral: 50),
@@ -68,20 +142,7 @@ struct EffectsPanel: View {
             vm.param("Grain", \.grain, range: 0...100),
             vm.param("Grain size", \.grainSize, range: 0...100, neutral: 25),
             vm.param("Roughness", \.grainRoughness, range: 0...100, neutral: 50),
-        ], selected: $sel, leading: nil)
-    }
-}
-
-struct DetailPanel: View {
-    @ObservedObject var vm: EditorViewModel
-    @State private var sel = "Sharpen"
-    var body: some View {
-        ParamStrip(items: [
-            vm.param("Sharpen", \.sharpness, range: 0...100),
-            vm.param("Masking", \.sharpenMasking, range: 0...100),
-            vm.param("Noise", \.noiseReduction, range: 0...100),
-            vm.param("Colour noise", \.colorNoise, range: 0...100),
-        ], selected: $sel, leading: nil)
+        ], selected: $sel, header: nil)
     }
 }
 
@@ -96,7 +157,7 @@ struct CropPanel: View {
     ]
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     IconButton(system: "rotate.left") { vm.settings.quarterTurns -= 1 }
@@ -116,10 +177,10 @@ struct CropPanel: View {
                 }
                 .padding(.horizontal, 12)
             }
-            ParamStrip(items: [
+            ParamPanel(items: [
                 vm.param("Angle", \.straighten, range: -45...45, decimals: 1),
                 vm.param("Zoom", \.cropZoom, range: 1...3, decimals: 2),
-            ], selected: $sel, leading: nil)
+            ], selected: $sel, header: nil)
             Text("Drag the photo to reposition the crop.").font(.caption2).foregroundStyle(.secondary)
         }
     }
@@ -158,7 +219,7 @@ struct PresetsPanel: View {
                         }
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 12).padding(.top, 8)
         }
         .alert("Save preset", isPresented: $naming) {
             TextField("Name", text: $newName)
@@ -185,83 +246,106 @@ struct PresetsPanel: View {
     }
 }
 
-// MARK: - Colour mixer
+// MARK: - Colour grading (three colour wheels)
 
-struct MixPanel: View {
-    @ObservedObject var vm: EditorViewModel
-    @State private var mode = 0 // 0 hue, 1 saturation, 2 luminance
-    @State private var sel = "Red"
-    private let colors: [Color] = [.red, .orange, .yellow, .green, .cyan, .blue, .purple, .pink]
+/// Hue ring with saturation towards the rim. Drag the puck; angle = hue, distance from centre = saturation.
+struct ColorWheel: View {
+    @Binding var hue: Double
+    @Binding var sat: Double
+
+    private static let ring: [Color] = (0...12).map { Color(hue: Double($0) / 12, saturation: 1, brightness: 1) }
 
     var body: some View {
-        VStack(spacing: 4) {
-            Picker("Mode", selection: $mode) {
-                Text("Hue").tag(0)
-                Text("Saturation").tag(1)
-                Text("Luminance").tag(2)
+        GeometryReader { geo in
+            let d = min(geo.size.width, geo.size.height)
+            let r = d / 2
+            let c = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            let a = hue * .pi / 180
+            let pr = CGFloat(sat / 100) * r
+            ZStack {
+                Circle().fill(AngularGradient(colors: Self.ring, center: .center))
+                Circle().fill(RadialGradient(colors: [Color(white: 0.5), Color(white: 0.5).opacity(0)],
+                                             center: .center, startRadius: 0, endRadius: r))
+                Circle().stroke(Color.white.opacity(0.25), lineWidth: 1)
+                // guide cross
+                Path { p in
+                    p.move(to: CGPoint(x: c.x - r, y: c.y)); p.addLine(to: CGPoint(x: c.x + r, y: c.y))
+                    p.move(to: CGPoint(x: c.x, y: c.y - r)); p.addLine(to: CGPoint(x: c.x, y: c.y + r))
+                }
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                Circle()
+                    .fill(sat > 0.5 ? Color(hue: hue / 360, saturation: min(sat / 100 + 0.2, 1), brightness: 1) : Color.white.opacity(0.9))
+                    .overlay(Circle().stroke(Color.white, lineWidth: 2.5))
+                    .shadow(color: .black.opacity(0.6), radius: 2)
+                    .frame(width: 24, height: 24)
+                    .position(x: c.x + cos(a) * pr, y: c.y + sin(a) * pr)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 12)
-            ParamStrip(items: (0..<8).map { i in
-                ParamItem(id: HSLSettings.names[i], title: HSLSettings.names[i], value: binding(i), dot: colors[i])
-            }, selected: $sel, leading: nil)
-        }
-    }
-
-    private func binding(_ i: Int) -> Binding<Double> {
-        Binding(
-            get: {
-                let b = vm.settings.hsl.bands[i]
-                return mode == 0 ? b.hue : (mode == 1 ? b.sat : b.lum)
-            },
-            set: { v in
-                if mode == 0 { vm.settings.hsl.bands[i].hue = v }
-                else if mode == 1 { vm.settings.hsl.bands[i].sat = v }
-                else { vm.settings.hsl.bands[i].lum = v }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .contentShape(Circle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { v in
+                let dx = v.location.x - c.x, dy = v.location.y - c.y
+                let dist = hypot(dx, dy)
+                var deg = atan2(dy, dx) * 180 / .pi
+                if deg < 0 { deg += 360 }
+                if dist > 4 { hue = (deg * 10).rounded() / 10 }
+                sat = (min(dist / r, 1) * 100).rounded()
             })
+        }
+        .aspectRatio(1, contentMode: .fit)
     }
 }
 
-// MARK: - Colour grading
-
 struct GradePanel: View {
     @ObservedObject var vm: EditorViewModel
-    @State private var zone = 0
-    @State private var sel = "Hue"
-    private let zones: [WritableKeyPath<ColorGrading, GradeZone>] = [\.shadows, \.midtones, \.highlights]
+    private let zones: [(String, WritableKeyPath<ColorGrading, GradeZone>)] = [
+        ("Shadows", \.shadows), ("Midtones", \.midtones), ("Highlights", \.highlights),
+    ]
 
     var body: some View {
-        let z = vm.settings.grading[keyPath: zones[zone]]
-        VStack(spacing: 4) {
-            HStack {
-                Picker("Zone", selection: $zone) {
-                    Text("Shadows").tag(0)
-                    Text("Midtones").tag(1)
-                    Text("Highlights").tag(2)
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 6) {
+                HStack(alignment: .top, spacing: 8) {
+                    ForEach(0..<3, id: \.self) { i in wheelColumn(i) }
                 }
-                .pickerStyle(.segmented)
-                Circle()
-                    .fill(Color(hue: z.hue / 360, saturation: z.sat / 100, brightness: 1))
-                    .frame(width: 26, height: 26)
-                    .overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 1))
+                .padding(.horizontal, 12).padding(.top, 8)
+                LabeledSlider(title: "Blending", value: gb(\.blending), range: 0...100, neutral: 50)
+                    .padding(.horizontal, 14)
+                LabeledSlider(title: "Balance", value: gb(\.balance), range: -100...100, neutral: 0)
+                    .padding(.horizontal, 14)
             }
-            .padding(.horizontal, 12)
-            ParamStrip(items: [
-                ParamItem(id: "Hue", title: "Hue", value: zoneBinding(\.hue), range: 0...360, track: Tracks.hue),
-                ParamItem(id: "Sat", title: "Sat", value: zoneBinding(\.sat), range: 0...100, track: Tracks.saturation),
-                ParamItem(id: "Lum", title: "Lum", value: zoneBinding(\.lum)),
-                ParamItem(id: "Blending", title: "Blending",
-                          value: Binding(get: { vm.settings.grading.blending }, set: { vm.settings.grading.blending = $0 }),
-                          range: 0...100, neutral: 50),
-                ParamItem(id: "Balance", title: "Balance",
-                          value: Binding(get: { vm.settings.grading.balance }, set: { vm.settings.grading.balance = $0 })),
-            ], selected: $sel, leading: nil)
+            .padding(.bottom, 6)
         }
     }
 
-    private func zoneBinding(_ field: WritableKeyPath<GradeZone, Double>) -> Binding<Double> {
-        let kp = zones[zone]
-        return Binding(get: { vm.settings.grading[keyPath: kp][keyPath: field] },
-                       set: { vm.settings.grading[keyPath: kp][keyPath: field] = $0 })
+    private func wheelColumn(_ i: Int) -> some View {
+        let kp = zones[i].1
+        let z = vm.settings.grading[keyPath: kp]
+        return VStack(spacing: 4) {
+            HStack {
+                Text(zones[i].0).font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button { vm.settings.grading[keyPath: kp] = GradeZone() } label: {
+                    Image(systemName: "arrow.counterclockwise").font(.system(size: 11))
+                }
+                .foregroundStyle(z == GradeZone() ? Color(white: 0.35) : Theme.accent)
+            }
+            ColorWheel(hue: Binding(get: { vm.settings.grading[keyPath: kp].hue },
+                                    set: { vm.settings.grading[keyPath: kp].hue = $0 }),
+                       sat: Binding(get: { vm.settings.grading[keyPath: kp].sat },
+                                    set: { vm.settings.grading[keyPath: kp].sat = $0 }))
+            HStack(spacing: 4) {
+                Image(systemName: "sun.max").font(.system(size: 10)).foregroundStyle(.secondary)
+                ScrubSlider(value: Binding(get: { vm.settings.grading[keyPath: kp].lum },
+                                           set: { vm.settings.grading[keyPath: kp].lum = $0 }),
+                            height: 26, bubble: false)
+            }
+            Text("H \(Int(z.hue))°  S \(Int(z.sat))  L \(Int(z.lum))")
+                .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func gb(_ kp: WritableKeyPath<ColorGrading, Double>) -> Binding<Double> {
+        Binding(get: { vm.settings.grading[keyPath: kp] }, set: { vm.settings.grading[keyPath: kp] = $0 })
     }
 }

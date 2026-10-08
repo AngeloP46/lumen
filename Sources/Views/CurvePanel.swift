@@ -4,7 +4,7 @@ struct CurvePanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var channel = 0
     @State private var dragIndex: Int?
-    private let side: CGFloat = 170
+    private let side: CGFloat = 196
 
     private var channelColor: Color {
         switch channel {
@@ -19,35 +19,66 @@ struct CurvePanel: View {
         HStack(alignment: .top, spacing: 14) {
             curveCanvas
                 .frame(width: side, height: side)
-                .background(Color.black.opacity(0.4))
+                .background(Color.black.opacity(0.45))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 0.5))
                 .gesture(dragGesture)
                 .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { v in removePoint(near: v.location) })
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    ForEach([(0, "RGB"), (1, "R"), (2, "G"), (3, "B")], id: \.0) { c, name in
-                        Chip(title: name, selected: channel == c) { channel = c }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    ForEach([(0, Color.white), (1, Color.red), (2, Color.green), (3, Color.blue)], id: \.0) { c, col in
+                        Button { channel = c } label: {
+                            ZStack {
+                                Circle().fill(col.opacity(0.9)).frame(width: 24, height: 24)
+                                if !isNeutral(c) { Circle().fill(Color.black.opacity(0.55)).frame(width: 7, height: 7) }
+                            }
+                            .padding(4)
+                            .overlay(Circle().stroke(channel == c ? Theme.accent : Color.clear, lineWidth: 2))
+                        }
                     }
                 }
-                Button { vm.settings.curves.set(channel, ToneCurves.identity) } label: {
-                    Label("Reset curve", systemImage: "arrow.counterclockwise").font(.caption)
+                Text("Presets").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Chip(title: "Contrast") { set([(0, 0), (0.25, 0.19), (0.75, 0.82), (1, 1)]) }
+                    Chip(title: "Fade") { set([(0, 0.07), (0.5, 0.5), (1, 0.95)]) }
                 }
-                .buttonStyle(.bordered)
-                Text("Drag to bend. Double-tap a point to remove it.").font(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Chip(title: "Lift") { set([(0, 0), (0.3, 0.38), (1, 1)]) }
+                    Chip(title: "Linear") { vm.settings.curves.set(channel, ToneCurves.identity) }
+                }
+                Text("Drag to bend the curve. Double-tap a point to remove it.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 14).padding(.top, 8)
+    }
+
+    private func isNeutral(_ c: Int) -> Bool { vm.settings.curves.points(c) == ToneCurves.identity }
+
+    private func set(_ pts: [(Double, Double)]) {
+        vm.settings.curves.set(channel, pts.map { CurvePoint(x: $0.0, y: $0.1) })
     }
 
     private var curveCanvas: some View {
         Canvas { ctx, size in
+            if let h = vm.histogram?.luma {
+                var p = Path()
+                p.move(to: CGPoint(x: 0, y: size.height))
+                for (i, v) in h.enumerated() {
+                    p.addLine(to: CGPoint(x: size.width * CGFloat(i) / CGFloat(h.count - 1), y: size.height * (1 - CGFloat(v) * 0.8)))
+                }
+                p.addLine(to: CGPoint(x: size.width, y: size.height))
+                ctx.fill(p, with: .color(Color.white.opacity(0.14)))
+            }
             for i in 1..<4 {
                 let t = CGFloat(i) / 4
                 var h = Path(); h.move(to: CGPoint(x: 0, y: size.height * t)); h.addLine(to: CGPoint(x: size.width, y: size.height * t))
                 var v = Path(); v.move(to: CGPoint(x: size.width * t, y: 0)); v.addLine(to: CGPoint(x: size.width * t, y: size.height))
-                ctx.stroke(h, with: .color(Color.white.opacity(0.15)), lineWidth: 0.5)
-                ctx.stroke(v, with: .color(Color.white.opacity(0.15)), lineWidth: 0.5)
+                ctx.stroke(h, with: .color(Color.white.opacity(0.13)), lineWidth: 0.5)
+                ctx.stroke(v, with: .color(Color.white.opacity(0.13)), lineWidth: 0.5)
             }
+            var diag = Path(); diag.move(to: CGPoint(x: 0, y: size.height)); diag.addLine(to: CGPoint(x: size.width, y: 0))
+            ctx.stroke(diag, with: .color(Color.white.opacity(0.1)), style: StrokeStyle(lineWidth: 0.6, dash: [3, 3]))
             let pts = vm.settings.curves.points(channel)
             let lut = ToneCurves.lut(for: pts, size: 64)
             var curve = Path()
@@ -59,7 +90,9 @@ struct CurvePanel: View {
             ctx.stroke(curve, with: .color(channelColor), lineWidth: 2)
             for p in pts {
                 let c = CGPoint(x: size.width * p.x, y: size.height * (1 - p.y))
-                ctx.fill(Path(ellipseIn: CGRect(x: c.x - 5, y: c.y - 5, width: 10, height: 10)), with: .color(channelColor))
+                let dot = Path(ellipseIn: CGRect(x: c.x - 6, y: c.y - 6, width: 12, height: 12))
+                ctx.fill(dot, with: .color(channelColor))
+                ctx.stroke(dot, with: .color(.black.opacity(0.5)), lineWidth: 1)
             }
         }
     }
