@@ -184,10 +184,8 @@ final class LibraryStore: ObservableObject {
             if canFetch, let id = p.itemIdentifier, await importAsset(identifier: id) { continue }
             // Fallback: whatever the picker hands us (RAW file when it has one, otherwise the rendered photo).
             if let file = try? await p.loadTransferable(type: PickedFile.self) {
-                do {
-                    try add(copying: file.url, name: file.name)
-                    try? fm.removeItem(at: file.url)
-                } catch { lastError = error.localizedDescription }
+                do { try add(copying: file.url, name: file.name) } catch { lastError = error.localizedDescription }
+                try? fm.removeItem(at: file.url)
             } else {
                 lastError = "Couldn't read that photo from your library."
             }
@@ -205,10 +203,10 @@ final class LibraryStore: ObservableObject {
         try? fm.removeItem(at: tmp)
         let opts = PHAssetResourceRequestOptions()
         opts.isNetworkAccessAllowed = true
+        defer { try? fm.removeItem(at: tmp) }
         do {
             try await PHAssetResourceManager.default().writeData(for: res, toFile: tmp, options: opts)
             try add(copying: tmp, name: URL(fileURLWithPath: res.originalFilename).deletingPathExtension().lastPathComponent)
-            try? fm.removeItem(at: tmp)
             return true
         } catch {
             // No alert here: the caller falls back to the picker's copy and reports if that fails too.
