@@ -308,10 +308,11 @@ struct GradePanel: View {
                     ForEach(0..<3, id: \.self) { i in wheelColumn(i) }
                 }
                 .padding(.horizontal, 12).padding(.top, 8)
-                LabeledSlider(title: "Blending", value: gb(\.blending), range: 0...100, neutral: 50)
-                    .padding(.horizontal, 14)
-                LabeledSlider(title: "Balance", value: gb(\.balance), range: -100...100, neutral: 0)
-                    .padding(.horizontal, 14)
+                HStack(spacing: 14) {
+                    LabeledSlider(title: "Blend", value: gb(\.blending), range: 0...100, neutral: 50, labelWidth: 38)
+                    LabeledSlider(title: "Balance", value: gb(\.balance), range: -100...100, neutral: 0, labelWidth: 50)
+                }
+                .padding(.horizontal, 14)
             }
             .padding(.bottom, 6)
         }
@@ -333,6 +334,7 @@ struct GradePanel: View {
                                     set: { vm.settings.grading[keyPath: kp].hue = $0 }),
                        sat: Binding(get: { vm.settings.grading[keyPath: kp].sat },
                                     set: { vm.settings.grading[keyPath: kp].sat = $0 }))
+                .frame(maxWidth: 124)
             HStack(spacing: 4) {
                 Image(systemName: "sun.max").font(.system(size: 10)).foregroundStyle(.secondary)
                 ScrubSlider(value: Binding(get: { vm.settings.grading[keyPath: kp].lum },

@@ -8,10 +8,11 @@ struct LabeledSlider: View {
     var range: ClosedRange<Double> = 0...100
     var decimals = 0
     var neutral: Double?
+    var labelWidth: CGFloat = 70
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(title).font(.system(size: 12)).foregroundStyle(Color(white: 0.8)).frame(width: 70, alignment: .leading)
+            Text(title).font(.system(size: 12)).foregroundStyle(Color(white: 0.8)).frame(width: labelWidth, alignment: .leading)
             ScrubSlider(value: $value, range: range, neutral: neutral, decimals: decimals)
             Text(decimals == 0 ? "\(Int(value.rounded()))" : String(format: "%.\(decimals)f", value))
                 .font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary).frame(width: 38, alignment: .trailing)
@@ -278,11 +279,14 @@ struct MaskPanel: View {
                     }
                 }
                 componentControls(c)
-                Toggle("Invert this shape", isOn: cb(c, \.invert)).font(.system(size: 13))
             }
-            Divider().overlay(Color.white.opacity(0.1))
             LabeledSlider(title: "Opacity", value: mb(m, \.amount), range: 0...100, neutral: 100)
-            Toggle("Invert whole mask", isOn: mb(m, \.invert)).font(.system(size: 13))
+            HStack(spacing: 6) {
+                if let c = vm.selectedComponent {
+                    Chip(title: "Invert shape", system: "circle.lefthalf.filled", selected: c.invert) { vm.updateComponent(c.id) { $0.invert.toggle() } }
+                }
+                Chip(title: "Invert mask", system: "arrow.left.arrow.right", selected: m.invert) { vm.updateMask(m.id) { $0.invert.toggle() } }
+            }
         }
     }
 

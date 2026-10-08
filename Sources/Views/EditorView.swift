@@ -22,6 +22,7 @@ private enum Tool: String, CaseIterable, Identifiable {
 private struct PanelPlan {
     var height: CGFloat
     var layout: SliderLayout
+    var rowHeight: CGFloat = 40
 }
 
 struct EditorView: View {
@@ -87,45 +88,45 @@ struct EditorView: View {
 
     // MARK: Layout planning
 
-    /// The panel takes whatever vertical room the photo does not need.
+    /// The panel takes whatever vertical room the photo does not need. Sliders are shown as a full list when there
+    /// is room for at least four whole rows, otherwise one at a time.
     private func panelPlan(in size: CGSize) -> PanelPlan {
         guard let tool else { return PanelPlan(height: 0, layout: .strip) }
         let aspect = vm.imageSize.height > 0 ? vm.imageSize.width / vm.imageSize.height : 1.5
         let avail = size.height - toolbarHeight
         let photoH = size.width / max(aspect, 0.2)
-        let free = avail - photoH - 6
+        let free = max(avail - photoH - 6, 0)
         let cap = avail * 0.6
 
-        // (compact height, roomy height). Roomy is the full list of sliders / full controls.
-        func spec() -> (CGFloat, CGFloat, Bool) {
-            switch tool {
-            case .presets: return (112, 112, false)
-            case .crop: return (158, 190, false)
-            case .light: return (100, 6 * 38 + 14 + 40, true)
-            case .color: return (100, 4 * 38 + 14 + 40, true)
-            case .grade: return (240, 292, false)
-            case .curve: return (216, 236, false)
-            case .detail: return (100, 14 * 38 + 14, true)
-            case .masks:
-                if vm.settings.masks.isEmpty || vm.selectedMask == nil { return (150, 176, false) }
-                return vm.maskTab == .shape ? (230, 300, false) : (100, 14 * 38 + 14, true)
-            }
+        // Tools with a fixed layout: (compact, roomy)
+        func fixed(_ compact: CGFloat, _ roomy: CGFloat) -> PanelPlan {
+            let h = free > compact + 30 ? min(roomy, max(free, compact)) : compact
+            return PanelPlan(height: h, layout: .strip)
         }
-        let (compact, roomy, listable) = spec()
-        var h = compact
-        var layout = SliderLayout.strip
-        switch sliderStyle {
-        case "strip":
-            h = compact
-        case "list":
-            h = min(roomy, cap); layout = listable ? .list : .strip
-        default:
-            if free > compact + 70 { h = min(roomy, max(free, compact), cap) }
-            if listable && h > compact + 70 { layout = .list }
-            if !listable { h = max(compact, min(roomy, max(free, compact))) }
+        // Slider lists: (rows, header height)
+        func list(_ rows: Int, _ header: CGFloat) -> PanelPlan {
+            let stripH: CGFloat = 100 + (header > 0 ? 0 : 0)
+            let pad: CGFloat = 12
+            let usable = sliderStyle == "list" ? cap : min(free, cap)
+            let fit = Int((usable - header - pad) / 40)
+            if sliderStyle == "strip" || fit < 4 { return PanelPlan(height: stripH, layout: .strip) }
+            let n = min(rows, fit)
+            let rowH: CGFloat = n == rows ? min(max((usable - header - pad) / CGFloat(rows), 40), 48) : 40
+            return PanelPlan(height: header + CGFloat(n) * rowH + pad, layout: .list, rowHeight: rowH)
         }
-        if !listable { layout = .strip }
-        return PanelPlan(height: max(h, compact), layout: layout)
+
+        switch tool {
+        case .presets: return fixed(112, 112)
+        case .crop: return fixed(158, 190)
+        case .grade: return fixed(250, 262)
+        case .curve: return fixed(216, 236)
+        case .light: return list(6, 44)
+        case .color: return list(4, 44)
+        case .detail: return list(14, 0)
+        case .masks:
+            if vm.settings.masks.isEmpty || vm.selectedMask == nil { return fixed(150, 176) }
+            return vm.maskTab == .shape ? fixed(250, 330) : list(14, 40)
+        }
     }
 
     private func panelContainer(_ t: Tool, plan: PanelPlan) -> some View {
@@ -138,6 +139,7 @@ struct EditorView: View {
                 })
             panel(for: t)
                 .environment(\.sliderLayout, plan.layout)
+                .environment(\.listRowHeight, plan.rowHeight)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(height: plan.height + 12)
@@ -163,7 +165,7 @@ struct EditorView: View {
             vm.settings.grading.shadows = GradeZone(hue: 215, sat: 55, lum: 0)
             vm.settings.grading.highlights = GradeZone(hue: 40, sat: 45, lum: 5)
         }
-        if let s = DemoMode.value("-lumenDemoSlider") { sliderStyle = s }
+        sliderStyle = DemoMode.value("-lumenDemoSlider") ?? "auto"
     }
 
     // MARK: Canvas

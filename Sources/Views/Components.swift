@@ -13,7 +13,12 @@ enum Theme {
 enum SliderLayout { case strip, list }
 
 private struct SliderLayoutKey: EnvironmentKey { static let defaultValue: SliderLayout = .strip }
+private struct RowHeightKey: EnvironmentKey { static let defaultValue: CGFloat = 40 }
 extension EnvironmentValues {
+    var listRowHeight: CGFloat {
+        get { self[RowHeightKey.self] }
+        set { self[RowHeightKey.self] = newValue }
+    }
     var sliderLayout: SliderLayout {
         get { self[SliderLayoutKey.self] }
         set { self[SliderLayoutKey.self] = newValue }
@@ -152,6 +157,7 @@ struct ParamPanel: View {
     @Binding var selected: String
     var header: AnyView?
     @Environment(\.sliderLayout) private var layout
+    @Environment(\.listRowHeight) private var rowHeight
 
     var body: some View {
         if layout == .list { listBody } else { stripBody }
@@ -183,7 +189,7 @@ struct ParamPanel: View {
                             .frame(width: 44, alignment: .trailing)
                     }
                     .padding(.horizontal, 14)
-                    .frame(height: 38)
+                    .frame(height: rowHeight)
                 }
             }
             .padding(.vertical, 4)

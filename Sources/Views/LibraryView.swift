@@ -32,9 +32,19 @@ struct LibraryView: View {
         NavigationStack(path: $path) {
             Group {
                 if store.items.isEmpty {
-                    ContentUnavailableView("No photos yet",
-                                           systemImage: "photo.on.rectangle.angled",
-                                           description: Text("Tap + to import RAW/ProRAW from Photos, or ARW files from Files / an SD card."))
+                    VStack(spacing: 14) {
+                        ContentUnavailableView("No photos yet",
+                                               systemImage: "photo.on.rectangle.angled",
+                                               description: Text("Import RAW / ProRAW from your Photos library, or ARW files from Files or an SD card."))
+                        Button { showPhotoPicker = true } label: {
+                            Label("Import from Photos", systemImage: "photo").frame(maxWidth: 260)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button { showFileImporter = true } label: {
+                            Label("Import from Files / SD card", systemImage: "folder").frame(maxWidth: 260)
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 } else if visible.isEmpty {
                     ContentUnavailableView("Nothing here", systemImage: "line.3.horizontal.decrease.circle",
                                            description: Text("No photos match “\(filter.rawValue)”."))
