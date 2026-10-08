@@ -136,6 +136,19 @@ func compareImages(_ a: CGImage, _ b: CGImage) -> (all: Double, mid: Double, mid
     return (sumAll / Double(w * h), nMid > 0 ? sumMid / Double(nMid) : 0, nMid)
 }
 
+/// Mean and standard deviation of the (display-encoded) luma 0.2126 R + 0.7152 G + 0.0722 B, in 0...255 units.
+func lumaStats(_ cg: CGImage) -> (mean: Double, std: Double)? {
+    guard let p = rgbaBytes(cg), cg.width > 0, cg.height > 0 else { return nil }
+    let n = cg.width * cg.height
+    var sum = 0.0, sum2 = 0.0
+    for i in 0..<n {
+        let y = 0.2126 * Double(p[i * 4]) + 0.7152 * Double(p[i * 4 + 1]) + 0.0722 * Double(p[i * 4 + 2])
+        sum += y; sum2 += y * y
+    }
+    let mean = sum / Double(n)
+    return (mean, (max(sum2 / Double(n) - mean * mean, 0)).squareRoot())
+}
+
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
 var opened = 0
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
@@ -283,6 +296,26 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             check(d.midCount == 0 || d.mid < 2, "\(stem) identity: default settings change mid-tones by \(d.mid) levels on average (limit 2)")
         } else {
             check(false, "\(stem) identity: could not render or read the default/unedited images")
+        }
+    }
+
+    // Exposure and contrast direction: +1 EV brightens and -1 EV darkens (mean luma); contrast +60 widens and
+    // -60 narrows the luma spread (standard deviation) compared with default settings.
+    do {
+        func stats(_ s: EditSettings) -> (mean: Double, std: Double)? {
+            guard let cg = smallRender(session.develop(s, source: source, geometry: true)) else { return nil }
+            return lumaStats(cg)
+        }
+        if let d = stats(EditSettings()), let up = stats(edit { $0.exposure = 1 }), let down = stats(edit { $0.exposure = -1 }),
+           let cHi = stats(edit { $0.contrast = 60 }), let cLo = stats(edit { $0.contrast = -60 }) {
+            print("  tone: mean luma default \(String(format: "%.1f", d.mean)) exp+1 \(String(format: "%.1f", up.mean)) exp-1 \(String(format: "%.1f", down.mean));"
+                  + " luma std default \(String(format: "%.1f", d.std)) contrast+60 \(String(format: "%.1f", cHi.std)) contrast-60 \(String(format: "%.1f", cLo.std))")
+            check(up.mean > d.mean + 3, "\(stem) exposure +1: mean luma \(up.mean) is not clearly above default \(d.mean)")
+            check(down.mean < d.mean - 3, "\(stem) exposure -1: mean luma \(down.mean) is not clearly below default \(d.mean)")
+            check(cHi.std > d.std + 1, "\(stem) contrast +60: luma spread \(cHi.std) is not clearly above default \(d.std)")
+            check(cLo.std < d.std - 1, "\(stem) contrast -60: luma spread \(cLo.std) is not clearly below default \(d.std)")
+        } else {
+            check(false, "\(stem) tone direction: could not render the exposure/contrast cases")
         }
     }
 
