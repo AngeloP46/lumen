@@ -7,10 +7,17 @@ on:
       - 'Sources/**'
       - 'Tests/ui/**'
       - 'project.yml'
+      - '.github/ci/**'
       - '.github/workflows/uitest.yml'
+
+concurrency:
+  group: uitest-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   uitest:
     runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
@@ -18,24 +25,30 @@ jobs:
       - name: Sample photos
         run: |
           mkdir -p demo
-          curl -sL -o demo/1-a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW"
-          curl -sL -o demo/2-cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000"
-          curl -sL -o demo/3-matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000"
+          bash .github/ci/get.sh demo/1-a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW" 10000000
+          bash .github/ci/get.sh demo/2-cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000" 100000
+          bash .github/ci/get.sh demo/3-matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000" 100000
       - name: Run UI tests
         env:
           TEST_RUNNER_DEMO_DIR: ${{ github.workspace }}/demo
           TEST_RUNNER_OUT_DIR: ${{ github.workspace }}/uiout
+        # xcodebuild's own exit status is the job's status. The log goes to a file first and is filtered afterwards,
+        # so a pipe closing early (head) can never turn a passing run into a failure or hide a failing one.
         run: |
           mkdir -p uiout
           xcodegen generate
           UDID=$(xcrun simctl list devices available | grep -E "iPhone 16 Pro Max" | head -1 | grep -oE '[0-9A-F-]{36}')
           xcrun simctl boot $UDID
           xcrun simctl bootstatus $UDID -b
-          set -o pipefail
+          set +e
           xcodebuild test -project Lumen.xcodeproj -scheme Lumen \
             -destination "platform=iOS Simulator,id=$UDID" \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
-            2>&1 | tee uiout/xcodebuild.log | grep -E "Test Case|error:|failed|passed|XCTAssert|Executed" | head -150
+            > uiout/xcodebuild.log 2>&1
+          code=$?
+          grep -E "Test Case|error:|XCTAssert|Executed|TEST (SUCCEEDED|FAILED)|BUILD (SUCCEEDED|FAILED)" uiout/xcodebuild.log | head -300
+          echo "xcodebuild exit code: $code"
+          exit "$code"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
