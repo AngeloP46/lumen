@@ -94,6 +94,48 @@ func sheet(_ items: [(String, CGImage)], cell: Int = 420, cols: Int = 3) -> CGIm
 
 func edit(_ f: (inout EditSettings) -> Void) -> EditSettings { var s = EditSettings(); f(&s); return s }
 
+/// RGBA8 bytes of a CGImage (rows top to bottom, 4 bytes per pixel), drawn into a display-P3 bitmap so every
+/// image compared in the checks below has the same layout.
+func rgbaBytes(_ cg: CGImage) -> [UInt8]? {
+    let w = cg.width, h = cg.height
+    var buf = [UInt8](repeating: 0, count: w * h * 4)
+    let ok = buf.withUnsafeMutableBytes { p -> Bool in
+        guard let c = CGContext(data: p.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                space: LumenGPU.displaySpace,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        c.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return true
+    }
+    return ok ? buf : nil
+}
+
+/// Small display-P3 RGBA8 render of a CIImage, `width` pixels wide (same scaling for every image of the same size).
+func smallRender(_ img: CIImage, width: CGFloat = 96) -> CGImage? {
+    let k = width / img.extent.width
+    let out = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+    return LumenGPU.context.createCGImage(out, from: out.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+}
+
+/// Per-channel comparison of two images over their common area, in 0...255 units.
+/// `all` = mean |a - b| over every pixel; `mid` = the same over pixels whose reference (b) channels are all below 200,
+/// i.e. away from the highlight shoulder; `midCount` = how many such pixels there were.
+func compareImages(_ a: CGImage, _ b: CGImage) -> (all: Double, mid: Double, midCount: Int)? {
+    guard let pa = rgbaBytes(a), let pb = rgbaBytes(b) else { return nil }
+    let w = min(a.width, b.width), h = min(a.height, b.height)
+    guard w > 0, h > 0 else { return nil }
+    var sumAll = 0.0, sumMid = 0.0, nMid = 0
+    for y in 0..<h {
+        for x in 0..<w {
+            let ia = (y * a.width + x) * 4, ib = (y * b.width + x) * 4
+            var d = 0.0
+            for c in 0..<3 { d += abs(Double(pa[ia + c]) - Double(pb[ib + c])) }
+            sumAll += d / 3
+            if pb[ib] < 200 && pb[ib + 1] < 200 && pb[ib + 2] < 200 { sumMid += d / 3; nMid += 1 }
+        }
+    }
+    return (sumAll / Double(w * h), nMid > 0 ? sumMid / Double(nMid) : 0, nMid)
+}
+
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
 var opened = 0
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
@@ -225,6 +267,24 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         if let cg = cg { ov.append((label + " overlay", cg)) }
     }
     if let sh = sheet(ov) { saveJPEG(sh, "\(stem)-overlays.jpg") }
+
+    // Identity: default settings must look like the unedited decode. The develop kernel clamps to 0...1 and rolls
+    // off luminance above 0.85 (highlight shoulder), so the reference is clamped too and only mid-tones are held tight.
+    do {
+        let dev = session.develop(EditSettings(), source: source, geometry: true)
+        check(abs(dev.extent.width - source.base.extent.width) <= 1 && abs(dev.extent.height - source.base.extent.height) <= 1,
+              "\(stem) identity: default develop size \(dev.extent.size) differs from the source \(source.base.extent.size)")
+        let ref = source.base.applyingFilter("CIColorClamp", parameters: [
+            "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)])
+        if let a = smallRender(dev), let b = smallRender(ref), let d = compareImages(a, b) {
+            print("  identity: mean |diff| all \(String(format: "%.2f", d.all)) mid-tones \(String(format: "%.2f", d.mid)) (\(d.midCount) px)")
+            check(d.all < 6, "\(stem) identity: default settings differ from the source by \(d.all) levels on average (limit 6)")
+            check(d.midCount == 0 || d.mid < 2, "\(stem) identity: default settings change mid-tones by \(d.mid) levels on average (limit 2)")
+        } else {
+            check(false, "\(stem) identity: could not render or read the default/unedited images")
+        }
+    }
 
     // Full-resolution export path (lazy graph, no materialised planes).
     do {
