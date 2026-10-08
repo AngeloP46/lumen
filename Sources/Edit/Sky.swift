@@ -64,7 +64,7 @@ enum SkyFinder {
             if bb > rr + 0.03 && bb >= g_ - 0.03 && yv > 0.18 { return true }  // blue sky
             if yv > 0.55 && s < 0.25 { return true }                       // cloud, haze, overcast
             if abs(rr - bb) < 0.07 && s < 0.14 && yv > 0.28 { return true } // grey overcast
-            if rr > bb + 0.04 && yv > 0.45 && s < 0.7 { return true }      // sunrise / sunset glow
+            if rr > g_ + 0.07 && g_ >= bb - 0.02 && yv > 0.45 && s < 0.7 { return true } // sunrise / sunset glow
             return false
         }
         func dist(_ i: Int, _ j: Int) -> Float {
@@ -87,6 +87,15 @@ enum SkyFinder {
             }
         }
         guard queue.count > w / 6 else { return nil }
+        var seedY: [Float] = queue.map { y[$0] }
+        seedY.sort()
+        let medianY = seedY[seedY.count / 2]
+        let seedMean: (Float, Float, Float) = {
+            var a: Float = 0, b2: Float = 0, c: Float = 0
+            for i in queue { a += r[i]; b2 += gg[i]; c += b[i] }
+            let n = Float(queue.count)
+            return (a / n, b2 / n, c / n)
+        }()
 
         // Grow while the colour changes only gradually.
         var head = 0
@@ -100,7 +109,10 @@ enum SkyFinder {
                 let q = ny * w + nx
                 if mask[q] != 0 { continue }
                 let d = dist(p, q)
-                let ok = (skyish(q) && d < step && grad[q] < 0.22) || (d < step * 0.45 && y[q] > 0.2 && gg[q] <= r[q] + 0.1)
+                let cloudLike = y[q] > 0.6 && sat(q) < 0.25
+                let smooth = grad[q] < (cloudLike ? 0.14 : 0.045)
+                let dm = ((r[q] - seedMean.0) * (r[q] - seedMean.0) + (gg[q] - seedMean.1) * (gg[q] - seedMean.1) + (b[q] - seedMean.2) * (b[q] - seedMean.2)).squareRoot()
+                let ok = skyish(q) && d < step && smooth && y[q] > medianY * 0.55 && dm < 0.5
                 if ok {
                     mask[q] = 255
                     queue.append(q)
