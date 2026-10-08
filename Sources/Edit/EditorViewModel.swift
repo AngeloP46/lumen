@@ -200,6 +200,8 @@ final class EditorViewModel: ObservableObject {
                 self.detailSource = src
                 self.syncDetailMasks()
                 self.requestRender()
+                // zoomed back out while it was building: start the usual release countdown
+                if self.zoomLevel <= 1.05 { self.zoomChanged(self.zoomLevel) }
             }
         }
     }
