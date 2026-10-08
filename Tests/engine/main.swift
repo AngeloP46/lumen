@@ -149,6 +149,18 @@ func lumaStats(_ cg: CGImage) -> (mean: Double, std: Double)? {
     return (mean, (max(sum2 / Double(n) - mean * mean, 0)).squareRoot())
 }
 
+/// Mean over all pixels of (max channel - min channel), in 0...255 units: 0 = perfectly neutral grey.
+func meanChannelSpread(_ cg: CGImage) -> Double? {
+    guard let p = rgbaBytes(cg), cg.width > 0, cg.height > 0 else { return nil }
+    let n = cg.width * cg.height
+    var sum = 0.0
+    for i in 0..<n {
+        let r = Int(p[i * 4]), g = Int(p[i * 4 + 1]), b = Int(p[i * 4 + 2])
+        sum += Double(max(r, g, b) - min(r, g, b))
+    }
+    return sum / Double(n)
+}
+
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
 var opened = 0
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
@@ -319,6 +331,27 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             check(cLo.std < d.std - 1, "\(stem) contrast -60: luma spread \(cLo.std) is not clearly below default \(d.std)")
         } else {
             check(false, "\(stem) tone direction: could not render the exposure/contrast cases")
+        }
+    }
+
+    // Black & white and saturation -100 give neutral pixels (R = G = B within a few levels); the colour source must
+    // have clearly more colour than the B&W render, otherwise the check proves nothing.
+    do {
+        func spread(_ s: EditSettings) -> Double? {
+            guard let cg = smallRender(session.develop(s, source: source, geometry: true)) else { return nil }
+            return meanChannelSpread(cg)
+        }
+        if let d = spread(EditSettings()), let bw = spread(edit { $0.blackAndWhite = true }),
+           let desat = spread(edit { $0.saturation = -100 }) {
+            print("  mono: mean channel spread default \(String(format: "%.2f", d)) B&W \(String(format: "%.2f", bw)) saturation-100 \(String(format: "%.2f", desat))")
+            check(bw < 3, "\(stem) B&W: mean R/G/B spread \(bw) levels is not neutral (limit 3)")
+            check(desat < 4, "\(stem) saturation -100: mean R/G/B spread \(desat) levels is not neutral (limit 4)")
+            if d > 6 {
+                check(bw < d * 0.5, "\(stem) B&W: spread \(bw) is not clearly below the colour render's \(d)")
+                check(desat < d * 0.5, "\(stem) saturation -100: spread \(desat) is not clearly below the colour render's \(d)")
+            }
+        } else {
+            check(false, "\(stem) mono: could not render the B&W / saturation cases")
         }
     }
 
