@@ -18,8 +18,7 @@ extension DemoMode {
     /// original stays visible for as long as the finger is down.
     static func log(_ message: String) {
         guard let path = value("-lumenDemoLog") else { return }
-        let line = "\(Date().timeIntervalSince1970) \(message)
-"
+        let line = "\(Date().timeIntervalSince1970) \(message)" + "\n"
         if let h = FileHandle(forWritingAtPath: path) {
             h.seekToEndOfFile()
             h.write(Data(line.utf8))
