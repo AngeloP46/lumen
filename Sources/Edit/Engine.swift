@@ -32,7 +32,10 @@ struct LumenKernels {
         if url == nil { url = Bundle.main.url(forResource: "default", withExtension: "metallib") }
         if url == nil { url = Bundle(for: BundleToken.self).url(forResource: "default", withExtension: "metallib") }
         guard let url, let data = try? Data(contentsOf: url) else { return nil }
-        func k(_ name: String) -> CIColorKernel? { try? CIColorKernel(functionName: name, fromMetalLibraryData: data) }
+        func k(_ name: String) -> CIColorKernel? {
+            do { return try CIColorKernel(functionName: name, fromMetalLibraryData: data) }
+            catch { NSLog("Lumen kernel \(name) failed: \(error)"); return nil }
+        }
         guard let a = k("lumenLogLum"), let b = k("lumenMinChannel"), let c = k("lumenPack3"),
               let d = k("lumenMain"), let e = k("lumenMainLocal"), let f = k("lumenFinish"),
               let g = k("lumenToLinear"), let h = k("lumenAccum"), let i = k("lumenLinearMask"),
