@@ -211,7 +211,7 @@ final class LibraryStore: ObservableObject {
             try? fm.removeItem(at: tmp)
             return true
         } catch {
-            lastError = error.localizedDescription
+            // No alert here: the caller falls back to the picker's copy and reports if that fails too.
             return false
         }
     }
