@@ -290,7 +290,10 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         let ref = source.base.applyingFilter("CIColorClamp", parameters: [
             "inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
             "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)])
-        if let a = smallRender(dev), let b = smallRender(ref), let d = compareImages(a, b) {
+        // Pixel comparison uses the un-cropped develop output: the geometry stage's integral crop rect can shift an
+        // odd-sized picture by half a pixel, and 96 px point-sampled renders of a detailed photo then disagree wildly.
+        let devPlain = session.develop(EditSettings(), source: source, geometry: false)
+        if let a = smallRender(devPlain), let b = smallRender(ref), let d = compareImages(a, b) {
             print("  identity: mean |diff| all \(String(format: "%.2f", d.all)) mid-tones \(String(format: "%.2f", d.mid)) (\(d.midCount) px)")
             check(d.all < 6, "\(stem) identity: default settings differ from the source by \(d.all) levels on average (limit 6)")
             check(d.midCount == 0 || d.mid < 2, "\(stem) identity: default settings change mid-tones by \(d.mid) levels on average (limit 2)")
