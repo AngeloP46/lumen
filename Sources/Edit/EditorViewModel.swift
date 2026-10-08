@@ -380,8 +380,11 @@ final class EditorViewModel: ObservableObject {
     }
 
     private func uniqueName(_ base: String) -> String {
-        let n = settings.masks.filter { $0.name.hasPrefix(base) }.count
-        return n == 0 ? base : "\(base) \(n + 1)"
+        let names = Set(settings.masks.map(\.name))
+        guard names.contains(base) else { return base }
+        var n = 2
+        while names.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
     }
 
     func selectMask(_ id: UUID) {
