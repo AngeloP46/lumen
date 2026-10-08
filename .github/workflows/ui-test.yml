@@ -6,10 +6,17 @@ on:
     paths:
       - 'Sources/**'
       - 'project.yml'
+      - '.github/ci/**'
       - '.github/workflows/ui-test.yml'
+
+concurrency:
+  group: ui-shots-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   shots:
     runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
@@ -17,12 +24,13 @@ jobs:
       - name: Sample photos
         run: |
           mkdir -p demo
-          curl -sL -o demo/1-a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW"
-          curl -sL -o demo/2-cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000"
-          curl -sL -o demo/3-matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000"
+          bash .github/ci/get.sh demo/1-a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW" 10000000
+          bash .github/ci/get.sh demo/2-cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000" 100000
+          bash .github/ci/get.sh demo/3-matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000" 100000
           ls -la demo
       - name: Build for simulator
         run: |
+          set -o pipefail
           xcodegen generate
           xcodebuild -project Lumen.xcodeproj -scheme Lumen -configuration Release -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
