@@ -41,7 +41,14 @@ struct LightPanel: View {
             vm.param("Whites", \.whites),
             vm.param("Blacks", \.blacks),
         ], selected: $sel, header: AnyView(
-            HStack { PillButton(title: "Auto", system: "wand.and.stars") { vm.auto() }; Spacer() }))
+            HStack(spacing: 6) {
+                PillButton(title: "Auto", system: "wand.and.stars") { vm.auto() }
+                PillButton(title: "Reset", system: "arrow.counterclockwise") {
+                    vm.settings.exposure = 0; vm.settings.contrast = 0; vm.settings.highlights = 0
+                    vm.settings.shadows = 0; vm.settings.whites = 0; vm.settings.blacks = 0
+                }
+                Spacer()
+            }))
     }
 }
 
@@ -64,6 +71,10 @@ struct ColorPanel: View {
                         vm.settings.blackAndWhite.toggle()
                     }
                     PillButton(title: "Colour mix", system: "paintpalette") { mix = true }
+                    PillButton(title: "Reset", system: "arrow.counterclockwise") {
+                        vm.settings.temperature = 0; vm.settings.tint = 0
+                        vm.settings.vibrance = 0; vm.settings.saturation = 0; vm.settings.blackAndWhite = false
+                    }
                     Spacer()
                 }))
         }
@@ -142,7 +153,17 @@ struct DetailPanel: View {
             vm.param("Grain", \.grain, range: 0...100),
             vm.param("Grain size", \.grainSize, range: 0...100, neutral: 25),
             vm.param("Roughness", \.grainRoughness, range: 0...100, neutral: 50),
-        ], selected: $sel, header: nil)
+        ], selected: $sel, header: AnyView(
+            HStack {
+                PillButton(title: "Reset", system: "arrow.counterclockwise") {
+                    var s = vm.settings
+                    s.texture = 0; s.clarity = 0; s.dehaze = 0; s.sharpness = 0; s.sharpenMasking = 0
+                    s.noiseReduction = 0; s.colorNoise = 0; s.vignette = 0; s.vignetteMidpoint = 50
+                    s.vignetteFeather = 50; s.vignetteRoundness = 0; s.grain = 0; s.grainSize = 25; s.grainRoughness = 50
+                    vm.settings = s
+                }
+                Spacer()
+            }))
     }
 }
 

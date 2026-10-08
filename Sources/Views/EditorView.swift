@@ -122,7 +122,7 @@ struct EditorView: View {
         case .curve: return fixed(216, 236)
         case .light: return list(6, 44)
         case .color: return list(4, 44)
-        case .detail: return list(14, 0)
+        case .detail: return list(14, 44)
         case .masks:
             if vm.settings.masks.isEmpty || vm.selectedMask == nil { return fixed(150, 176) }
             return vm.maskTab == .shape ? fixed(250, 330) : list(14, 40)
