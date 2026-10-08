@@ -3,6 +3,7 @@ import CoreText
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
+import Metal
 
 // Headless render test: `engine-test <metallib> <inputDir> <outDir>`
 setvbuf(stdout, nil, _IONBF, 0)
@@ -13,6 +14,25 @@ let outDir = URL(fileURLWithPath: args[3])
 try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 print("Metal:", LumenGPU.device?.name ?? "none", "kernels:", LumenKernels.shared != nil)
 guard LumenKernels.shared != nil else { print("KERNELS FAILED TO LOAD"); exit(1) }
+
+
+// ---- Orientation probe: render a CIImage (top half red, bottom half blue) into a Metal texture.
+do {
+    guard let dev = LumenGPU.device, let q = LumenGPU.queue else { fatalError("no metal") }
+    let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 64, height: 64, mipmapped: false)
+    td.usage = [.shaderRead, .shaderWrite, .renderTarget]
+    td.storageMode = .shared
+    let tex = dev.makeTexture(descriptor: td)!
+    let red = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 32, width: 64, height: 32)) // CI top half
+    let blue = CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 64, height: 32))
+    let img = red.composited(over: blue)
+    let cb = q.makeCommandBuffer()!
+    LumenGPU.context.render(img, to: tex, commandBuffer: cb, bounds: CGRect(x: 0, y: 0, width: 64, height: 64), colorSpace: LumenGPU.displaySpace)
+    cb.commit(); cb.waitUntilCompleted()
+    var px = [UInt8](repeating: 0, count: 4)
+    tex.getBytes(&px, bytesPerRow: 256, from: MTLRegionMake2D(32, 2, 1, 1), mipmapLevel: 0)
+    print("PROBE texture row 2 (top row of memory) BGRA:", px, px[2] > 200 ? "=> CI top is texture top (NO flip needed)" : "=> FLIPPED (need flip)")
+}
 
 func now() -> Double { Date().timeIntervalSinceReferenceDate }
 

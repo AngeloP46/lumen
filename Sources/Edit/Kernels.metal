@@ -156,7 +156,7 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
     if (clar != 0.0) {
         float det = clamp(lpre - lmDec(L1.b), -2.5, 2.5);
         float q = bb / 3.2;
-        delta += clar * 0.85 * det * (0.35 + 0.65 * exp(-q * q));
+        delta += clar * 0.6 * det * (0.35 + 0.65 * exp(-q * q));
     }
     float dt = lpre - lmDec(L1.g);
     if (tex != 0.0) {
@@ -247,7 +247,7 @@ float4 lumenFinish(sample_t s, float4 g0, float4 g1, float4 g2, destination dest
         float mid = g0.y;
         float t = lmStep(mid, mid + max(0.05, (1.0 - mid) * (0.2 + 0.8 * g0.z)), d);
         if (va < 0.0) c *= exp2(va * 2.0 * t);
-        else c = c + (float3(1.0) - c) * (va * 0.7 * t);
+        else c = c + (float3(1.0) - c) * (va * 0.5 * t);
     }
 
     float3 e = float3(lmSrgbEnc(c.r), lmSrgbEnc(c.g), lmSrgbEnc(c.b));

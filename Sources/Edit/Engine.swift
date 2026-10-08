@@ -261,13 +261,7 @@ final class EditSession: @unchecked Sendable {
             ctx.render(img, toBitmap: p.baseAddress!, rowBytes: w * 16, bounds: CGRect(x: 0, y: 0, width: w, height: h),
                        format: .RGBAf, colorSpace: LumenGPU.workingSpace)
         }
-        // CI rows run bottom-up; flip so row 0 is the top of the picture.
-        var flipped = data
-        for y in 0..<h {
-            let src = (h - 1 - y) * w * 4
-            flipped.replaceSubrange(y * w * 4..<(y + 1) * w * 4, with: data[src..<(src + w * 4)])
-        }
-        return PixelGrid(width: w, height: h, data: flipped)
+        return PixelGrid(width: w, height: h, data: data)
     }
 
     private static func estimateAir(_ g: PixelGrid) -> (SIMD3<Float>, Float) {
