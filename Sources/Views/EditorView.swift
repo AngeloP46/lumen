@@ -167,6 +167,13 @@ struct EditorView: View {
             vm.settings.grading.shadows = GradeZone(hue: 215, sat: 55, lum: 0)
             vm.settings.grading.highlights = GradeZone(hue: 40, sat: 45, lum: 5)
         }
+        if let z = DemoMode.value("-lumenDemoZoom").flatMap(Double.init) { zoom = CGFloat(z); lastZoom = zoom }
+        if let r = DemoMode.value("-lumenDemoCrop").flatMap(Double.init) {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
+                vm.selectCropRatio(r)
+            }
+        }
         sliderStyle = DemoMode.value("-lumenDemoSlider") ?? "auto"
     }
 

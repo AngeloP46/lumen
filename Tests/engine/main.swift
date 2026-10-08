@@ -143,7 +143,7 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         }),
         ("B&W", edit { $0.blackAndWhite = true; $0.contrast = 25 }),
         ("B&W blue dark", edit { $0.blackAndWhite = true; $0.hsl.bands[5].lum = -80; $0.hsl.bands[0].lum = 40 }),
-        ("crop 16:9 + 6deg", edit { $0.cropAspect = 16.0 / 9; $0.straighten = 6 }),
+        ("crop frame + 6deg", edit { $0.cropL = 0.1; $0.cropT = 0.15; $0.cropR = 0.85; $0.cropB = 0.7; $0.straighten = 6 }),
         ("rotate 90", edit { $0.quarterTurns = 1 }),
         ("everything", edit {
             $0.exposure = 0.3; $0.contrast = 25; $0.highlights = -40; $0.shadows = 30

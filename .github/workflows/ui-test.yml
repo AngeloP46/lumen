@@ -2,7 +2,7 @@ name: UI screenshots
 on:
   workflow_dispatch:
   push:
-    branches: [main, v2]
+    branches: [main, v2, v3]
     paths:
       - 'Sources/**'
       - 'project.yml'
@@ -63,7 +63,11 @@ jobs:
           shot 10-masks-luminance -lumenDemoOpen 2 -lumenDemoTool Masks -lumenDemoMask luminance
           shot 11-masks-adjust -lumenDemoOpen 0 -lumenDemoTool Masks -lumenDemoMask radial -lumenDemoMaskTab adjust
           shot 12-presets -lumenDemoOpen 0 -lumenDemoTool Presets
-          shot 13-crop -lumenDemoOpen 1 -lumenDemoTool Crop
+          shot 13-crop-free -lumenDemoOpen 1 -lumenDemoTool Crop
+          shot 13b-crop-32 -lumenDemoOpen 1 -lumenDemoTool Crop -lumenDemoCrop 1.5
+          shot 13c-crop-landscape -lumenDemoOpen 2 -lumenDemoTool Crop -lumenDemoCrop 1
+          WAIT=25 shot 15-zoom-fit -lumenDemoOpen 2 -lumenDemoTool Detail
+          WAIT=30 shot 16-zoom-100 -lumenDemoOpen 2 -lumenDemoTool Detail -lumenDemoZoom 4
           WAIT=45 shot 14-masks-subject -lumenDemoOpen 1 -lumenDemoTool Masks -lumenDemoMask subject
       - uses: actions/upload-artifact@v4
         if: always()
