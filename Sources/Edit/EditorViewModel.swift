@@ -157,7 +157,8 @@ final class EditorViewModel: ObservableObject {
         if overlayVisible, let m = selectedMask {
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure))
         }
-        if !useDetail, img.extent.size != imageSize { imageSize = img.extent.size }
+        // sized from the preview so the shape stays right (crop, rotation, original) while the 100% view is showing
+        if base.extent.size != imageSize { imageSize = base.extent.size }
         canvas.update(img)
         scheduleHistogram(base)
     }
