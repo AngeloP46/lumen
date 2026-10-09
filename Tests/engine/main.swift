@@ -514,5 +514,48 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
     })
 }
 
+// ---- EditSettings JSON sidecar: round trip, and the library's old-sidecar migration (defaults + saved keys).
+do {
+    var rich = EditSettings()
+    rich.exposure = 0.75; rich.contrast = -12.5; rich.temperature = 18; rich.blackAndWhite = true
+    rich.vignette = -30; rich.grain = 20; rich.cropL = 0.1; rich.cropB = 0.9; rich.quarterTurns = 3; rich.straighten = -2.5
+    rich.curves.master = [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.4, y: 0.3), CurvePoint(x: 1, y: 1)]
+    rich.hsl.bands[2].hue = 15; rich.hsl.bands[5].sat = -40
+    rich.grading.shadows = GradeZone(hue: 220, sat: 30, lum: -5); rich.grading.blending = 70
+    var mask = Mask.make(.linear)
+    mask.adjust.exposure = 0.5; mask.amount = 80; mask.invert = true
+    var brush = MaskComponent.make(.brush, op: .subtract)
+    brush.strokes = [BrushStroke(points: [Pt(x: 0.1, y: 0.2), Pt(x: 0.3, y: 0.4)], size: 0.05, erase: false)]
+    mask.components.append(brush)
+    rich.masks = [mask]
+
+    for (name, s) in [("default", EditSettings()), ("rich", rich)] {
+        do {
+            let data = try JSONEncoder().encode(s)
+            let back = try JSONDecoder().decode(EditSettings.self, from: data)
+            check(back == s, "settings JSON: \(name) settings changed after encode + decode")
+        } catch { check(false, "settings JSON: \(name) round trip threw \(error)") }
+    }
+
+    // Same recipe as LibraryStore.settings(for:): lay an old sidecar's known keys over today's defaults.
+    do {
+        let defaults = try JSONSerialization.jsonObject(with: JSONEncoder().encode(EditSettings())) as? [String: Any] ?? [:]
+        check(!defaults.isEmpty, "settings JSON: default settings encoded to an empty object")
+        var old: [String: Any] = ["exposure": 1.5, "contrast": 20, "someRemovedSlider": 7]
+        old = old.filter { defaults[$0.key] != nil }
+        check(old.count == 2, "settings JSON: unknown key was not filtered out")
+        var merged = defaults
+        for (k, v) in old { merged[k] = v }
+        let d = try JSONSerialization.data(withJSONObject: merged)
+        let s = try JSONDecoder().decode(EditSettings.self, from: d)
+        check(s.exposure == 1.5 && s.contrast == 20, "settings JSON: partial sidecar lost its saved values (exposure \(s.exposure), contrast \(s.contrast))")
+        check(s.saturation == 0 && s.cropR == 1 && s.cropB == 1 && s.masks.isEmpty && s.curves.isNeutral,
+              "settings JSON: keys missing from a partial sidecar did not fall back to defaults")
+    } catch { check(false, "settings JSON: partial sidecar migration threw \(error)") }
+
+    // Garbage must fail to decode (the app then falls back to defaults) rather than crash.
+    check((try? JSONDecoder().decode(EditSettings.self, from: Data("not json".utf8))) == nil, "settings JSON: garbage decoded as settings")
+}
+
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
 finishChecks()
