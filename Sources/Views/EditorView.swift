@@ -361,7 +361,7 @@ struct EditorView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityIdentifier("photo")
             .accessibilityLabel(item.displayName)
-            .accessibilityValue("zoom \(String(format: "%.1f", Double(zoom))) original \(vm.showOriginal) chrome \(chromeHidden ? "hidden" : "shown")")
+            .accessibilityValue("zoom \(String(format: "%.1f", Double(zoom))) original \(vm.showOriginal) chrome \(chromeHidden ? "hidden" : "shown") overlay \(vm.overlayVisible)")
             .gesture(
                 SpatialTapGesture(count: 2)
                     .exclusively(before: TapGesture(count: 1))

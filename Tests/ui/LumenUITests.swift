@@ -309,6 +309,22 @@ final class LumenUITests: XCTestCase {
         }
     }
 
+    func testMaskOverlayShowsOnShapeTabAndHidesOnAdjustTab() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "linear"])
+        let shape = app.buttons["Shape"], adjust = app.buttons["Adjust"]
+        XCTAssertTrue(adjust.waitForExistence(timeout: 30), "the mask panel should show its Shape/Adjust tabs")
+        sleep(1)
+        XCTAssertTrue(valueOf("photo").contains("overlay true"), "overlay should show on the Shape tab: \(valueOf("photo"))")
+        adjust.tap()
+        sleep(1)
+        XCTAssertTrue(valueOf("photo").contains("overlay false"), "overlay should be hidden on the Adjust tab: \(valueOf("photo"))")
+        shot("mask-overlay-adjust")
+        XCTAssertTrue(shape.waitForExistence(timeout: 5))
+        shape.tap()
+        sleep(1)
+        XCTAssertTrue(valueOf("photo").contains("overlay true"), "overlay should return on the Shape tab: \(valueOf("photo"))")
+    }
+
     func testMaskAdjustPanelStaysAboveToolBar() {
         launch(open: 1, tool: "Masks", extra: ["-lumenDemoMask", "linear", "-lumenDemoMaskTab", "adjust"])
         sleep(2)
