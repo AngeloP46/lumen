@@ -557,5 +557,54 @@ do {
     check((try? JSONDecoder().decode(EditSettings.self, from: Data("not json".utf8))) == nil, "settings JSON: garbage decoded as settings")
 }
 
+// ---- Tone curves: LUT maths and odd control-point lists must never crash or leave 0...1.
+do {
+    func lutOK(_ name: String, _ pts: [CurvePoint]) -> [Float] {
+        let l = ToneCurves.lut(for: pts)
+        check(l.count == 256, "curves: \(name) LUT has \(l.count) entries, expected 256")
+        check(l.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 }, "curves: \(name) LUT has a value that is NaN/Inf or outside 0...1")
+        return l
+    }
+    let ident = lutOK("identity", ToneCurves.identity)
+    let identErr = ident.enumerated().map { abs(Double($0.element) - Double($0.offset) / 255) }.max() ?? 1
+    check(identErr < 0.002, "curves: identity LUT deviates from y = x by \(identErr)")
+
+    let sortedPts = [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.3, y: 0.2), CurvePoint(x: 0.7, y: 0.85), CurvePoint(x: 1, y: 1)]
+    let shuffled = [sortedPts[2], sortedPts[0], sortedPts[3], sortedPts[1]]
+    check(lutOK("sorted", sortedPts) == lutOK("unsorted", shuffled), "curves: unsorted control points give a different LUT than sorted ones")
+
+    let up = lutOK("increasing", sortedPts)
+    var monotone = true
+    for i in 1..<up.count where up[i] < up[i - 1] - 1e-5 { monotone = false }
+    check(monotone, "curves: LUT through increasing control points is not monotone")
+    check(abs(up[0]) < 0.01 && abs(up[255] - 1) < 0.01, "curves: LUT ends are \(up[0]) and \(up[255]), expected ~0 and ~1")
+
+    let lift = lutOK("lifted mid", [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.8), CurvePoint(x: 1, y: 1)])
+    check(lift[128] > 0.7 && lift[128] > ident[128] + 0.1, "curves: lifting the midpoint to 0.8 gave LUT[128] = \(lift[128])")
+
+    let inv = lutOK("inverted", [CurvePoint(x: 0, y: 1), CurvePoint(x: 1, y: 0)])
+    check(inv[0] > 0.98 && inv[255] < 0.02, "curves: inverted curve ends are \(inv[0]) and \(inv[255])")
+
+    let single = lutOK("single point", [CurvePoint(x: 0.5, y: 0.5)])
+    let empty = lutOK("empty", [])
+    check(single == ident && empty == ident, "curves: fewer than two points should fall back to the identity LUT")
+
+    _ = lutOK("duplicate x", [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.2), CurvePoint(x: 0.5, y: 0.8), CurvePoint(x: 1, y: 1)])
+    _ = lutOK("all same x", [CurvePoint(x: 0.4, y: 0.1), CurvePoint(x: 0.4, y: 0.9)])
+    _ = lutOK("out of range", [CurvePoint(x: -0.5, y: -1), CurvePoint(x: 0.5, y: 2), CurvePoint(x: 1.5, y: 0.5)])
+
+    // The baked colour cube must come out the same size whatever the curves are, and a neutral cube must differ from a curved one.
+    let dimN = ColorCube.dim
+    let neutralCube = ColorCube.make(curves: ToneCurves(), hsl: HSLSettings(), grading: ColorGrading(), blackAndWhite: false)
+    var odd = ToneCurves()
+    odd.master = [CurvePoint(x: 0.5, y: 0.5), CurvePoint(x: 0.5, y: 0.9), CurvePoint(x: 0, y: 0)]
+    odd.red = []
+    odd.blue = [CurvePoint(x: 0, y: 1), CurvePoint(x: 1, y: 0)]
+    let oddCube = ColorCube.make(curves: odd, hsl: HSLSettings(), grading: ColorGrading(), blackAndWhite: false)
+    check(neutralCube.count == dimN * dimN * dimN * 16, "curves: neutral cube is \(neutralCube.count) bytes, expected \(dimN * dimN * dimN * 16)")
+    check(oddCube.count == neutralCube.count, "curves: odd-curve cube size \(oddCube.count) differs from neutral \(neutralCube.count)")
+    check(oddCube != neutralCube, "curves: an inverted blue curve left the baked cube unchanged")
+}
+
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
 finishChecks()
