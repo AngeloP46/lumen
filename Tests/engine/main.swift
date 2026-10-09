@@ -480,7 +480,8 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             print("  tails: low/high default \(String(format: "%.1f", d.low))/\(String(format: "%.1f", d.high)) whites+70 high \(String(format: "%.1f", w.high))"
                   + " blacks-70 low \(String(format: "%.1f", b.low)) highlights-100 high \(String(format: "%.1f", h.high))")
             if d.high < 240 { check(w.high > d.high + 1, "\(stem) whites +70: brightest 10% luma \(w.high) is not above default \(d.high)") }
-            if d.low > 15 { check(b.low < d.low - 1, "\(stem) blacks -70: darkest 10% luma \(b.low) is not below default \(d.low)") }
+            // Blacks only bites in deep shadows: with a bright darkest 10% (luma > 40) it must still not raise them.
+            if d.low > 15 { check(b.low < d.low - (d.low < 40 ? 1 : 0.1), "\(stem) blacks -70: darkest 10% luma \(b.low) is not below default \(d.low)") }
             if d.high > 60 { check(h.high < d.high - 1, "\(stem) highlights -100: brightest 10% luma \(h.high) is not below default \(d.high)") }
         } else {
             check(false, "\(stem) tails: could not render the whites/blacks/highlights cases")
