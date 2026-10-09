@@ -220,6 +220,32 @@ final class LumenUITests: XCTestCase {
         shot("after-swipe")
     }
 
+    func testSwipeAwayAndBackKeepsEachPhotosOwnEdit() {
+        launch(open: 1, tool: "Light")
+        let first = el("photo").label
+        let s = el("slider-Highlights")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(1)
+        let edited = Int(valueOf("reset-Highlights")) ?? 0
+        XCTAssertGreaterThan(edited, 10, "dragging right should raise Highlights, got \(edited)")
+        el("photo").swipeLeft()
+        sleep(4)
+        let second = el("photo").label
+        XCTAssertNotEqual(first, second, "swiping left should open the next photo (\(first) -> \(second))")
+        if !el("reset-Highlights").exists, el("tool-Light").exists { el("tool-Light").tap(); sleep(1) }
+        XCTAssertTrue(el("reset-Highlights").waitForExistence(timeout: 10), "Light panel should show Highlights on photo 2")
+        XCTAssertEqual(valueOf("reset-Highlights"), "0", "photo 2 must not show photo 1's Highlights edit")
+        shot("swipe-photo2")
+        el("photo").swipeRight()
+        sleep(4)
+        XCTAssertEqual(el("photo").label, first, "swiping right should return to the first photo")
+        if !el("reset-Highlights").exists, el("tool-Light").exists { el("tool-Light").tap(); sleep(1) }
+        XCTAssertTrue(el("reset-Highlights").waitForExistence(timeout: 10), "Light panel should show Highlights on photo 1")
+        XCTAssertEqual(Int(valueOf("reset-Highlights")) ?? 0, edited, "photo 1 should keep its Highlights edit")
+        shot("swipe-photo1-again")
+    }
+
     func testBackToLibraryAndReopenKeepsEdit() {
         launch(open: 0, tool: "Light")
         let s = el("slider-Highlights")
