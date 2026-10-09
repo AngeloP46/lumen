@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import Foundation
 
 struct HistogramData {
@@ -6,6 +7,8 @@ struct HistogramData {
     var g: [Float]
     var b: [Float]
     var luma: [Float]
+    /// Share of pixels brighter than SDR white (0...1); only set while HDR is on.
+    var hdrShare: Float = 0
 }
 
 enum Histogram {
@@ -42,5 +45,24 @@ enum Histogram {
         }
         func norm(_ a: [Float]) -> [Float] { a.map { min(1, ($0 / peak).squareRoot()) } }
         return HistogramData(r: norm(r), g: norm(g), b: norm(b), luma: norm(l))
+    }
+
+    /// Share of pixels whose brightest channel is above 1.0 (the HDR zone) in a small extended-linear render.
+    static func hdrShare(_ img: CIImage) -> Float {
+        let e = img.extent
+        guard e.width > 0, e.height > 0, e.width.isFinite, e.height.isFinite,
+              let cs = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) else { return 0 }
+        let k = 96 / max(e.width, e.height)
+        let small = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+        let r = small.extent.integral
+        let w = Int(r.width), h = Int(r.height)
+        guard w > 0, h > 0 else { return 0 }
+        var buf = [Float](repeating: 0, count: w * h * 4)
+        buf.withUnsafeMutableBytes { p in
+            LumenGPU.context.render(small, toBitmap: p.baseAddress!, rowBytes: w * 16, bounds: r, format: .RGBAf, colorSpace: cs)
+        }
+        var n = 0
+        for i in stride(from: 0, to: buf.count, by: 4) where max(buf[i], buf[i + 1], buf[i + 2]) > 1.02 { n += 1 }
+        return Float(n) / Float(w * h)
     }
 }

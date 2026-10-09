@@ -397,6 +397,13 @@ struct HistogramView: View {
             ctx.fill(path(d.r), with: .color(Color.red.opacity(0.6)))
             ctx.fill(path(d.g), with: .color(Color.green.opacity(0.6)))
             ctx.fill(path(d.b), with: .color(Color.blue.opacity(0.6)))
+            if d.hdrShare > 0.001 {
+                // HDR zone: a warm bar at the right edge, taller the more of the picture is above SDR white
+                let bar = max(0.12, min(1, CGFloat(d.hdrShare).squareRoot()))
+                let zone = CGRect(x: size.width - 5, y: size.height * (1 - bar), width: 5, height: size.height * bar)
+                ctx.blendMode = .normal
+                ctx.fill(Path(zone), with: .color(Color.orange.opacity(0.9)))
+            }
         }
         .background(Color.black.opacity(0.35))
         .clipShape(RoundedRectangle(cornerRadius: 6))

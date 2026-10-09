@@ -67,6 +67,7 @@ final class EditorViewModel: ObservableObject {
     private var started = false
     private var histPending = false
     private var histImage: CIImage?
+    private var histHDRImage: CIImage?
     private var saveWork: DispatchWorkItem?
 
     // Undo / redo
@@ -168,12 +169,13 @@ final class EditorViewModel: ObservableObject {
         var img = session.develop(s, source: active, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: hdrWeight)
         // the histogram always reads the small SDR preview, even while the 100% view is showing
         let base = (useDetail || hdrWeight > 0) ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop) : img
+        let hdrImg = img
         if overlayVisible, let m = selectedMask {
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure))
         }
         if !useDetail, img.extent.size != imageSize { imageSize = img.extent.size }
         canvas.update(img)
-        scheduleHistogram(base)
+        scheduleHistogram(base, hdr: hdrWeight > 0 ? hdrImg : nil)
     }
 
     // MARK: 100% view
@@ -267,12 +269,14 @@ final class EditorViewModel: ObservableObject {
         setCropAspect(1 / settings.cropAspect)
     }
 
-    private func scheduleHistogram(_ img: CIImage) {
+    private func scheduleHistogram(_ img: CIImage, hdr: CIImage? = nil) {
         histImage = img
+        histHDRImage = hdr
         guard !histPending else { return }
         histPending = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
             guard let self, let img = self.histImage else { return }
+            let hdrImg = self.histHDRImage
             self.histPending = false
             histQueue.async {
                 let e = img.extent
@@ -280,7 +284,8 @@ final class EditorViewModel: ObservableObject {
                 let small = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
                 guard let cg = LumenGPU.context.createCGImage(small, from: small.extent, format: .RGBA8,
                                                               colorSpace: LumenGPU.displaySpace) else { return }
-                let h = Histogram.compute(cg)
+                var h = Histogram.compute(cg)
+                if let hdrImg { h?.hdrShare = Histogram.hdrShare(hdrImg) }
                 Task { @MainActor [weak self] in self?.histogram = h }
             }
         }
