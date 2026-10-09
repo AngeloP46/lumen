@@ -204,6 +204,24 @@ final class LumenUITests: XCTestCase {
 
     // MARK: nothing may overlap the tool bar
 
+    func testEveryToolPanelStaysAboveToolBar() {
+        launch(open: 0, tool: "Presets")
+        let bar = el("tool-Light").frame
+        // each tap switches to a different tool than the one before, so no tap closes the panel
+        for name in ["Presets", "Crop", "Light", "Color", "Grade", "Curve", "Detail", "Masks"] {
+            if name != "Presets" {
+                XCTAssertTrue(el("tool-\(name)").waitForExistence(timeout: 10), "tool button \(name) should exist")
+                el("tool-\(name)").tap()
+                sleep(2)
+            }
+            let panel = el("panel")
+            XCTAssertTrue(panel.waitForExistence(timeout: 10), "\(name) should open a panel")
+            XCTAssertLessThanOrEqual(panel.frame.maxY, bar.minY + 2, "\(name) panel (\(panel.frame)) must sit above the tool bar (\(bar))")
+            XCTAssertGreaterThan(panel.frame.height, 40, "\(name) panel should have some height (\(panel.frame))")
+            shot("tool-panel-\(name)")
+        }
+    }
+
     func testMaskAdjustPanelStaysAboveToolBar() {
         launch(open: 1, tool: "Masks", extra: ["-lumenDemoMask", "linear", "-lumenDemoMaskTab", "adjust"])
         sleep(2)
