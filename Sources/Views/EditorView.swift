@@ -288,6 +288,14 @@ struct EditorView: View {
                         .allowsHitTesting(false)
                 }
             }
+            .overlay(alignment: .bottomLeading) {
+                if vm.settings.hdr && !chromeHidden && tool != .crop {
+                    Text("HDR").accessibilityIdentifier("hdr-badge").font(.caption2.bold())
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: Capsule()).padding(10)
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay(alignment: .bottom) {
                 if vm.showOriginal {
                     Text("ORIGINAL").accessibilityIdentifier("original-label").font(.caption2.bold()).padding(.horizontal, 10).padding(.vertical, 5)
