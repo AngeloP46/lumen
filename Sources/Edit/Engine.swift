@@ -276,7 +276,7 @@ final class EditSession: @unchecked Sendable {
             darks.append((max(0, min(c.x, min(c.y, c.z))), i))
         }
         darks.sort { $0.0 > $1.0 }
-        let n = max(4, darks.count / 100)
+        let n = min(darks.count, max(4, darks.count / 100))
         var air = SIMD3<Float>(0, 0, 0)
         var dsum: Float = 0
         for j in 0..<n {

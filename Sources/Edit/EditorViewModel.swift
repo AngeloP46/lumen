@@ -157,7 +157,8 @@ final class EditorViewModel: ObservableObject {
         if overlayVisible, let m = selectedMask {
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure))
         }
-        if !useDetail, img.extent.size != imageSize { imageSize = img.extent.size }
+        // sized from the preview so the shape stays right (crop, rotation, original) while the 100% view is showing
+        if base.extent.size != imageSize { imageSize = base.extent.size }
         canvas.update(img)
         scheduleHistogram(base)
     }
@@ -200,6 +201,8 @@ final class EditorViewModel: ObservableObject {
                 self.detailSource = src
                 self.syncDetailMasks()
                 self.requestRender()
+                // zoomed back out while it was building: start the usual release countdown
+                if self.zoomLevel <= 1.05 { self.zoomChanged(self.zoomLevel) }
             }
         }
     }
@@ -262,6 +265,7 @@ final class EditorViewModel: ObservableObject {
             self.histPending = false
             histQueue.async {
                 let e = img.extent
+                guard !e.isEmpty, !e.isInfinite, max(e.width, e.height) > 0 else { return }
                 let k = 160 / max(e.width, e.height)
                 let small = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
                 guard let cg = LumenGPU.context.createCGImage(small, from: small.extent, format: .RGBA8,
@@ -287,7 +291,8 @@ final class EditorViewModel: ObservableObject {
                 self.autoMaskMissing = missing
                 self.syncDetailMasks()
                 self.requestRender()
-                self.prepareAutoMasksIfNeeded()   // masks may have changed while we were busy
+                // masks may have changed while we were busy
+                if self.settings.masks != snapshot.masks { self.prepareAutoMasksIfNeeded() }
             }
         }
     }
@@ -376,8 +381,11 @@ final class EditorViewModel: ObservableObject {
     }
 
     private func uniqueName(_ base: String) -> String {
-        let n = settings.masks.filter { $0.name.hasPrefix(base) }.count
-        return n == 0 ? base : "\(base) \(n + 1)"
+        let names = Set(settings.masks.map(\.name))
+        guard names.contains(base) else { return base }
+        var n = 2
+        while names.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
     }
 
     func selectMask(_ id: UUID) {
@@ -397,6 +405,8 @@ final class EditorViewModel: ObservableObject {
         guard let id = selectedMaskID else { return }
         updateMask(id) { m in
             if m.components.count > 1 { m.components.removeAll { $0.id == cid } }
+            // the first component is the base: its op is ignored when rendering and locked in the panel
+            if !m.components.isEmpty { m.components[0].op = .add }
         }
         selectedComponentID = selectedMask?.components.first?.id
     }

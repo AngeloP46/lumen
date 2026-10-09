@@ -25,6 +25,7 @@ final class LibraryStore: ObservableObject {
     @Published var importing = false
     @Published var importTotal = 0
     @Published var importDone = 0
+    private var activeImports = 0
 
     private let fm = FileManager.default
     private let root: URL
@@ -48,6 +49,15 @@ final class LibraryStore: ObservableObject {
         if let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
            let decoded = try? JSONDecoder().decode([UserPreset].self, from: data) {
             userPresets = decoded
+        } else if let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
+                  let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] {
+            // Presets saved by an older version: migrate their settings like old sidecars.
+            userPresets = list.compactMap { p -> UserPreset? in
+                guard let name = p["name"] as? String, let s = p["settings"] as? [String: Any],
+                      let d = try? JSONSerialization.data(withJSONObject: s) else { return nil }
+                let id = (p["id"] as? String).flatMap { UUID(uuidString: $0) } ?? UUID()
+                return UserPreset(id: id, name: name, settings: Self.decodeSettings(d))
+            }
         }
     }
 
@@ -61,20 +71,45 @@ final class LibraryStore: ObservableObject {
 
     func settings(for item: LibraryItem) -> EditSettings {
         guard let data = try? Data(contentsOf: editURL(item)) else { return EditSettings() }
+        return Self.decodeSettings(data)
+    }
+
+    private static func decodeSettings(_ data: Data) -> EditSettings {
         let decoder = JSONDecoder()
         if let s = try? decoder.decode(EditSettings.self, from: data) { return s }
         // Older sidecar: lay its values over today's defaults, dropping anything that no longer fits.
+        // The template has one mask so masks, components and their adjustments get today's defaults too.
+        var template = EditSettings()
+        template.masks = [Mask.make(.brush)]
         guard var old = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let defaults = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(EditSettings()))) as? [String: Any]
+              var defaults = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(template))) as? [String: Any]
         else { return EditSettings() }
         old = old.filter { defaults[$0.key] != nil }
+        let maskTemplate = defaults["masks"] ?? [Any]()
+        defaults["masks"] = [Any]()
         for dropping in [[], ["masks"]] as [[String]] {
             var merged = defaults
-            for (k, v) in old where !dropping.contains(k) { merged[k] = v }
+            for (k, v) in old where !dropping.contains(k) {
+                merged[k] = Self.overlay(v, on: k == "masks" ? maskTemplate : defaults[k] ?? v)
+            }
             if let d = try? JSONSerialization.data(withJSONObject: merged),
                let s = try? decoder.decode(EditSettings.self, from: d) { return s }
         }
         return EditSettings()
+    }
+
+    /// Lays old JSON values over a template: objects are merged key by key (keys the template lacks are dropped),
+    /// array elements are each merged over the template's first element.
+    private static func overlay(_ value: Any, on template: Any) -> Any {
+        if let v = value as? [String: Any], let t = template as? [String: Any] {
+            var out = t
+            for (k, x) in v { if let tx = t[k] { out[k] = overlay(x, on: tx) } }
+            return out
+        }
+        if let v = value as? [Any], let t = (template as? [Any])?.first, t is [String: Any] {
+            return v.map { overlay($0, on: t) }
+        }
+        return value
     }
 
     func save(_ s: EditSettings, for item: LibraryItem) {
@@ -83,6 +118,9 @@ final class LibraryStore: ObservableObject {
 
     func delete(_ item: LibraryItem) {
         for u in [fileURL(item), thumbURL(item), editURL(item)] { try? fm.removeItem(at: u) }
+        // The thumbnail queue is serial: this runs after any render already in flight for this photo.
+        let thumb = thumbURL(item)
+        thumbQueue.async { try? FileManager.default.removeItem(at: thumb) }
         items.removeAll { $0.id == item.id }
         saveIndex()
     }
@@ -138,10 +176,15 @@ final class LibraryStore: ObservableObject {
 
     func importPicked(_ picked: [PhotosPickerItem]) async {
         guard !picked.isEmpty else { return }
+        // A second import can start while one is running: add to the running counts instead of resetting them.
+        if activeImports == 0 { importTotal = 0; importDone = 0 }
+        activeImports += 1
         importing = true
-        importTotal = picked.count
-        importDone = 0
-        defer { importing = false }
+        importTotal += picked.count
+        defer {
+            activeImports -= 1
+            if activeImports == 0 { importing = false }
+        }
         // Asking for read access lets us fetch the true RAW/ProRAW original; the picker works without it too.
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         let canFetch = status == .authorized || status == .limited
@@ -150,10 +193,8 @@ final class LibraryStore: ObservableObject {
             if canFetch, let id = p.itemIdentifier, await importAsset(identifier: id) { continue }
             // Fallback: whatever the picker hands us (RAW file when it has one, otherwise the rendered photo).
             if let file = try? await p.loadTransferable(type: PickedFile.self) {
-                do {
-                    try add(copying: file.url, name: file.name)
-                    try? fm.removeItem(at: file.url)
-                } catch { lastError = error.localizedDescription }
+                do { try add(copying: file.url, name: file.name) } catch { lastError = error.localizedDescription }
+                try? fm.removeItem(at: file.url)
             } else {
                 lastError = "Couldn't read that photo from your library."
             }
@@ -171,13 +212,13 @@ final class LibraryStore: ObservableObject {
         try? fm.removeItem(at: tmp)
         let opts = PHAssetResourceRequestOptions()
         opts.isNetworkAccessAllowed = true
+        defer { try? fm.removeItem(at: tmp) }
         do {
             try await PHAssetResourceManager.default().writeData(for: res, toFile: tmp, options: opts)
             try add(copying: tmp, name: URL(fileURLWithPath: res.originalFilename).deletingPathExtension().lastPathComponent)
-            try? fm.removeItem(at: tmp)
             return true
         } catch {
-            lastError = error.localizedDescription
+            // No alert here: the caller falls back to the picker's copy and reports if that fails too.
             return false
         }
     }
@@ -208,6 +249,7 @@ final class LibraryStore: ObservableObject {
             guard let session = EditSession(url: src),
                   let cg = session.renderCGImage(settings, maxEdge: 640),
                   let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else { return }
+            guard FileManager.default.fileExists(atPath: src.path) else { return }
             try? jpg.write(to: dst, options: .atomic)
             Task { @MainActor [weak self] in self?.thumbVersion += 1 }
         }

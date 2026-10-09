@@ -118,7 +118,7 @@ struct CurvePanel: View {
                     if let (i, d) = nearest(p, to: v.startLocation), d < 28 {
                         dragIndex = i
                     } else {
-                        let np = CurvePoint(x: clamp01(v.startLocation.x / side), y: clamp01(1 - v.startLocation.y / side))
+                        let np = CurvePoint(x: min(max(clamp01(v.startLocation.x / side), 0.01), 0.99), y: clamp01(1 - v.startLocation.y / side))
                         p.append(np)
                         p.sort { $0.x < $1.x }
                         dragIndex = p.firstIndex(of: np)

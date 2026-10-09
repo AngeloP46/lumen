@@ -56,7 +56,7 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
         let bounds = CGRect(origin: .zero, size: size)
         var out = CIImage(color: .black).cropped(to: bounds)
         let r = xform.rect
-        if let img = model.image, r.width > 1, r.height > 1 {
+        if let img = model.image, r.width > 1, r.height > 1, !img.extent.isEmpty, !img.extent.isInfinite {
             let sf = view.contentScaleFactor
             let ext = img.extent
             let k = r.width * sf / ext.width
