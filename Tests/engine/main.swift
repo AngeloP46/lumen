@@ -211,3 +211,115 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         $0.masks = [linear, radial]
     })
 }
+
+
+// ======================================================================================
+// HDR CHECKS (night/hdr). Kept in its own function at the end of the file.
+// ======================================================================================
+func runHDRChecks() {
+    print("== HDR checks ==")
+    var failures = 0
+    func check(_ ok: Bool, _ what: String) {
+        if ok { print("HDR OK: \(what)") } else { print("FAIL: HDR \(what)"); failures += 1 }
+    }
+    let hdrFiles = ((try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? [])
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    guard let first = hdrFiles.first else { print("FAIL: HDR no input photos"); return }
+    let arw = hdrFiles.first { $0.pathExtension.lowercased() == "arw" } ?? first
+    let linearSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+
+    struct Pixels { var w = 0, h = 0, f: [Float] = [] }
+    func pixels(_ img: CIImage) -> Pixels {
+        let scale = 600 / max(img.extent.width, 1)
+        let sm = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let r = sm.extent.integral
+        let w = Int(r.width), h = Int(r.height)
+        var buf = [Float](repeating: 0, count: w * h * 4)
+        buf.withUnsafeMutableBytes { p in
+            LumenGPU.context.render(sm, toBitmap: p.baseAddress!, rowBytes: w * 16, bounds: r, format: .RGBAf, colorSpace: linearSpace)
+        }
+        return Pixels(w: w, h: h, f: buf)
+    }
+    func lum(_ p: Pixels, _ i: Int) -> Float { 0.2126 * p.f[i * 4] + 0.7152 * p.f[i * 4 + 1] + 0.0722 * p.f[i * 4 + 2] }
+    func maxDiff(_ a: Pixels, _ b: Pixels) -> Float {
+        guard a.f.count == b.f.count else { return .infinity }
+        var m: Float = 0
+        for i in 0..<a.f.count { m = max(m, abs(a.f[i] - b.f[i])) }
+        return m
+    }
+
+    func checks(_ file: URL, tag: String, exposure: Double, rangeChecks: Bool) -> (CGImage, CGImage)? {
+        guard let session = EditSession(url: file), let source = session.makeSource(maxEdge: 1800, materialize: true) else {
+            print("FAIL: HDR cannot open \(file.lastPathComponent)"); failures += 1; return nil
+        }
+        var off = EditSettings(); off.exposure = exposure
+        var on = off; on.hdr = true
+        session.prepareAutoMasks(off, source: source)
+        let stops = on.hdrStops
+
+        let base = pixels(session.develop(off, source: source, geometry: true))
+        // 1. hdr = false is unchanged, whatever weight is passed.
+        let offW1 = pixels(session.develop(off, source: source, geometry: true, hdrWeight: 1))
+        check(maxDiff(base, offW1) == 0, "\(tag) 1: hdr off identical (diff \(maxDiff(base, offW1)))")
+        // 2. hdr = true with weight 0 equals hdr = false.
+        let onW0 = pixels(session.develop(on, source: source, geometry: true, hdrWeight: 0))
+        check(maxDiff(base, onW0) == 0, "\(tag) 2: hdr on, weight 0 identical (diff \(maxDiff(base, onW0)))")
+        // 3. weight 1: never darker; unchanged where SDR luminance is below 0.8.
+        let w1 = pixels(session.develop(on, source: source, geometry: true, hdrWeight: 1))
+        var darker: Float = 0, midDiff: Float = 0, maxL: Float = 0, brighter = 0
+        if w1.f.count == base.f.count {
+            for i in 0..<(base.w * base.h) {
+                let ls = lum(base, i), lh = lum(w1, i)
+                darker = max(darker, ls - lh)
+                if ls < 0.8 { for c in 0..<3 { midDiff = max(midDiff, abs(w1.f[i * 4 + c] - base.f[i * 4 + c])) } }
+                if lh > ls + 0.01 { brighter += 1 }
+                maxL = max(maxL, lh)
+            }
+        } else { darker = .infinity; midDiff = .infinity }
+        check(darker <= 1e-4, "\(tag) 3a: HDR >= SDR (worst shortfall \(darker))")
+        check(midDiff <= 1e-3, "\(tag) 3b: SDR luminance < 0.8 unchanged (worst diff \(midDiff))")
+        print("HDR info: \(tag) max HDR luminance \(maxL), pixels brighter than SDR: \(brighter)")
+        // 4. Range of the brightest pixel (RAW with exposure +1).
+        if rangeChecks {
+            check(maxL > 1.2, "\(tag) 4a: max HDR luminance > 1.2 (is \(maxL))")
+            check(maxL <= Float(exp2(stops)) + 0.05, "\(tag) 4b: max HDR luminance <= 2^stops (is \(maxL))")
+        }
+        // 5. weight 0.5 lies between weight 0 and weight 1.
+        let half = pixels(session.develop(on, source: source, geometry: true, hdrWeight: 0.5))
+        var bad = 0
+        if half.f.count == base.f.count {
+            for i in 0..<(base.w * base.h) {
+                let a = lum(base, i), b = lum(w1, i), h = lum(half, i)
+                if h < a - 1e-3 || h > b + 1e-3 { bad += 1 }
+            }
+        } else { bad = -1 }
+        check(bad == 0, "\(tag) 5: weight 0.5 between 0 and 1 (violations \(bad))")
+
+        // Contact sheet images: SDR, HDR, and HDR/H (HDR scaled down so highlights are visible).
+        func cg(_ img: CIImage, scale: Double = 1) -> CGImage? {
+            var im = img
+            if scale != 1 { im = im.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: scale, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: scale, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: scale, w: 0)]) }
+            let f = 420 / im.extent.width
+            let o = im.transformed(by: CGAffineTransform(scaleX: f, y: f))
+            return LumenGPU.context.createCGImage(o, from: o.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+        }
+        let sdrImg = session.develop(on, source: source, geometry: true, hdrWeight: 0)
+        let hdrImg = session.develop(on, source: source, geometry: true, hdrWeight: 1)
+        if let a = cg(sdrImg), let b = cg(hdrImg), let c = cg(hdrImg, scale: 1 / exp2(stops)) {
+            if let sh = sheet([("SDR", a), ("HDR (clipped on SDR screen)", b), ("HDR / H (for viewing)", c)]) {
+                saveJPEG(sh, "hdr-\(tag).jpg")
+            }
+            return (a, b)
+        }
+        return nil
+    }
+
+    _ = checks(arw, tag: "arw-exp+1", exposure: 1, rangeChecks: true)
+    if first != arw { _ = checks(first, tag: "\(first.deletingPathExtension().lastPathComponent)-exp+1", exposure: 1, rangeChecks: false) }
+    // 6. (gain-map export) is added with the export item.
+    print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")
+    if failures > 0 { exit(1) }
+}
+runHDRChecks()
