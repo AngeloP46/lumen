@@ -109,11 +109,17 @@ final class EditorViewModel: ObservableObject {
         applyingHistory = false
         let url = store.fileURL(item)
         let wantsHDR = settings.hdr
+        let asked = Date()
         workQueue.async {
+            let began = Date()
             let s = EditSession(url: url, expandHDR: wantsHDR)
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                if DemoMode.isOn {
+                    DemoMode.log(String(format: "loaded %@ queued %.1fs decoded %.1fs", url.lastPathComponent,
+                                        began.timeIntervalSince(asked), Date().timeIntervalSince(began)))
+                }
                 self.session = s
                 self.source = src
                 self.isLoading = false

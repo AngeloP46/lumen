@@ -316,7 +316,9 @@ final class LumenUITests: XCTestCase {
         launch(open: 1, tool: "Light")
         let first = el("photo").label
         el("photo").swipeLeft()
-        sleep(4)
+        sleep(2)
+        // the next photo is the 24 MP RAW: on a busy CI machine it can take a while to decode
+        XCTAssertTrue(el("photo").waitForExistence(timeout: 45), "the next photo never finished loading: \(events().suffix(3))")
         let second = el("photo").label
         XCTAssertNotEqual(first, second, "swiping should open the next photo (\(first) -> \(second))")
         shot("after-swipe")
@@ -340,7 +342,8 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(valueOf("reset-Highlights"), "0", "photo 2 must not show photo 1's Highlights edit")
         shot("swipe-photo2")
         el("photo").swipeRight()
-        sleep(4)
+        sleep(2)
+        XCTAssertTrue(el("photo").waitForExistence(timeout: 45), "the first photo never finished loading again")
         XCTAssertEqual(el("photo").label, first, "swiping right should return to the first photo")
         if !el("reset-Highlights").exists, el("tool-Light").exists { el("tool-Light").tap(); sleep(1) }
         XCTAssertTrue(el("reset-Highlights").waitForExistence(timeout: 10), "Light panel should show Highlights on photo 1")
