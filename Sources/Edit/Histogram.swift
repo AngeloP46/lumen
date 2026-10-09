@@ -59,10 +59,11 @@ enum Histogram {
 
     /// Replaces the colour channels with an HDR histogram of `img` (extended linear): SDR on the left 60 %, then one
     /// segment per stop above white up to `stops`. The luminance histogram (used by the luminance mask) stays SDR.
+    /// Read in Display P3 (the working gamut): in sRGB, vivid P3 colours would look "brighter than white".
     static func addHDR(_ h: inout HistogramData, _ img: CIImage, stops: Double, screenStops: Double) {
         let e = img.extent
         guard e.width > 0, e.height > 0, e.width.isFinite, e.height.isFinite,
-              let cs = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) else { return }
+              let cs = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) else { return }
         let k = 128 / max(e.width, e.height)
         let small = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
         let r = small.extent.integral
@@ -105,7 +106,7 @@ enum Histogram {
     static func hdrShare(_ img: CIImage) -> Float {
         let e = img.extent
         guard e.width > 0, e.height > 0, e.width.isFinite, e.height.isFinite,
-              let cs = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) else { return 0 }
+              let cs = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) else { return 0 }
         let k = 96 / max(e.width, e.height)
         let small = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
         let r = small.extent.integral
