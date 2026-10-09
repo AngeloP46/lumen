@@ -61,8 +61,11 @@ extension EditSession {
     }
 
     /// Red tint over `img` showing where `mask` applies.
-    func overlay(_ img: CIImage, mask: Mask, source: ImageSource, gain: Double) -> CIImage {
-        guard let k = LumenKernels.shared, let m = maskImage(mask, source: source, gain: gain) else { return img }
+    /// `settings`: the edits whose turns / straighten / crop the shown photo has, so the overlay lines up with it.
+    func overlay(_ img: CIImage, mask: Mask, source: ImageSource, gain: Double, settings: EditSettings? = nil,
+                 applyCrop: Bool = true) -> CIImage {
+        guard let k = LumenKernels.shared, var m = maskImage(mask, source: source, gain: gain) else { return img }
+        if let settings { m = geometry(m, settings, applyCrop: applyCrop) }
         return k.overlay.apply(extent: img.extent, arguments: [img, m, CIVector(x: 1.0, y: 0.1, z: 0.12, w: 0.55)]) ?? img
     }
 

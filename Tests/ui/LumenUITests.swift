@@ -206,6 +206,37 @@ final class LumenUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["original-label"].exists, "original label should be gone after release")
     }
 
+    /// "image WxH" from the photo's accessibility value.
+    func shownImageAspect() -> Double {
+        let parts = valueOf("photo").split(separator: " ")
+        guard let i = parts.firstIndex(of: "image"), i + 1 < parts.count else { return -1 }
+        let wh = parts[i + 1].split(separator: "x").compactMap { Double($0) }
+        return wh.count == 2 && wh[1] > 0 ? wh[0] / wh[1] : -1
+    }
+
+    func testMasksShowThePhotoCroppedLikeEveryOtherTool() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoCrop", "1"])
+        sleep(2)   // the demo picks the 1:1 ratio after a moment
+        XCTAssertEqual(shownImageAspect(), 1.0, accuracy: 0.03, "Light should show the 1:1 crop")
+        el("tool-Masks").tap()
+        sleep(2)
+        XCTAssertEqual(shownImageAspect(), 1.0, accuracy: 0.03, "Masks should show the same 1:1 crop, not the uncropped photo")
+        shot("masks-cropped")
+    }
+
+    func testHoldShowsOriginalInMasks() {
+        for kind in ["radial", "brush"] {
+            launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", kind])
+            sleep(1)
+            // away from the radial's handles
+            el("photo").coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.2)).press(forDuration: 2)
+            sleep(1)
+            let ev = events().filter { $0.contains("original") }
+            XCTAssertTrue(ev.contains { $0.hasSuffix("original true") }, "\(kind): holding the photo in Masks should show the original; \(ev)")
+            XCTAssertTrue(ev.last?.hasSuffix("original false") ?? false, "\(kind): letting go should go back to the edit; \(ev)")
+        }
+    }
+
     func testHoldWhileZoomedWithPanelOpenShowsOriginalThenReturns() {
         launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1", "-lumenDemoZoom", "2"])
         XCTAssertTrue(el("panel").exists, "panel should be open before the hold")

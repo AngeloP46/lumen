@@ -398,10 +398,13 @@ private struct HandleDot: View {
     }
 }
 
-/// Covers the whole canvas; every position is mapped through `xform` so it follows pinch/zoom/pan.
+/// Covers the whole canvas. Masks are stored against the uncropped, unturned photo (the source); the photo is shown
+/// cropped and turned, so every position goes through `geo` (source <-> shown photo) and `xform` (shown photo <->
+/// screen, following pinch / zoom / pan).
 struct MaskOverlay: View {
     @ObservedObject var vm: EditorViewModel
     let xform: ViewXform
+    let geo: SourceGeometry
     @State private var drawing = false
     @State private var cursor: CGPoint?
 
@@ -415,10 +418,24 @@ struct MaskOverlay: View {
         .coordinateSpace(name: "maskSpace")
     }
 
-    private func norm(_ p: CGPoint) -> Pt { xform.normalised(p) }
+    /// A source point (normalised) on screen.
+    private func screen(_ x: Double, _ y: Double) -> CGPoint {
+        let o = geo.toOutput(Pt(x: x, y: y))
+        return xform.point(o.x, o.y)
+    }
+    /// A screen point on the source, kept on the photo (painting, picking).
+    private func norm(_ p: CGPoint) -> Pt {
+        let s = geo.toSource(xform.unclamped(p, limit: -10...10))
+        return Pt(x: min(max(s.x, 0), 1), y: min(max(s.y, 0), 1))
+    }
     /// Handles may go past the photo's edges (zoom the photo out in Masks to reach further), so a gradient or radial
     /// can be much bigger than the picture.
-    private func free(_ p: CGPoint) -> Pt { xform.unclamped(p) }
+    private func free(_ p: CGPoint) -> Pt {
+        let s = geo.toSource(xform.unclamped(p, limit: -10...10))
+        return Pt(x: min(max(s.x, -1.5), 2.5), y: min(max(s.y, -1.5), 2.5))
+    }
+    /// Screen points per source pixel.
+    private var scale: CGFloat { xform.rect.width / max(geo.output.width, 1) }
 
     @ViewBuilder
     private func controls(_ c: MaskComponent) -> some View {
@@ -443,7 +460,8 @@ struct MaskOverlay: View {
     }
 
     private func brushLayer(_ c: MaskComponent) -> some View {
-        let diameter = CGFloat(vm.brushSize) * max(xform.rect.width, xform.rect.height)
+        // brush size is a fraction of the source photo's long edge
+        let diameter = CGFloat(vm.brushSize) * max(geo.source.width, geo.source.height) * scale
         return ZStack {
             Color.clear.contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
@@ -453,7 +471,7 @@ struct MaskOverlay: View {
                         let p = norm(v.location)
                         if drawing { vm.extendStroke(p) } else { drawing = true; vm.beginStroke(p) }
                     }
-                    .onEnded { _ in drawing = false; cursor = nil })
+                    .onEnded { _ in drawing = false; cursor = nil; vm.endStroke() })
             if let cursor {
                 Circle().stroke(Color.white, lineWidth: 1.5).frame(width: diameter, height: diameter)
                     .position(cursor).allowsHitTesting(false)
@@ -461,17 +479,17 @@ struct MaskOverlay: View {
         }
     }
 
-    private func handle(at p: CGPoint, onDrag: @escaping (Pt) -> Void) -> some View {
+    private func handle(at p: CGPoint, onDrag: @escaping (CGPoint) -> Void) -> some View {
         HandleDot()
             .position(p)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
-                .onChanged { v in onDrag(free(v.location)) })
+                .onChanged { v in onDrag(v.location) })
     }
 
     @ViewBuilder
     private func linearHandles(_ c: MaskComponent) -> some View {
-        let a = xform.point(c.x0, c.y0)
-        let b = xform.point(c.x1, c.y1)
+        let a = screen(c.x0, c.y0)
+        let b = screen(c.x1, c.y1)
         let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
         let dx = b.x - a.x, dy = b.y - a.y
         let len = max(hypot(dx, dy), 1)
@@ -488,8 +506,8 @@ struct MaskOverlay: View {
         }
         .stroke(Color.white.opacity(0.8), lineWidth: 1.5)
         .allowsHitTesting(false)
-        handle(at: a) { p in vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } }
-        handle(at: b) { p in vm.updateComponent(c.id) { $0.x1 = p.x; $0.y1 = p.y } }
+        handle(at: a) { loc in let p = free(loc); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } }
+        handle(at: b) { loc in let p = free(loc); vm.updateComponent(c.id) { $0.x1 = p.x; $0.y1 = p.y } }
         HandleDot().scaleEffect(0.7).position(mid)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { v in
@@ -506,27 +524,28 @@ struct MaskOverlay: View {
 
     @ViewBuilder
     private func radialHandles(_ c: MaskComponent) -> some View {
-        let r = xform.rect
-        let centre = xform.point(c.x0, c.y0)
-        let a = c.angle * .pi / 180
+        let centre = screen(c.x0, c.y0)
+        // the ellipse's own angle plus however far the photo is turned on screen
+        let deg = c.angle + geo.clockwise
+        let a = deg * .pi / 180
         let u = CGPoint(x: cos(a), y: sin(a)), v = CGPoint(x: -sin(a), y: cos(a))
-        let rx = CGFloat(c.x1) * r.width, ry = CGFloat(c.y1) * r.height
+        // radii are fractions of the source photo's width / height
+        let pxW = geo.source.width * scale, pxH = geo.source.height * scale
+        let rx = CGFloat(c.x1) * pxW, ry = CGFloat(c.y1) * pxH
         Ellipse()
             .stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
             .frame(width: rx * 2, height: ry * 2)
-            .rotationEffect(.degrees(c.angle))
+            .rotationEffect(.degrees(deg))
             .position(centre)
             .allowsHitTesting(false)
-        handle(at: centre) { p in vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } }
-        handle(at: CGPoint(x: centre.x + u.x * rx, y: centre.y + u.y * rx)) { p in
-            let pt = xform.point(p.x, p.y)
-            let d = (pt.x - centre.x) * u.x + (pt.y - centre.y) * u.y
-            vm.updateComponent(c.id) { $0.x1 = max(0.02, min(3, Double(abs(d) / max(r.width, 1)))) }
+        handle(at: centre) { loc in let p = free(loc); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } }
+        handle(at: CGPoint(x: centre.x + u.x * rx, y: centre.y + u.y * rx)) { loc in
+            let d = (loc.x - centre.x) * u.x + (loc.y - centre.y) * u.y
+            vm.updateComponent(c.id) { $0.x1 = max(0.02, min(3, Double(abs(d) / max(pxW, 1)))) }
         }
-        handle(at: CGPoint(x: centre.x + v.x * ry, y: centre.y + v.y * ry)) { p in
-            let pt = xform.point(p.x, p.y)
-            let d = (pt.x - centre.x) * v.x + (pt.y - centre.y) * v.y
-            vm.updateComponent(c.id) { $0.y1 = max(0.02, min(3, Double(abs(d) / max(r.height, 1)))) }
+        handle(at: CGPoint(x: centre.x + v.x * ry, y: centre.y + v.y * ry)) { loc in
+            let d = (loc.x - centre.x) * v.x + (loc.y - centre.y) * v.y
+            vm.updateComponent(c.id) { $0.y1 = max(0.02, min(3, Double(abs(d) / max(pxH, 1)))) }
         }
     }
 }

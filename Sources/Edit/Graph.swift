@@ -159,3 +159,65 @@ extension EditSession {
         return s.cropped(to: CGRect(x: 0, y: 0, width: floor(s.extent.width), height: floor(s.extent.height)))
     }
 }
+
+/// The photo as stored (the source: masks, brush strokes and colour picks live here) versus the photo as shown after
+/// 90° turns, straighten and crop (the output). Same maths as `EditSession.geometry`, so mask handles drawn through
+/// it sit exactly on the rendered mask. Normalised coordinates are 0...1 with y down on both sides.
+struct SourceGeometry: Equatable {
+    var source: CGSize
+    var turns = 0
+    var straighten = 0.0
+    /// crop fractions of the straightened picture: x = left, y = top, width = right - left, height = bottom - top
+    var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
+
+    init(source: CGSize, settings s: EditSettings, applyCrop: Bool = true) {
+        self.source = source
+        turns = ((s.quarterTurns % 4) + 4) % 4
+        straighten = s.straighten
+        if applyCrop {
+            // the same limits EditSession.geometry applies
+            let l = min(max(s.cropL, 0), 0.95), t = min(max(s.cropT, 0), 0.95)
+            let r = min(max(s.cropR, l + 0.04), 1), b = min(max(s.cropB, t + 0.04), 1)
+            crop = CGRect(x: l, y: t, width: r - l, height: b - t)
+        }
+    }
+
+    /// Pictures turned on their side swap width and height.
+    private var turned: CGSize { turns % 2 == 0 ? source : CGSize(width: source.height, height: source.width) }
+    /// The largest rectangle with the picture's shape that fits inside it once straightened.
+    private var inscribed: CGSize {
+        let w = turned.width, h = turned.height
+        guard w > 0, h > 0 else { return .zero }
+        let th = CGFloat(abs(straighten)) * .pi / 180
+        let k = 1 / (cos(th) + sin(th) * max(w / h, h / w))
+        return CGSize(width: w * k, height: h * k)
+    }
+    /// Output size in source pixels.
+    var output: CGSize { CGSize(width: inscribed.width * crop.width, height: inscribed.height * crop.height) }
+    /// How far the source is turned on screen, clockwise, in degrees.
+    var clockwise: Double { Double(turns) * 90 + straighten }
+
+    /// Source pixels (Core Image, y up, origin bottom left) -> output pixels (same convention).
+    private var forward: CGAffineTransform {
+        let i = inscribed
+        let ox = -i.width / 2 + crop.minX * i.width
+        let oy = -i.height / 2 + (1 - crop.maxY) * i.height
+        return CGAffineTransform(translationX: -source.width / 2, y: -source.height / 2)
+            .concatenating(CGAffineTransform(rotationAngle: -CGFloat(turns) * .pi / 2 - CGFloat(straighten) * .pi / 180))
+            .concatenating(CGAffineTransform(translationX: -ox, y: -oy))
+    }
+
+    func toOutput(_ p: Pt) -> Pt {
+        let o = output
+        guard o.width > 0, o.height > 0 else { return p }
+        let q = CGPoint(x: CGFloat(p.x) * source.width, y: (1 - CGFloat(p.y)) * source.height).applying(forward)
+        return Pt(x: Double(q.x / o.width), y: Double(1 - q.y / o.height))
+    }
+
+    func toSource(_ p: Pt) -> Pt {
+        let o = output
+        guard o.width > 0, o.height > 0, source.width > 0, source.height > 0 else { return p }
+        let q = CGPoint(x: CGFloat(p.x) * o.width, y: (1 - CGFloat(p.y)) * o.height).applying(forward.inverted())
+        return Pt(x: Double(q.x / source.width), y: Double(1 - q.y / source.height))
+    }
+}

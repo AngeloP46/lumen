@@ -37,6 +37,8 @@ final class EditorViewModel: ObservableObject {
     @Published var showOriginal = false { didSet { requestRender(); if DemoMode.isOn { DemoMode.log("original \(showOriginal)") } } }
     @Published private(set) var histogram: HistogramData?
     @Published private(set) var imageSize: CGSize = .zero
+    /// Size of the preview source (the uncropped, unturned photo masks are stored against).
+    @Published private(set) var sourceSize: CGSize = .zero
     @Published private(set) var isLoading = true
     @Published private(set) var loadFailed = false
     @Published var isExporting = false
@@ -57,6 +59,7 @@ final class EditorViewModel: ObservableObject {
     @Published var colorMix = false           // Color tool is showing the colour mixer
     @Published var panMode = false          // single finger pans the zoomed photo instead of painting / dragging handles
     private var strokeStart: Date?
+    private var strokeOpen = false
     @Published private(set) var autoMaskBusy = false
     @Published private(set) var autoMaskMissing: Set<String> = []
 
@@ -135,7 +138,7 @@ final class EditorViewModel: ObservableObject {
                 self.source = src
                 self.isLoading = false
                 self.loadFailed = (src == nil)
-                if let src { self.imageSize = src.size }
+                if let src { self.imageSize = src.size; self.sourceSize = src.size }
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()
                 // HDR was switched while the photo was still loading: decode it again the other way
@@ -164,6 +167,7 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.session = s
                 self.source = src
+                self.sourceSize = src.size
                 self.detailSource = nil
                 if DemoMode.isOn { DemoMode.log("reloaded hdr \(wantsHDR)") }
                 self.requestRender()
@@ -224,7 +228,9 @@ final class EditorViewModel: ObservableObject {
     func requestRender() {
         guard let session, let source else { return }
         let s = showOriginal ? EditSettings() : settings
-        let skipGeometry = maskEditing && !showOriginal
+        // Masks show the photo cropped and turned like every other tool; the mask overlay and handles map through
+        // `SourceGeometry` (before 2026-10-10 the Masks tool showed the uncropped, unturned photo instead)
+        let skipGeometry = false
         let applyCrop = !(cropEditing && !showOriginal)
         let useDetail = zoomLevel > 1.4 && detailSource != nil
         let active = (useDetail ? detailSource : nil) ?? source
@@ -239,7 +245,7 @@ final class EditorViewModel: ObservableObject {
         // in HDR the histogram shows everything the photo holds above white, also what the screen can't show now
         let hdrImg: CIImage? = s.hdr ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: 1) : nil
         if overlayVisible, let m = selectedMask {
-            img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure))
+            img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure), settings: s, applyCrop: applyCrop)
         }
         // sized from the preview so the shape stays right (crop, rotation, original) while the 100% view is showing
         if base.extent.size != imageSize { imageSize = base.extent.size }
@@ -525,19 +531,25 @@ final class EditorViewModel: ObservableObject {
         guard let c = selectedComponent, c.kind == .brush else { return }
         let stroke = BrushStroke(points: [p], size: brushSize, erase: brushErase)
         strokeStart = Date()
+        strokeOpen = true
         updateComponent(c.id) { $0.strokes.append(stroke) }
     }
+
+    /// The finger that was painting lifted.
+    func endStroke() { strokeOpen = false }
 
     /// A pinch starts with one finger down, which paints a stray dab: take it back.
     func cancelRecentStroke() {
         guard let c = selectedComponent, c.kind == .brush, let t = strokeStart, Date().timeIntervalSince(t) < 0.8,
               let last = c.strokes.last, last.points.count <= 4 else { return }
         strokeStart = nil
+        // the finger is still down: it must not go on to extend the stroke before this one
+        strokeOpen = false
         updateComponent(c.id) { _ = $0.strokes.popLast() }
     }
 
     func extendStroke(_ p: Pt) {
-        guard let c = selectedComponent, c.kind == .brush else { return }
+        guard strokeOpen, let c = selectedComponent, c.kind == .brush else { return }
         updateComponent(c.id) { comp in
             guard var last = comp.strokes.popLast() else { return }
             if let prev = last.points.last, hypot(prev.x - p.x, prev.y - p.y) < 0.002 {

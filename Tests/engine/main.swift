@@ -940,5 +940,39 @@ do {
     } else { check(false, "background mask check: no photo could be opened") }
 }
 
+// Mask handles are drawn through SourceGeometry: it must put a source point exactly where EditSession.geometry renders it
+do {
+    if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f) {
+        let W: CGFloat = 600, H: CGFloat = 400
+        let black = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
+        for (turns, angle) in [(0, 0.0), (1, 7.0), (3, -12.0), (2, 4.0)] {
+            var s = EditSettings()
+            s.quarterTurns = turns; s.straighten = angle
+            s.cropL = 0.1; s.cropT = 0.15; s.cropR = 0.8; s.cropB = 0.9
+            let geo = SourceGeometry(source: CGSize(width: W, height: H), settings: s)
+            let real = session.geometry(black, s).extent.size
+            check(abs(geo.output.width - real.width) < 2 && abs(geo.output.height - real.height) < 2,
+                  "SourceGeometry output size \(geo.output) vs rendered \(real) (turns \(turns), straighten \(angle))")
+            var worst = 0.0
+            for p in [Pt(x: 0.5, y: 0.5), Pt(x: 0.38, y: 0.42), Pt(x: 0.6, y: 0.62)] {
+                // a small white square at p (source, y down)
+                let cx = CGFloat(p.x) * W, cy = (1 - CGFloat(p.y)) * H
+                let dot = CIImage(color: .white).cropped(to: CGRect(x: cx - 5, y: cy - 5, width: 10, height: 10)).composited(over: black)
+                let out = session.geometry(dot, s)
+                let o = geo.toOutput(p)
+                let ox = out.extent.minX + CGFloat(o.x) * out.extent.width, oy = out.extent.minY + (1 - CGFloat(o.y)) * out.extent.height
+                let box = CGRect(x: ox - 2, y: oy - 2, width: 4, height: 4)
+                let avg = out.cropped(to: box).applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: box)])
+                var px = [Float](repeating: 0, count: 4)
+                LumenGPU.context.render(avg, toBitmap: &px, rowBytes: 16, bounds: avg.extent, format: .RGBAf, colorSpace: nil)
+                check(px[0] > 0.6, "SourceGeometry puts source point (\(p.x), \(p.y)) where the rendered photo has it (turns \(turns), straighten \(angle): brightness \(px[0]))")
+                let back = geo.toSource(o)
+                worst = max(worst, abs(back.x - p.x), abs(back.y - p.y))
+            }
+            check(worst < 1e-6, "SourceGeometry round trip (turns \(turns), worst \(worst))")
+        }
+    } else { check(false, "SourceGeometry check: no photo could be opened") }
+}
+
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
 finishChecks()

@@ -117,6 +117,8 @@ struct EditorView: View {
             }
         }
         .onChange(of: holding) { _, h in
+            // a hold that started on the brush painted a dab first: take it back
+            if h && tool == .masks { vm.cancelRecentStroke() }
             vm.showOriginal = h && twoFinger == nil
             if !h { lastHoldEnd = Date() }
         }
@@ -300,7 +302,12 @@ struct EditorView: View {
                 if vm.imageSize != .zero {
                     gestureLayer(xform)
                     if tool == .crop { CropOverlay(vm: vm, xform: xform) }
-                    if tool == .masks { MaskOverlay(vm: vm, xform: xform).allowsHitTesting(!vm.panMode) }
+                    if tool == .masks {
+                        MaskOverlay(vm: vm, xform: xform, geo: SourceGeometry(source: vm.sourceSize, settings: vm.settings))
+                            .allowsHitTesting(!vm.panMode)
+                            // hidden (not removed, so a drag in progress survives) while the original is showing
+                            .opacity(vm.showOriginal ? 0 : 1)
+                    }
                 }
                 if vm.isLoading || vm.isExporting { ProgressView().tint(.white) }
                 if vm.detailLoading && zoom > 1.4 {
@@ -326,6 +333,8 @@ struct EditorView: View {
             })
             // fallback pinch in case the watcher above never sees the fingers
             .simultaneousGesture(zoomGesture(xform), including: tool == .crop ? .none : .all)
+            // press and hold = the original, in every tool but Crop, also over the mask overlay
+            .simultaneousGesture(holdGesture, including: tool == .crop ? .none : .all)
             .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
             .overlay(alignment: .topLeading) {
                 if showHistogram && !chromeHidden {
@@ -435,7 +444,7 @@ struct EditorView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityIdentifier("photo")
             .accessibilityLabel(item.displayName)
-            .accessibilityValue("zoom \(String(format: "%.1f", Double(zoom))) original \(vm.showOriginal) chrome \(chromeHidden ? "hidden" : "shown") overlay \(vm.overlayVisible)")
+            .accessibilityValue("zoom \(String(format: "%.1f", Double(zoom))) original \(vm.showOriginal) chrome \(chromeHidden ? "hidden" : "shown") overlay \(vm.overlayVisible) image \(Int(vm.imageSize.width))x\(Int(vm.imageSize.height))")
             .gesture(
                 SpatialTapGesture(count: 2)
                     .exclusively(before: TapGesture(count: 1))
@@ -454,16 +463,17 @@ struct EditorView: View {
                           abs(v.translation.width) > 110, abs(v.translation.height) < 70 else { return }
                     go(v.translation.width < 0 ? 1 : -1)
                 })
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.3, maximumDistance: 25)
-                    .sequenced(before: DragGesture(minimumDistance: 0))
-                    .updating($holding) { value, state, _ in
-                        // holding still shows the original; once the finger starts moving it is a pan, not a compare
-                        if case .second(true, let drag) = value {
-                            state = drag.map { hypot($0.translation.width, $0.translation.height) < 14 } ?? true
-                        }
-                    },
-                including: canNavigate ? .all : .none)
+    }
+
+    /// Holding still shows the original; once the finger starts moving it is a pan, a stroke or a handle drag instead.
+    private var holdGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.3, maximumDistance: 25)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .updating($holding) { value, state, _ in
+                if case .second(true, let drag) = value {
+                    state = drag.map { hypot($0.translation.width, $0.translation.height) < 14 } ?? true
+                }
+            }
     }
 
     /// The photo before/after this one in the library, in the order the library shows them (rejected photos skipped).
