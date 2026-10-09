@@ -53,6 +53,7 @@ struct LibraryView: View {
                         LazyVGrid(columns: columns, spacing: 2) {
                             ForEach(visible) { item in
                                 NavigationLink(value: item) { ThumbnailView(item: item) }
+                                    .accessibilityIdentifier("library-item")
                                     .contextMenu {
                                         Button(role: .destructive) { store.delete(item) } label: {
                                             Label("Remove from Lumen", systemImage: "trash")

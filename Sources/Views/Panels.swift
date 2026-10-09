@@ -24,6 +24,7 @@ struct PillButton: View {
                 .background(active ? Theme.accent : Theme.chip, in: Capsule())
                 .foregroundStyle(.white)
         }
+        .accessibilityIdentifier("pill-\(title)")
     }
 }
 

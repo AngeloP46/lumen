@@ -38,11 +38,12 @@ struct CropPanel: View {
                         .background(Theme.chip, in: Capsule())
                         .foregroundStyle(.white)
                 }
+                .accessibilityIdentifier("crop-reset")
             }
             .padding(.horizontal, 10)
             LabeledSlider(title: "Straighten",
                           value: Binding(get: { vm.settings.straighten }, set: { vm.settings.straighten = $0 }),
-                          range: -45...45, decimals: 1, neutral: 0)
+                          range: -45...45, decimals: 1, neutral: 0, axID: "Straighten")
                 .padding(.horizontal, 14)
         }
         .padding(.top, 4)
@@ -153,6 +154,10 @@ struct CropOverlay: View {
         }
         .frame(width: xform.canvas.width, height: xform.canvas.height)
         .coordinateSpace(name: "cropSpace")
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("crop-frame")
+        .accessibilityValue(String(format: "l %.2f t %.2f r %.2f b %.2f",
+                                   vm.settings.cropL, vm.settings.cropT, vm.settings.cropR, vm.settings.cropB))
     }
 
     // MARK: Gesture
