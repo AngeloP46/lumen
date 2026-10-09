@@ -265,6 +265,7 @@ final class EditorViewModel: ObservableObject {
             self.histPending = false
             histQueue.async {
                 let e = img.extent
+                guard !e.isEmpty, !e.isInfinite, max(e.width, e.height) > 0 else { return }
                 let k = 160 / max(e.width, e.height)
                 let small = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
                 guard let cg = LumenGPU.context.createCGImage(small, from: small.extent, format: .RGBA8,
