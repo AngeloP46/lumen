@@ -343,6 +343,51 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         }
     }
 
+    // Crop / rotate: output size follows the crop fractions; odd or inverted frames are clamped, never empty or crashing.
+    do {
+        let sw = Double(source.base.extent.width), sh = Double(source.base.extent.height)
+        var c = EditSettings()
+        c.cropL = 0.1; c.cropT = 0.2; c.cropR = 0.6; c.cropB = 0.7
+        let e = session.develop(c, source: source, geometry: true).extent
+        check(abs(Double(e.width) - 0.5 * sw) <= 2.5 && abs(Double(e.height) - 0.5 * sh) <= 2.5,
+              "\(stem) crop: 0.1/0.2/0.6/0.7 frame of \(Int(sw))x\(Int(sh)) gave \(e.size), expected about \(0.5 * sw)x\(0.5 * sh)")
+        let full = session.develop(c, source: source, geometry: true, applyCrop: false).extent
+        check(abs(Double(full.width) - sw) <= 2.5 && abs(Double(full.height) - sh) <= 2.5,
+              "\(stem) crop: applyCrop false should keep the whole picture, got \(full.size) for \(Int(sw))x\(Int(sh))")
+
+        var q = EditSettings()
+        q.quarterTurns = 1
+        let eq = session.develop(q, source: source, geometry: true).extent
+        check(abs(Double(eq.width) - sh) <= 2.5 && abs(Double(eq.height) - sw) <= 2.5,
+              "\(stem) crop: one quarter turn of \(Int(sw))x\(Int(sh)) gave \(eq.size), expected the swapped size")
+        q.quarterTurns = -3
+        let eq2 = session.develop(q, source: source, geometry: true).extent
+        check(abs(eq2.width - eq.width) <= 1 && abs(eq2.height - eq.height) <= 1,
+              "\(stem) crop: quarterTurns -3 (\(eq2.size)) should equal +1 (\(eq.size))")
+
+        var st = EditSettings()
+        st.straighten = 10
+        let es = session.develop(st, source: source, geometry: true).extent
+        check(es.width > 0 && es.height > 0 && Double(es.width) <= sw + 1 && Double(es.height) <= sh + 1,
+              "\(stem) crop: straighten 10 gave \(es.size), expected a non-empty picture inside \(Int(sw))x\(Int(sh))")
+        if es.height > 0 {
+            check(abs(Double(es.width / es.height) - sw / sh) < 0.05 * sw / sh,
+                  "\(stem) crop: straighten changed the aspect ratio to \(es.width / es.height) from \(sw / sh)")
+        }
+
+        // Inverted, zero-size and out-of-range frames are clamped to a small positive frame.
+        var odd: [(String, EditSettings)] = []
+        var a = EditSettings(); a.cropL = 0.8; a.cropR = 0.2; a.cropT = 0.9; a.cropB = 0.1; odd.append(("inverted", a))
+        var z = EditSettings(); z.cropL = 0.5; z.cropR = 0.5; z.cropT = 0.5; z.cropB = 0.5; odd.append(("zero-size", z))
+        var o = EditSettings(); o.cropL = -1; o.cropT = -1; o.cropR = 2; o.cropB = 2; odd.append(("out-of-range", o))
+        for (name, s) in odd {
+            let ext = session.develop(s, source: source, geometry: true).extent
+            check(ext.width > 0 && ext.height > 0 && ext.width.isFinite && ext.height.isFinite && Double(ext.width) <= sw + 1 && Double(ext.height) <= sh + 1,
+                  "\(stem) crop: \(name) frame gave extent \(ext)")
+            check(smallRender(session.develop(s, source: source, geometry: true)) != nil, "\(stem) crop: \(name) frame failed to render")
+        }
+    }
+
     // Exposure and contrast direction: +1 EV brightens and -1 EV darkens (mean luma); contrast +60 widens and
     // -60 narrows the luma spread (standard deviation) compared with default settings.
     do {
