@@ -333,8 +333,9 @@ struct EditorView: View {
             })
             // fallback pinch in case the watcher above never sees the fingers
             .simultaneousGesture(zoomGesture(xform), including: tool == .crop ? .none : .all)
-            // press and hold = the original, in every tool but Crop, also over the mask overlay
-            .simultaneousGesture(holdGesture, including: tool == .crop ? .none : .all)
+            // press and hold = the original, in every tool but Crop and the mask Shape tab (there a finger places the
+            // mask: handles, brush, picks, and a pause before dragging used to flick to the original)
+            .simultaneousGesture(holdGesture, including: canCompare ? .all : .none)
             .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
             .overlay(alignment: .topLeading) {
                 if showHistogram && !chromeHidden {
@@ -431,6 +432,7 @@ struct EditorView: View {
     // MARK: Gestures
 
     private var canNavigate: Bool { tool != .masks && tool != .crop }
+    private var canCompare: Bool { tool != .crop && !(tool == .masks && vm.maskTab == .shape && vm.selectedMask != nil) }
     /// One finger pans a zoomed photo wherever it is not busy with something else (mask handles, brush, crop frame).
     private var canPan: Bool { tool != .crop }
     /// In Masks the photo can be made smaller than the screen, so a gradient or radial can reach far past its edges.

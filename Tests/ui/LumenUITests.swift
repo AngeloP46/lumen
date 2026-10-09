@@ -224,17 +224,21 @@ final class LumenUITests: XCTestCase {
         shot("masks-cropped")
     }
 
-    func testHoldShowsOriginalInMasks() {
-        for kind in ["radial", "brush"] {
-            launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", kind])
-            sleep(1)
-            // away from the radial's handles
-            el("photo").coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.2)).press(forDuration: 2)
-            sleep(1)
-            let ev = events().filter { $0.contains("original") }
-            XCTAssertTrue(ev.contains { $0.hasSuffix("original true") }, "\(kind): holding the photo in Masks should show the original; \(ev)")
-            XCTAssertTrue(ev.last?.hasSuffix("original false") ?? false, "\(kind): letting go should go back to the edit; \(ev)")
-        }
+    func testHoldShowsOriginalInMasksAdjustTabButNotWhilePlacing() {
+        // Shape tab: a finger places the mask, so holding must not flick to the original
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "radial"])
+        sleep(1)
+        el("photo").coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.2)).press(forDuration: 2)
+        sleep(1)
+        XCTAssertFalse(events().contains { $0.hasSuffix("original true") }, "Shape tab: holding should not show the original; \(events().filter { $0.contains("original") })")
+        // Adjust tab: nothing on the photo to place, so press and hold compares like in every other tool
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "radial", "-lumenDemoMaskTab", "adjust"])
+        sleep(1)
+        el("photo").coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.2)).press(forDuration: 2)
+        sleep(1)
+        let ev = events().filter { $0.contains("original") }
+        XCTAssertTrue(ev.contains { $0.hasSuffix("original true") }, "Adjust tab: holding should show the original; \(ev)")
+        XCTAssertTrue(ev.last?.hasSuffix("original false") ?? false, "Adjust tab: letting go should go back to the edit; \(ev)")
     }
 
     func testHoldWhileZoomedWithPanelOpenShowsOriginalThenReturns() {
