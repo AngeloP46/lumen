@@ -34,16 +34,24 @@ struct LightPanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var sel = "Exposure"
     var body: some View {
-        ParamPanel(items: [
+        var items = [
             vm.param("Exposure", \.exposure, range: -5...5, decimals: 2),
             vm.param("Contrast", \.contrast),
             vm.param("Highlights", \.highlights),
             vm.param("Shadows", \.shadows),
             vm.param("Whites", \.whites),
             vm.param("Blacks", \.blacks),
-        ], selected: $sel, header: AnyView(
+        ]
+        if vm.settings.hdr {
+            items.append(vm.param("HDR range", \.hdrStops, range: 1...3, decimals: 1, neutral: 2))
+        }
+        return ParamPanel(items: items, selected: $sel, header: AnyView(
             HStack(spacing: 6) {
                 PillButton(title: "Auto", system: "wand.and.stars") { vm.auto() }
+                PillButton(title: "HDR", system: "sun.max", active: vm.settings.hdr) {
+                    vm.settings.hdr.toggle()
+                }
+                .accessibilityIdentifier("pill-hdr")
                 PillButton(title: "Reset", system: "arrow.counterclockwise") {
                     vm.settings.exposure = 0; vm.settings.contrast = 0; vm.settings.highlights = 0
                     vm.settings.shadows = 0; vm.settings.whites = 0; vm.settings.blacks = 0

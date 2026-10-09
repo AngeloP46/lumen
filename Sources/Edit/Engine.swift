@@ -26,6 +26,8 @@ enum LumenGPU {
 struct LumenKernels {
     let logLum, minChannel, pack3, main, mainLocal, finish, toLinear, accum: CIColorKernel
     let linearMask, radialMask, lumMask, colorMask, similarMask, combine, maskFinish, maskMul, overlay: CIColorKernel
+    /// HDR kernels are optional: a broken one must only disable HDR, never SDR editing.
+    var gain, gainLocal, applyGain: CIColorKernel?
 
     static let shared: LumenKernels? = {
         var url = LumenGPU.libraryURL
@@ -44,7 +46,8 @@ struct LumenKernels {
               let q = k("lumenMaskMul"), let r = k("lumenOverlay") else { return nil }
         return LumenKernels(logLum: a, minChannel: b, pack3: c, main: d, mainLocal: e, finish: f, toLinear: g,
                             accum: h, linearMask: i, radialMask: j, lumMask: l, colorMask: m, similarMask: n,
-                            combine: o, maskFinish: p, maskMul: q, overlay: r)
+                            combine: o, maskFinish: p, maskMul: q, overlay: r,
+                            gain: k("lumenGain"), gainLocal: k("lumenGainLocal"), applyGain: k("lumenApplyGain"))
     }()
 }
 
@@ -146,7 +149,9 @@ final class EditSession: @unchecked Sendable {
 
     var ctx: CIContext { LumenGPU.context }
 
-    init?(url: URL) {
+    /// `expandHDR` (iOS 18+, HDR mode only): JPEG/HEIC files that carry a gain map are decoded with their
+    /// highlights above 1.0 instead of the SDR rendition. Default false keeps the SDR path unchanged.
+    init?(url: URL, expandHDR: Bool = false) {
         let isRaw = UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .rawImage) ?? false
         if isRaw, let f = CIRAWFilter(imageURL: url) {
             f.extendedDynamicRangeAmount = 1.0
@@ -160,13 +165,21 @@ final class EditSession: @unchecked Sendable {
             raw = f
             plain = nil
             nativeSize = f.nativeSize
-        } else if let img = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) {
+        } else if let img = Self.loadPlain(url, expandHDR: expandHDR) {
             raw = nil
             plain = img
             nativeSize = img.extent.size
         } else {
             return nil
         }
+    }
+
+    private static func loadPlain(_ url: URL, expandHDR: Bool) -> CIImage? {
+        if expandHDR, #available(iOS 18.0, macOS 15.0, *),
+           let img = CIImage(contentsOf: url, options: [.applyOrientationProperty: true, .expandToHDR: true]) {
+            return img
+        }
+        return CIImage(contentsOf: url, options: [.applyOrientationProperty: true])
     }
 
     // MARK: Decoding

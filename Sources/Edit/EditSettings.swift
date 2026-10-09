@@ -165,6 +165,28 @@ struct Mask: Codable, Equatable, Identifiable, Hashable {
     }
 }
 
+// MARK: - Keys that may be missing in older files
+
+protocol DefaultValue { associatedtype Value: Codable & Equatable; static var value: Value { get } }
+enum DefaultFalse: DefaultValue { static let value = false }
+enum DefaultHDRStops: DefaultValue { static let value = 2.0 }
+
+/// Decodes to the default when the key is absent, so sidecars and saved presets from before the key existed still load.
+@propertyWrapper
+struct Defaulted<D: DefaultValue>: Codable, Equatable {
+    var wrappedValue: D.Value = D.value
+    init() {}
+    init(wrappedValue: D.Value) { self.wrappedValue = wrappedValue }
+    init(from decoder: Decoder) throws { wrappedValue = try decoder.singleValueContainer().decode(D.Value.self) }
+    func encode(to encoder: Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(wrappedValue) }
+}
+
+extension KeyedDecodingContainer {
+    func decode<D: DefaultValue>(_ type: Defaulted<D>.Type, forKey key: Key) throws -> Defaulted<D> {
+        try decodeIfPresent(type, forKey: key) ?? Defaulted<D>()
+    }
+}
+
 // MARK: - All edits
 
 /// Every non-destructive adjustment for one photo. Stored as a JSON sidecar; the original is never touched.
@@ -202,6 +224,9 @@ struct EditSettings: Codable, Equatable {
     var curves = ToneCurves()
     var hsl = HSLSettings()
     var grading = ColorGrading()
+    // HDR (off by default; hdrStops = headroom in stops, 1...3)
+    @Defaulted<DefaultFalse> var hdr: Bool
+    @Defaulted<DefaultHDRStops> var hdrStops: Double
     // Local
     var masks: [Mask] = []
     // Geometry

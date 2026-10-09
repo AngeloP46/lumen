@@ -33,6 +33,8 @@ struct ViewXform: Equatable {
 final class CanvasModel {
     var image: CIImage?
     weak var view: MTKView?
+    /// Called on the main thread when the screen's EDR headroom changes by more than 5% (HDR mode only).
+    var onHeadroom: ((CGFloat) -> Void)?
 
     func update(_ img: CIImage?) {
         image = img
@@ -43,6 +45,34 @@ final class CanvasModel {
 final class CanvasRenderer: NSObject, MTKViewDelegate {
     let model: CanvasModel
     var xform = ViewXform(canvas: .zero, image: .zero)
+    /// Colour space the drawable is rendered in; switched together with the view's pixel format for HDR.
+    var colorSpace: CGColorSpace = LumenGPU.displaySpace
+    var hdrOn = false
+    private var headroomTimer: Timer?
+    private var lastHeadroom: CGFloat = 1
+
+    /// While HDR is on, checks the screen's EDR headroom about once a second (it follows brightness and ambient light).
+    func trackHeadroom(_ on: Bool, view: MTKView) {
+        headroomTimer?.invalidate()
+        headroomTimer = nil
+        guard on else {
+            if lastHeadroom != 1 { lastHeadroom = 1; model.onHeadroom?(1) }
+            return
+        }
+        let check: (MTKView?) -> Void = { [weak self] v in
+            guard let self else { return }
+            let screen = v?.window?.windowScene?.screen ?? UIScreen.main
+            let h = max(screen.currentEDRHeadroom, 1)
+            if abs(h - self.lastHeadroom) / self.lastHeadroom > 0.05 {
+                self.lastHeadroom = h
+                self.model.onHeadroom?(h)
+            }
+        }
+        check(view)
+        headroomTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak view] _ in check(view) }
+    }
+
+    deinit { headroomTimer?.invalidate() }
 
     init(model: CanvasModel) { self.model = model }
 
@@ -72,7 +102,7 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
             placed = placed.transformed(by: CGAffineTransform(translationX: r.minX * sf, y: size.height - (r.minY * sf + h)))
             out = placed.composited(over: out)
         }
-        LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: LumenGPU.displaySpace)
+        LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)
         cb.present(drawable)
         cb.commit()
     }
@@ -81,6 +111,29 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
 struct CanvasView: UIViewRepresentable {
     let model: CanvasModel
     let xform: ViewXform
+    /// true = extended-range (EDR) drawable so highlights can go above paper white.
+    var hdr: Bool = false
+
+    /// Switches the view between today's 8-bit Display P3 drawable and a half-float extended-linear EDR one.
+    static func configure(_ v: MTKView, renderer: CanvasRenderer, hdr: Bool) {
+        let layer = v.layer as? CAMetalLayer
+        if hdr {
+            let space = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? LumenGPU.displaySpace
+            v.colorPixelFormat = .rgba16Float
+            layer?.wantsExtendedDynamicRangeContent = true
+            layer?.colorspace = space
+            renderer.colorSpace = space
+        } else {
+            v.colorPixelFormat = .bgra8Unorm
+            layer?.wantsExtendedDynamicRangeContent = false
+            layer?.colorspace = LumenGPU.displaySpace
+            renderer.colorSpace = LumenGPU.displaySpace
+        }
+    }
+
+    static func dismantleUIView(_ v: MTKView, coordinator: CanvasRenderer) {
+        coordinator.trackHeadroom(false, view: v)
+    }
 
     func makeCoordinator() -> CanvasRenderer { CanvasRenderer(model: model) }
 
@@ -93,7 +146,9 @@ struct CanvasView: UIViewRepresentable {
         v.isOpaque = true
         v.backgroundColor = .black
         v.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-        (v.layer as? CAMetalLayer)?.colorspace = LumenGPU.displaySpace
+        CanvasView.configure(v, renderer: context.coordinator, hdr: hdr)
+        context.coordinator.hdrOn = hdr
+        context.coordinator.trackHeadroom(hdr, view: v)
         v.delegate = context.coordinator
         model.view = v
         return v
@@ -101,6 +156,11 @@ struct CanvasView: UIViewRepresentable {
 
     func updateUIView(_ v: MTKView, context: Context) {
         context.coordinator.xform = xform
+        if context.coordinator.hdrOn != hdr {
+            context.coordinator.hdrOn = hdr
+            CanvasView.configure(v, renderer: context.coordinator, hdr: hdr)
+            context.coordinator.trackHeadroom(hdr, view: v)
+        }
         model.view = v
         v.setNeedsDisplay()
     }

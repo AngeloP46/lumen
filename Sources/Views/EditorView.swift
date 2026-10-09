@@ -108,7 +108,7 @@ struct EditorView: View {
         }
         .confirmationDialog("Export", isPresented: $showExportChoices, titleVisibility: .visible) {
             ForEach(ExportFormat.allCases) { f in
-                Button(f.label) { vm.export(f) }
+                Button(f.label + (vm.settings.hdr && f != .tiff ? " HDR" : "")) { vm.export(f) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -268,7 +268,7 @@ struct EditorView: View {
             let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan)
             ZStack {
                 Color.black
-                CanvasView(model: vm.canvas, xform: xform)
+                CanvasView(model: vm.canvas, xform: xform, hdr: vm.settings.hdr)
                     .allowsHitTesting(false)
                 if vm.imageSize != .zero {
                     gestureLayer(xform)
@@ -299,6 +299,14 @@ struct EditorView: View {
             .overlay(alignment: .topLeading) {
                 if showHistogram && !chromeHidden {
                     HistogramView(data: vm.histogram).frame(width: 90, height: 40).padding(.leading, 10).padding(.top, 50)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                if vm.settings.hdr && !chromeHidden && tool != .crop {
+                    Text("HDR").accessibilityIdentifier("hdr-badge").font(.caption2.bold())
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: Capsule()).padding(10)
                         .allowsHitTesting(false)
                 }
             }

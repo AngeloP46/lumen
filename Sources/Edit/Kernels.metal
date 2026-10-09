@@ -77,9 +77,10 @@ float4 lumenPack3(sample_t a, sample_t b, sample_t c) {
 
 // ------------------------------------------------------------------ the main develop kernel
 
-inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
-                        float4 pa, float4 pb, float4 pc, float4 pd, float4 pe,
-                        float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
+// Tone part: everything up to and including the log-luminance tone delta (scene linear, may exceed 1).
+inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
+                            float4 pa, float4 pb, float4 pc, float4 pd, float4 pe,
+                            float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
     float3 c = max(base, 0.0);
 
     // ---- accumulated parameters (global + local)
@@ -91,7 +92,6 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
     float bk = g1.y + pb.z;
     float temp = g1.z + pc.x;
     float tint = g1.w + pc.y;
-    float sat = g2.y + pc.z;
     float clar = g2.w + pd.x;
     float tex = g2.z + pd.y;
     float dz = g3.x + pd.z;
@@ -174,7 +174,11 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
     }
     delta = clamp(delta, -4.0, 4.0);
     c *= exp2(delta);
+    return c;
+}
 
+// Colour part: highlight shoulder, >1 desaturation, vibrance / saturation, final clamp.
+inline float3 lmDevelopColor(float3 c, float vib, float sat) {
     // ---- highlight shoulder: identity below 0.85, rolls off towards 1; keeps hue by scaling
     float y = lmLum(c);
     if (y > 0.85) {
@@ -191,7 +195,6 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
     }
 
     // ---- vibrance / saturation in OkLab
-    float vib = g2.x;
     if (vib != 0.0 || sat != 0.0) {
         float3 lab = lmToLab(c);
         float C = length(lab.yz);
@@ -213,6 +216,14 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
     return clamp(c, 0.0, 1.0);
 }
 
+inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
+                        float4 pa, float4 pb, float4 pc, float4 pd, float4 pe,
+                        float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
+    float sat = g2.y + pc.z;
+    return lmDevelopColor(lmDevelopTone(base, L1, L2, chroma, pa, pb, pc, pd, pe, g0, g1, g2, g3, g4, g6),
+                          g2.x, sat);
+}
+
 float4 lumenMain(sample_t img, sample_t l1, sample_t l2, sample_t ch,
                  float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
     float4 z = float4(0.0);
@@ -225,6 +236,38 @@ float4 lumenMainLocal(sample_t img, sample_t l1, sample_t l2, sample_t ch,
                       float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
     float3 c = lmDevelop(img.rgb, l1, l2, ch.rgb, pa, pb, pc, pd, pe, g0, g1, g2, g3, g4, g6);
     return float4(c, 1.0);
+}
+
+// ------------------------------------------------------------------ HDR gain
+
+// Per-pixel gain g >= 1 = hdrY(y) / sdrY(y) from the pre-shoulder luminance (gh.x = H, the HDR ceiling).
+inline float lmHdrGain(float y, float H) {
+    float k = 0.85;
+    if (y <= k) return 1.0;
+    float sdrY = k + (1.0 - k) * (1.0 - exp(-(y - k) / (1.0 - k)));
+    float hdrY = k + (H - k) * (1.0 - exp(-(y - k) / (H - k)));
+    return max(hdrY / max(sdrY, 1e-6), 1.0);
+}
+
+float4 lumenGain(sample_t img, sample_t l1, sample_t l2, sample_t ch,
+                 float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6, float4 gh) {
+    float4 z = float4(0.0);
+    float y = lmLum(lmDevelopTone(img.rgb, l1, l2, ch.rgb, z, z, z, z, z, g0, g1, g2, g3, g4, g6));
+    float g = y > 0.0 ? lmHdrGain(y, max(gh.x, 1.001)) : 1.0;
+    return float4(g, g, g, 1.0);
+}
+
+float4 lumenGainLocal(sample_t img, sample_t l1, sample_t l2, sample_t ch,
+                      sample_t pa, sample_t pb, sample_t pc, sample_t pd, sample_t pe,
+                      float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6, float4 gh) {
+    float y = lmLum(lmDevelopTone(img.rgb, l1, l2, ch.rgb, pa, pb, pc, pd, pe, g0, g1, g2, g3, g4, g6));
+    float g = y > 0.0 ? lmHdrGain(y, max(gh.x, 1.001)) : 1.0;
+    return float4(g, g, g, 1.0);
+}
+
+// p.x = w (0...1): how much of the gain to show. No clamp: values above 1 are the HDR highlights.
+float4 lumenApplyGain(sample_t sdr, sample_t gain, float4 p) {
+    return float4(sdr.rgb * exp2(p.x * log2(max(gain.r, 1.0))), 1.0);
 }
 
 // ------------------------------------------------------------------ finishing (after crop)

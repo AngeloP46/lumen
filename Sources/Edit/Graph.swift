@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 /// Builds the lazy Core Image graph for a set of edits. Nothing is rendered here, so this is cheap to call per slider tick.
 extension EditSession {
-    func develop(_ s: EditSettings, source: ImageSource, geometry: Bool, applyCrop: Bool = true) -> CIImage {
+    func develop(_ s: EditSettings, source: ImageSource, geometry: Bool, applyCrop: Bool = true, hdrWeight: Double = 0) -> CIImage {
         guard let k = LumenKernels.shared else { return source.base }
         let ext = source.extent
         let E = source.longEdge
@@ -28,7 +28,17 @@ extension EditSession {
         args += [g0, g1, g2, g3, g4, g6]
         var img = kernel.apply(extent: ext, arguments: args) ?? source.base
 
-        if geometry { img = self.geometry(img, s, applyCrop: applyCrop) }
+        // HDR: the same develop maths, but only the highlight gain (>= 1) is kept; applied again after the look LUT.
+        var gainImg: CIImage?
+        if s.hdr, hdrWeight > 0, let gk = (kernel === k.mainLocal ? k.gainLocal : k.gain), k.applyGain != nil {
+            let gh = v(exp2(s.hdrStops), 0, 0, 0)
+            gainImg = gk.apply(extent: ext, arguments: args + [gh])
+        }
+
+        if geometry {
+            img = self.geometry(img, s, applyCrop: applyCrop)
+            if let gi = gainImg { gainImg = self.geometry(gi, s, applyCrop: applyCrop) }
+        }
 
         // Vignette, grain and the output curve.
         let fe = img.extent
@@ -47,6 +57,9 @@ extension EditSession {
             if let out = f.outputImage {
                 img = k.toLinear.apply(extent: fe, arguments: [out]) ?? out
             }
+        }
+        if let gi = gainImg, let ag = k.applyGain {
+            img = ag.apply(extent: img.extent, arguments: [img, gi, v(min(max(hdrWeight, 0), 1), 0, 0, 0)]) ?? img
         }
         return img
     }
@@ -103,10 +116,30 @@ extension EditSession {
         guard let src = makeSource(maxEdge: nil, materialize: false) else { return nil }
         prepareAutoMasks(s, source: src)
         let img = develop(s, source: src, geometry: true)
-        let q = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
+        let q: [CIImageRepresentationOption: Any] = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
+        // HDR: the SDR rendition is the base image; the gain-map options need iOS 18 / macOS 15.
+        let wantHDR = s.hdr && format != .tiff && LumenKernels.shared?.applyGain != nil
+        let hdrImg: CIImage? = wantHDR ? develop(s, source: src, geometry: true, hdrWeight: 1) : nil
         switch format {
-        case .jpeg: return try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q)
-        case .heic: return try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q)
+        case .jpeg:
+            if let hdrImg, #available(iOS 18.0, macOS 15.0, *) {
+                var o = q
+                o[.hdrImage] = hdrImg
+                if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return d }
+            }
+            return try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q)
+        case .heic:
+            if let hdrImg {
+                if #available(iOS 18.0, macOS 15.0, *) {
+                    var o = q
+                    o[.hdrImage] = hdrImg
+                    if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: o) { return d }
+                } else if let hlg = CGColorSpace(name: CGColorSpace.itur_2100_HLG),
+                          let d = try? ctx.heif10Representation(of: hdrImg, colorSpace: hlg, options: q) {
+                    return d
+                }
+            }
+            return try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q)
         case .tiff: return try? ctx.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:])
         }
     }
