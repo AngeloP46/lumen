@@ -166,7 +166,11 @@ func meanChannelSpread(_ cg: CGImage) -> Double? {
 func maskValues(_ img: CIImage, width: Int = 64) -> (v: [Float], w: Int, h: Int)? {
     let k = CGFloat(width) / img.extent.width
     let scaled = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
-    let r = scaled.extent.integral
+    // Whole pixels strictly inside the scaled extent, minus a one pixel border: the edge pixels of a fractionally
+    // sized image are only partly covered and would read as bogus values.
+    let e = scaled.extent
+    let x0 = ceil(e.minX) + 1, y0 = ceil(e.minY) + 1
+    let r = CGRect(x: x0, y: y0, width: floor(e.maxX) - 1 - x0, height: floor(e.maxY) - 1 - y0)
     let w = Int(r.width), h = Int(r.height)
     guard w > 0, h > 0 else { return nil }
     var buf = [Float](repeating: 0, count: w * h * 4)
