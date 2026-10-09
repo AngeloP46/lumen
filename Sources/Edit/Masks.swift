@@ -93,8 +93,14 @@ extension EditSession {
         case .subject:
             img = source.cachedMask(Self.aiSubject) ?? zero
         case .background:
-            let subject = source.cachedMask(Self.aiSubject)
-            img = subject.map { k.maskFinish.apply(extent: ext, arguments: [$0, CIVector(x: 1, y: 1, z: 0, w: 0)]) ?? $0 } ?? zero
+            // everything that is not the subject; when no subject was found, that is the whole photo
+            if let subject = source.cachedMask(Self.aiSubject) {
+                img = k.maskFinish.apply(extent: ext, arguments: [subject, CIVector(x: 1, y: 1, z: 0, w: 0)]) ?? subject
+            } else if source.hasTried(Self.aiSubject) {
+                img = Self.constant(1, ext)
+            } else {
+                img = zero   // still looking
+            }
         case .sky:
             img = source.cachedMask(Self.aiSky) ?? zero
         case .luminance:

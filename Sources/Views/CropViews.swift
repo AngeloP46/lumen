@@ -22,8 +22,8 @@ struct CropPanel: View {
                 .padding(.horizontal, 12)
             }
             HStack(spacing: 4) {
-                IconButton(system: "rotate.left") { rotate(-1) }
-                IconButton(system: "rotate.right") { rotate(1) }
+                IconButton(system: "rotate.left") { rotate(-1) }.accessibilityIdentifier("crop-rotate-left")
+                IconButton(system: "rotate.right") { rotate(1) }.accessibilityIdentifier("crop-rotate-right")
                 IconButton(system: "arrow.left.and.right.righttriangle.left.righttriangle.right",
                            disabled: vm.settings.cropAspect == 0) { vm.flipCropOrientation() }
                 Spacer()
@@ -55,10 +55,20 @@ struct CropPanel: View {
         return abs(max(a, 1 / a) - max(r, 1 / r)) < 0.002
     }
 
+    /// The crop turns with the picture (like Lightroom), so nothing you framed is lost. In normalised coordinates
+    /// (y down) a quarter turn clockwise maps (x, y) to (1 - y, x) and anticlockwise to (y, 1 - x); a locked ratio
+    /// turns too (3:2 becomes 2:3).
     private func rotate(_ d: Int) {
-        // the frame keeps its shape relative to the picture, so just turn the picture
-        vm.settings.quarterTurns += d
-        vm.resetCropFrame()
+        var s = vm.settings
+        let (l, t, r, b) = (s.cropL, s.cropT, s.cropR, s.cropB)
+        s.quarterTurns += d
+        if d > 0 {
+            (s.cropL, s.cropT, s.cropR, s.cropB) = (1 - b, l, 1 - t, r)
+        } else {
+            (s.cropL, s.cropT, s.cropR, s.cropB) = (t, 1 - r, b, 1 - l)
+        }
+        if s.cropAspect > 0 { s.cropAspect = 1 / s.cropAspect }
+        vm.settings = s
     }
 }
 

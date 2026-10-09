@@ -61,6 +61,9 @@ struct ScrubSlider: View {
     @State private var fine: Double = 1
     @State private var lastTap: Date?
     @State private var lastTapX: CGFloat = 0
+    /// True while a finger is on the slider. A gesture the system cancels (incoming call, Control Centre) never
+    /// calls onEnded; this resets either way, so the slider can tidy up and the list can scroll again.
+    @GestureState private var touching = false
 
     private var neutralValue: Double { neutral ?? (range.contains(0) ? 0 : range.lowerBound) }
 
@@ -108,6 +111,7 @@ struct ScrubSlider: View {
             // scrolling (onActive) once a drag has turned out to be sideways
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
+                    .updating($touching) { _, state, _ in state = true }
                     .onChanged { v in
                         if !dragging {
                             dragging = true
@@ -169,6 +173,19 @@ struct ScrubSlider: View {
             )
         }
         .frame(height: height)
+        .onChange(of: touching) { _, down in
+            guard !down else { return }
+            // next turn, so a normal onEnded (which may come after this) always goes first and keeps the tap logic
+            DispatchQueue.main.async {
+                guard dragging else { return }
+                if moved { onActive?(false) }
+                dragging = false
+                moved = false
+                ignoring = false
+                fine = 1
+                lastTap = nil
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier(axID.isEmpty ? "slider" : "slider-\(axID)")
         .accessibilityLabel(axID)

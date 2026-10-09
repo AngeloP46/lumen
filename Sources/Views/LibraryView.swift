@@ -111,6 +111,11 @@ struct LibraryView: View {
                     store.importFiles(urls.sorted { $0.lastPathComponent < $1.lastPathComponent })
                     try? await Task.sleep(nanoseconds: 4_000_000_000)
                 }
+                if DemoMode.value("-lumenDemoBroken") != nil {   // CI: a file that is not a photo
+                    let bad = FileManager.default.temporaryDirectory.appendingPathComponent("not-a-photo.jpg")
+                    try? Data("this is not a photo".utf8).write(to: bad)
+                    store.importFiles([bad])
+                }
                 if DemoMode.value("-lumenDemoFresh") != nil {
                     for it in store.items { store.save(EditSettings(), for: it) }
                     store.clipboard = nil
@@ -374,6 +379,13 @@ struct ThumbnailView: View {
             .overlay {
                 if let img = UIImage(contentsOfFile: store.thumbURL(item).path) {
                     Image(uiImage: img).resizable().scaledToFill()
+                } else if store.unreadable.contains(item.id) {
+                    VStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle").font(.title3)
+                        Text("Can't open").font(.caption2)
+                    }
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("thumb-unreadable")
                 } else {
                     ProgressView()
                 }

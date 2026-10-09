@@ -630,6 +630,56 @@ final class LumenUITests: XCTestCase {
 
     // MARK: crop
 
+    func cropFrame() -> [Double] {
+        // "l 0.00 t 0.00 r 1.00 b 1.00"
+        valueOf("crop-frame").split(separator: " ").compactMap { Double($0) }
+    }
+
+    func testRotatingKeepsTheCrop() {
+        launch(open: 0, tool: "Crop", extra: ["-lumenDemoCrop", "1"])
+        sleep(2)   // the demo picks the 1:1 ratio after a moment
+        let f0 = cropFrame()
+        XCTAssertEqual(f0.count, 4)
+        guard f0.count == 4 else { return }
+        XCTAssertNotEqual(f0, [0, 0, 1, 1], "the demo crop should not be the whole picture")
+        el("crop-rotate-right").tap()
+        sleep(1)
+        let f1 = cropFrame()
+        XCTAssertEqual(f1.count, 4)
+        guard f1.count == 4 else { return }
+        // clockwise: (l, t, r, b) -> (1 - b, l, 1 - t, r)
+        let expected = [1 - f0[3], f0[0], 1 - f0[1], f0[2]]
+        for i in 0..<4 { XCTAssertEqual(f1[i], expected[i], accuracy: 0.02, "rotating should turn the crop with the picture: \(f0) -> \(f1)") }
+        shot("crop-rotated")
+        el("crop-rotate-left").tap()
+        sleep(1)
+        let f2 = cropFrame()
+        for i in 0..<min(4, f2.count) { XCTAssertEqual(f2[i], f0[i], accuracy: 0.02, "rotating back should restore the crop: \(f0) -> \(f2)") }
+    }
+
+    func testUnreadableFileSaysSoInsteadOfSpinning() {
+        launchLibrary(extra: ["-lumenDemoBroken", "1"])
+        XCTAssertTrue(el("thumb-unreadable").waitForExistence(timeout: 30), "a file that is not a photo should say it can't be opened")
+        shot("library-unreadable")
+    }
+
+    func testDamagedPhotoListIsRecovered() {
+        // the list is damaged but its last good copy is fine
+        launchLibrary(extra: ["-lumenDemoCorruptIndex", "index"])
+        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 10), "the user should be told the list was rebuilt")
+        XCTAssertTrue(app.alerts.firstMatch.label.contains("Lumen") || app.alerts.firstMatch.staticTexts.count > 0)
+        app.alerts.firstMatch.buttons["OK"].tap()
+        XCTAssertEqual(items().count, 3, "all photos should be back from the last good copy")
+        XCTAssertTrue(events().contains { $0.contains("index recovered from its last good copy") }, "\(events())")
+        // both copies damaged: rebuilt from the photo files themselves
+        launchLibrary(extra: ["-lumenDemoCorruptIndex", "both"])
+        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 10))
+        app.alerts.firstMatch.buttons["OK"].tap()
+        XCTAssertEqual(items().count, 3, "all photos should be rebuilt from their files")
+        XCTAssertTrue(events().contains { $0.contains("index recovered from the photo files") }, "\(events())")
+        shot("library-recovered")
+    }
+
     func testCropToolShowsFrameAndStraightenResets() {
         launch(open: 0, tool: "Crop")
         XCTAssertTrue(el("panel").waitForExistence(timeout: 10), "crop panel should be open")

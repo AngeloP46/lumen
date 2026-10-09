@@ -40,6 +40,8 @@ final class LibraryStore: ObservableObject {
     @Published var batchResult: BatchResult?
     /// The order the library shows (date sorted); the editor's swipe / next / previous follow it.
     @Published var browseOrder: [UUID] = []
+    /// Photos whose file can't be decoded: their thumbnail says so instead of spinning forever.
+    @Published private(set) var unreadable: Set<UUID> = []
     private var activeImports = 0
 
     private let fm = FileManager.default
@@ -57,11 +59,10 @@ final class LibraryStore: ObservableObject {
         for d in [filesDir, thumbsDir, editsDir] {
             try? fm.createDirectory(at: d, withIntermediateDirectories: true)
         }
-        if let data = try? Data(contentsOf: root.appendingPathComponent("index.json")),
-           let decoded = try? JSONDecoder().decode([LibraryItem].self, from: data) {
-            items = decoded
-        }
+        loadIndex()
         fillInDatesTaken()
+        // thumbnails that never got made (or were lost) are made again
+        for it in items where !fm.fileExists(atPath: thumbURL(it).path) { refreshThumbnail(it) }
         if let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
            let decoded = try? JSONDecoder().decode([UserPreset].self, from: data) {
             userPresets = decoded
@@ -75,6 +76,72 @@ final class LibraryStore: ObservableObject {
                 return UserPreset(id: id, name: name, settings: Self.decodeSettings(d))
             }
         }
+    }
+
+    // MARK: Photo list
+
+    private var indexURL: URL { root.appendingPathComponent("index.json") }
+    private var backupURL: URL { root.appendingPathComponent("index.backup.json") }
+
+    /// Reads the photo list. If it is damaged, the last good copy is used; if that is damaged too, the list is rebuilt
+    /// from the photo files (their edits are keyed by the same id, so they come back as well). Either way the user
+    /// is told, and nothing is lost silently.
+    private func loadIndex() {
+        if let v = DemoMode.value("-lumenDemoCorruptIndex") {   // CI: damage the list to test the recovery
+            try? Data("{ not a photo list".utf8).write(to: indexURL)
+            if v == "both" { try? Data("garbage".utf8).write(to: backupURL) }
+        }
+        if let list = Self.readIndex(indexURL) {
+            items = list
+            // keep the last good list, in case this one is ever damaged
+            try? fm.removeItem(at: backupURL)
+            try? fm.copyItem(at: indexURL, to: backupURL)
+            return
+        }
+        let files = (try? fm.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: [.creationDateKey])) ?? []
+        var from: String?
+        if let list = Self.readIndex(backupURL) {
+            items = list
+            from = "its last good copy"
+        }
+        // photos the list doesn't know about (imported after the copy was made, or the copy is gone too)
+        let known = Set(items.map(\.fileName))
+        let orphans = Self.rebuild(from: files.filter { !known.contains($0.lastPathComponent) })
+        if !orphans.isEmpty {
+            items = (items + orphans).sorted { $0.added > $1.added }
+            from = from.map { $0 + " and the photo files" } ?? "the photo files"
+        }
+        guard let from else { return }   // a new, empty library
+        saveIndex()
+        lastError = "Lumen's photo list was damaged. It has been rebuilt from \(from) (\(items.count) photos, edits kept)."
+        DemoMode.log("index recovered from \(from)")
+    }
+
+    /// The photo list, skipping single entries that can't be read rather than losing the whole list.
+    nonisolated static func readIndex(_ url: URL) -> [LibraryItem]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        if let all = try? JSONDecoder().decode([LibraryItem].self, from: data) { return all }
+        guard let list = (try? JSONSerialization.jsonObject(with: data)) as? [Any] else { return nil }
+        let items = list.compactMap { entry -> LibraryItem? in
+            guard let d = try? JSONSerialization.data(withJSONObject: entry) else { return nil }
+            return try? JSONDecoder().decode(LibraryItem.self, from: d)
+        }
+        return items.isEmpty && !list.isEmpty ? nil : items
+    }
+
+    /// Library entries for photo files (named by their id), newest first. Original names are not known any more.
+    nonisolated static func rebuild(from files: [URL]) -> [LibraryItem] {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return files.compactMap { u -> LibraryItem? in
+            guard let id = UUID(uuidString: u.deletingPathExtension().lastPathComponent) else { return nil }
+            let created = (try? u.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date()
+            let taken = dateTaken(u)
+            return LibraryItem(id: id, displayName: "Photo \(f.string(from: taken ?? created))", fileName: u.lastPathComponent,
+                               added: created, taken: taken)
+        }
+        .sorted { $0.added > $1.added }
     }
 
     func fileURL(_ item: LibraryItem) -> URL { filesDir.appendingPathComponent(item.fileName) }
@@ -359,22 +426,31 @@ final class LibraryStore: ObservableObject {
 
     private func saveIndex() {
         if let data = try? JSONEncoder().encode(items) {
-            try? data.write(to: root.appendingPathComponent("index.json"), options: .atomic)
+            try? data.write(to: indexURL, options: .atomic)
         }
     }
 
     // MARK: Thumbnails
 
     func refreshThumbnail(_ item: LibraryItem) {
-        let src = fileURL(item), dst = thumbURL(item)
+        let src = fileURL(item), dst = thumbURL(item), id = item.id
         let settings = settings(for: item)
         thumbQueue.async {
             guard let session = EditSession(url: src),
                   let cg = session.renderCGImage(settings, maxEdge: 640),
-                  let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else { return }
+                  let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else {
+                // the file can't be decoded: say so on the thumbnail instead of spinning forever
+                if FileManager.default.fileExists(atPath: src.path) {
+                    Task { @MainActor [weak self] in self?.unreadable.insert(id) }
+                }
+                return
+            }
             guard FileManager.default.fileExists(atPath: src.path) else { return }
             try? jpg.write(to: dst, options: .atomic)
-            Task { @MainActor [weak self] in self?.thumbVersion += 1 }
+            Task { @MainActor [weak self] in
+                self?.unreadable.remove(id)
+                self?.thumbVersion += 1
+            }
         }
     }
 }

@@ -59,6 +59,9 @@ struct EditorView: View {
     @State private var pinchBase: (zoom: CGFloat, pan: CGSize)?
     @State private var panBase: CGSize?
     @GestureState private var holding = false
+    // reset by SwiftUI when a pan or pinch ends *or is cancelled by the system* (onEnded is not called then)
+    @GestureState private var panTouching = false
+    @GestureState private var pinchTouching = false
     @State private var lastHoldEnd = Date.distantPast
     // two-finger pinch/pan (TwoFingerWatcher): where it started, and whether fingers are on the photo right now
     @State private var twoFinger: (zoom: CGFloat, pan: CGSize, centre: CGPoint, spread: CGFloat)?
@@ -106,6 +109,13 @@ struct EditorView: View {
             if new == .crop || (new != .masks && zoom < 0.999) { withAnimation(.easeOut(duration: 0.18)) { resetZoom() } }
         }
         .onChange(of: zoom) { _, z in vm.zoomChanged(z) }
+        .onChange(of: panTouching) { _, down in if !down { panBase = nil } }
+        .onChange(of: pinchTouching) { _, down in
+            guard !down else { return }
+            DispatchQueue.main.async {   // after onEnded, if there is one
+                if pinchBase != nil { pinchBase = nil; withAnimation(.easeOut(duration: 0.18)) { if zoom < minZoom { resetZoom() } } }
+            }
+        }
         .onChange(of: holding) { _, h in
             vm.showOriginal = h && twoFinger == nil
             if !h { lastHoldEnd = Date() }
@@ -541,6 +551,7 @@ struct EditorView: View {
 
     private func zoomGesture(_ xf: ViewXform) -> some Gesture {
         MagnifyGesture()
+            .updating($pinchTouching) { _, state, _ in state = true }
             .onChanged { v in
                 guard twoFinger == nil, Date().timeIntervalSince(lastPinchEnd) > 0.3 else { return }
                 if pinchBase == nil {
@@ -559,6 +570,7 @@ struct EditorView: View {
     /// One finger moves a zoomed photo. Picks up from wherever a pinch left it, so lifting one of two fingers never jumps.
     private func panGesture(_ xf: ViewXform) -> some Gesture {
         DragGesture(minimumDistance: 6)
+            .updating($panTouching) { _, state, _ in state = true }
             .onChanged { v in
                 if twoFinger != nil { panBase = nil; return }
                 if panBase == nil {

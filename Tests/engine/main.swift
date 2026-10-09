@@ -925,5 +925,20 @@ func printHighlightStats() {
 printHighlightStats()
 runHDRChecks()
 
+// Background mask when no subject was found: the whole photo (it used to select nothing at all)
+do {
+    if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first,
+       let session = EditSession(url: f), let source = session.makeSource(maxEdge: 600, materialize: true) {
+        source.storeMask(EditSession.aiSubject, nil)   // looked, found nothing
+        let comp = Mask.make(.background).components[0]
+        let m = session.componentImage(comp, source: source, gain: 1)
+        let avg = m.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: m.extent)])
+        var px = [Float](repeating: 0, count: 4)
+        LumenGPU.context.render(avg, toBitmap: &px, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                                format: .RGBAf, colorSpace: nil)
+        check(px[0] > 0.98, "background mask with no subject should cover the whole photo (mean \(px[0]))")
+    } else { check(false, "background mask check: no photo could be opened") }
+}
+
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
 finishChecks()

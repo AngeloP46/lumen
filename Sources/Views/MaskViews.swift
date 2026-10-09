@@ -347,6 +347,8 @@ struct MaskPanel: View {
         case .subject, .background, .sky:
             if vm.autoMaskBusy {
                 HStack { ProgressView(); Text("Finding it…").font(.caption).foregroundStyle(.secondary) }
+            } else if c.kind == .background && vm.autoMaskMissing.contains(EditSession.aiSubject) {
+                hint("No subject found in this photo, so the background is all of it. Subtract shapes to keep parts out.")
             } else if (c.kind == .sky && vm.autoMaskMissing.contains(EditSession.aiSky))
                         || (c.kind != .sky && vm.autoMaskMissing.contains(EditSession.aiSubject)) {
                 hint("Couldn't find a \(c.kind == .sky ? "sky" : "subject") in this photo. Try a Brush, Linear or Luminance mask instead.")
