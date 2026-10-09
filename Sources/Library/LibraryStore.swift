@@ -25,6 +25,7 @@ final class LibraryStore: ObservableObject {
     @Published var importing = false
     @Published var importTotal = 0
     @Published var importDone = 0
+    private var activeImports = 0
 
     private let fm = FileManager.default
     private let root: URL
@@ -175,10 +176,15 @@ final class LibraryStore: ObservableObject {
 
     func importPicked(_ picked: [PhotosPickerItem]) async {
         guard !picked.isEmpty else { return }
+        // A second import can start while one is running: add to the running counts instead of resetting them.
+        if activeImports == 0 { importTotal = 0; importDone = 0 }
+        activeImports += 1
         importing = true
-        importTotal = picked.count
-        importDone = 0
-        defer { importing = false }
+        importTotal += picked.count
+        defer {
+            activeImports -= 1
+            if activeImports == 0 { importing = false }
+        }
         // Asking for read access lets us fetch the true RAW/ProRAW original; the picker works without it too.
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         let canFetch = status == .authorized || status == .limited
