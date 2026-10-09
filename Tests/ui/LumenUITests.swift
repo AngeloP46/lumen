@@ -75,7 +75,7 @@ final class LumenUITests: XCTestCase {
     }
 
     func testHDRPillTogglesRangeSlider() {
-        launch(open: 0, tool: "Light")
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "list", "-lumenDemoPanel", "440"])
         XCTAssertFalse(el("slider-HDR range").exists, "HDR range slider should be hidden while HDR is off")
         XCTAssertFalse(el("hdr-badge").exists, "HDR badge should be hidden while HDR is off")
         el("pill-hdr").tap()
@@ -88,10 +88,13 @@ final class LumenUITests: XCTestCase {
         if !s.isHittable { el("panel-handle").swipeUp(); sleep(1) }
         if !s.isHittable { el("panel").swipeUp(); sleep(1) }
         XCTAssertTrue(s.isHittable, "HDR range slider should be reachable (frame \(s.frame))")
+        shot("hdr-before-drag")
         s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)))
         sleep(1)
-        XCTAssertNotEqual(valueOf("reset-HDR range"), "2.0", "dragging should change the HDR range")
+        shot("hdr-after-drag")
+        XCTAssertNotEqual(valueOf("reset-HDR range"), "2.0",
+                          "dragging should change the HDR range (slider frame \(s.frame), value now \(valueOf("slider-HDR range")), highlights row \(el("slider-Highlights").frame))")
         s.doubleTap()
         sleep(1)
         XCTAssertEqual(valueOf("reset-HDR range"), "2.0", "double-tap should reset the HDR range")
@@ -269,7 +272,7 @@ final class LumenUITests: XCTestCase {
     }
 
     func testSwipeAwayAndBackKeepsEachPhotosOwnEdit() {
-        launch(open: 1, tool: "Light")
+        launch(open: 1, tool: "Light", extra: ["-lumenDemoSlider", "list"])
         let first = el("photo").label
         let s = el("slider-Highlights")
         s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))

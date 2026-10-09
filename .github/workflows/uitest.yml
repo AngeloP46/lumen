@@ -1,6 +1,11 @@
 name: UI tests
 on:
   workflow_dispatch:
+    inputs:
+      only:
+        description: 'Run only this test method, for example testHDRPillTogglesRangeSlider (empty = all)'
+        required: false
+        default: ''
   push:
     branches: [v4, v5]
     paths:
@@ -32,6 +37,7 @@ jobs:
         env:
           TEST_RUNNER_DEMO_DIR: ${{ github.workspace }}/demo
           TEST_RUNNER_OUT_DIR: ${{ github.workspace }}/uiout
+          ONLY_TEST: ${{ github.event.inputs.only }}
         # xcodebuild's own exit status is the job's status. The log goes to a file first and is filtered afterwards,
         # so a pipe closing early (head) can never turn a passing run into a failure or hide a failing one.
         run: |
@@ -41,7 +47,9 @@ jobs:
           xcrun simctl boot $UDID
           xcrun simctl bootstatus $UDID -b
           set +e
-          xcodebuild test -project Lumen.xcodeproj -scheme Lumen \
+          ONLY_ARG=""
+          if [ -n "$ONLY_TEST" ]; then ONLY_ARG="-only-testing:LumenUITests/LumenUITests/$ONLY_TEST"; fi
+          xcodebuild test -project Lumen.xcodeproj -scheme Lumen $ONLY_ARG \
             -destination "platform=iOS Simulator,id=$UDID" \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
             > uiout/xcodebuild.log 2>&1

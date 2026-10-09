@@ -23,6 +23,7 @@ struct LibraryView: View {
     @State private var showPhotoPicker = false
     @State private var filter: LibraryFilter = .all
     @State private var path: [LibraryItem] = []
+    @State private var demoStarted = false   // CI demo mode: open the photo once, not every time the library reappears
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
 
@@ -67,7 +68,8 @@ struct LibraryView: View {
             .navigationTitle(filter == .all ? "Lumen" : filter.rawValue)
             .navigationDestination(for: LibraryItem.self) { EditorView(item: $0).id($0.id) }
             .task {
-                guard let dir = DemoMode.value("-lumenDemoDir") else { return }
+                guard let dir = DemoMode.value("-lumenDemoDir"), !demoStarted else { return }
+                demoStarted = true
                 if store.items.isEmpty {
                     let urls = (try? FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil)) ?? []
                     store.importFiles(urls.sorted { $0.lastPathComponent < $1.lastPathComponent })
