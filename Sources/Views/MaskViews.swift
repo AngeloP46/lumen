@@ -9,11 +9,12 @@ struct LabeledSlider: View {
     var decimals = 0
     var neutral: Double?
     var labelWidth: CGFloat = 70
+    var axID = ""
 
     var body: some View {
         HStack(spacing: 8) {
             Text(title).font(.system(size: 12)).foregroundStyle(Color(white: 0.8)).frame(width: labelWidth, alignment: .leading)
-            ScrubSlider(value: $value, range: range, neutral: neutral, decimals: decimals)
+            ScrubSlider(value: $value, range: range, neutral: neutral, decimals: decimals, axID: axID)
             Text(decimals == 0 ? "\(Int(value.rounded()))" : String(format: "%.\(decimals)f", value))
                 .font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary).frame(width: 38, alignment: .trailing)
         }

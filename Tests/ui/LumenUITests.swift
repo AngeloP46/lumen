@@ -346,4 +346,36 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         shot("lum-mask-shadows")
     }
+
+    // MARK: crop
+
+    func testCropToolShowsFrameAndStraightenResets() {
+        launch(open: 0, tool: "Crop")
+        XCTAssertTrue(el("panel").waitForExistence(timeout: 10), "crop panel should be open")
+        XCTAssertTrue(el("crop-frame").waitForExistence(timeout: 10), "crop frame should be shown in the Crop tool")
+        let full = valueOf("crop-frame")
+        XCTAssertEqual(full, "l 0.00 t 0.00 r 1.00 b 1.00", "a fresh photo starts with the whole picture framed")
+        // straighten slider: drag raises it, double-tap resets it
+        let s = el("slider-Straighten")
+        XCTAssertTrue(s.waitForExistence(timeout: 10), "straighten slider should exist")
+        XCTAssertEqual(valueOf("slider-Straighten"), "0.0")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(1)
+        let angle = Double(valueOf("slider-Straighten")) ?? 0
+        XCTAssertGreaterThan(angle, 0.5, "dragging right should straighten by a positive angle, got \(angle)")
+        shot("crop-straightened")
+        el("slider-Straighten").doubleTap()
+        sleep(1)
+        XCTAssertEqual(valueOf("slider-Straighten"), "0.0", "double-tap should reset the straighten angle")
+        // a 1:1 ratio changes the frame; the panel's Reset puts it back
+        app.buttons["1:1"].tap()
+        sleep(1)
+        let square = valueOf("crop-frame")
+        XCTAssertNotEqual(square, full, "choosing 1:1 should change the crop frame")
+        shot("crop-square")
+        el("crop-reset").tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("crop-frame"), full, "Reset should bring back the full frame")
+    }
 }
