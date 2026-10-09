@@ -828,6 +828,56 @@ func runHDRChecks() {
     print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")
     if failures > 0 { exit(1) }
 }
+/// Highlight statistics for the RAW (printed only): how far above SDR white the decoded data goes, how much of the SDR
+/// rendition ends up stuck at white, and how bright the HDR rendition gets. Used to tune the highlight shoulder.
+func printHighlightStats() {
+    print("== Highlight stats ==")
+    let files = ((try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? [])
+    guard let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }) else { print("stats: no ARW"); return }
+    let space = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+    func lums(_ img: CIImage) -> [Float] {
+        let k = min(1, 900 / max(img.extent.width, img.extent.height))
+        let sm = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+        let r = sm.extent.integral
+        let w = Int(r.width), h = Int(r.height)
+        guard w > 0, h > 0 else { return [] }
+        var buf = [Float](repeating: 0, count: w * h * 4)
+        buf.withUnsafeMutableBytes { p in
+            LumenGPU.context.render(sm, toBitmap: p.baseAddress!, rowBytes: w * 16, bounds: r, format: .RGBAf, colorSpace: space)
+        }
+        var out = [Float](); out.reserveCapacity(w * h)
+        for i in stride(from: 0, to: buf.count, by: 4) { out.append(0.2126 * buf[i] + 0.7152 * buf[i + 1] + 0.0722 * buf[i + 2]) }
+        return out.sorted()
+    }
+    func describe(_ tag: String, _ l: [Float]) {
+        guard !l.isEmpty else { print("stats \(tag): empty"); return }
+        func q(_ p: Double) -> Float { l[min(l.count - 1, Int(Double(l.count) * p))] }
+        let over1 = Float(l.filter { $0 > 1.0 }.count) / Float(l.count)
+        let nearWhite = Float(l.filter { $0 > 0.95 }.count) / Float(l.count)
+        print(String(format: "stats %@: p50 %.3f p90 %.3f p99 %.3f p99.9 %.3f max %.3f  >1: %.2f%%  >0.95: %.2f%%",
+                     tag, q(0.5), q(0.9), q(0.99), q(0.999), l.last!, over1 * 100, nearWhite * 100))
+    }
+    for amount: Float in [0, 1, 2] {
+        if let f = CIRAWFilter(imageURL: arw) {
+            f.extendedDynamicRangeAmount = amount
+            f.scaleFactor = 0.3
+            if let o = f.outputImage { describe("raw EDR \(amount)", lums(o)) }
+        }
+    }
+    guard let session = EditSession(url: arw), let source = session.makeSource(maxEdge: 1800, materialize: true) else {
+        print("stats: cannot open"); return
+    }
+    describe("source base", lums(source.base))
+    for ev in [0.0, 1.5] {
+        var s = EditSettings(); s.exposure = ev
+        describe(String(format: "SDR ev %+.1f", ev), lums(session.develop(s, source: source, geometry: true)))
+        var h = s; h.hdr = true
+        describe(String(format: "HDR ev %+.1f", ev), lums(session.develop(h, source: source, geometry: true, hdrWeight: 1)))
+        var r = s; r.highlights = -100; r.whites = -50
+        describe(String(format: "SDR ev %+.1f hl-100 wh-50", ev), lums(session.develop(r, source: source, geometry: true)))
+    }
+}
+printHighlightStats()
 runHDRChecks()
 
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
