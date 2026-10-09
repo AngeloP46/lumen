@@ -2,6 +2,13 @@ name: Build IPA
 
 on:
   push:
+    # notes and test-only changes don't change the app: no build (on main that would publish an identical SideStore update)
+    paths-ignore:
+      - '**.md'
+      - 'Tests/**'
+      - '.github/workflows/uitest.yml'
+      - '.github/workflows/ui-test.yml'
+      - '.github/workflows/engine-test.yml'
   workflow_dispatch:
 
 concurrency:

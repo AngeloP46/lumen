@@ -3,11 +3,12 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: 'Run only this test method, for example testHDRPillTogglesRangeSlider (empty = all)'
+        description: 'Run only this test method, for example testPinchZoomsAndDoubleTapToggles (empty = all)'
         required: false
         default: ''
+  # every work branch (the repo is public, so the macOS runners are free); main is only merged into after this passed
   push:
-    branches: [v4, v5]
+    branches-ignore: [main]
     paths:
       - 'Sources/**'
       - 'Tests/ui/**'
