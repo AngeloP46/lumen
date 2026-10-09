@@ -149,7 +149,9 @@ final class EditSession: @unchecked Sendable {
 
     var ctx: CIContext { LumenGPU.context }
 
-    init?(url: URL) {
+    /// `expandHDR` (iOS 18+, HDR mode only): JPEG/HEIC files that carry a gain map are decoded with their
+    /// highlights above 1.0 instead of the SDR rendition. Default false keeps the SDR path unchanged.
+    init?(url: URL, expandHDR: Bool = false) {
         let isRaw = UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .rawImage) ?? false
         if isRaw, let f = CIRAWFilter(imageURL: url) {
             f.extendedDynamicRangeAmount = 1.0
@@ -163,13 +165,21 @@ final class EditSession: @unchecked Sendable {
             raw = f
             plain = nil
             nativeSize = f.nativeSize
-        } else if let img = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) {
+        } else if let img = Self.loadPlain(url, expandHDR: expandHDR) {
             raw = nil
             plain = img
             nativeSize = img.extent.size
         } else {
             return nil
         }
+    }
+
+    private static func loadPlain(_ url: URL, expandHDR: Bool) -> CIImage? {
+        if expandHDR, #available(iOS 18.0, macOS 15.0, *),
+           let img = CIImage(contentsOf: url, options: [.applyOrientationProperty: true, .expandToHDR: true]) {
+            return img
+        }
+        return CIImage(contentsOf: url, options: [.applyOrientationProperty: true])
     }
 
     // MARK: Decoding

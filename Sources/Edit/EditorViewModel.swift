@@ -107,8 +107,9 @@ final class EditorViewModel: ObservableObject {
         settings = store.settings(for: item)
         applyingHistory = false
         let url = store.fileURL(item)
+        let wantsHDR = settings.hdr
         workQueue.async {
-            let s = EditSession(url: url)
+            let s = EditSession(url: url, expandHDR: wantsHDR)
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self else { return }
