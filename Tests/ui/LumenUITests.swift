@@ -148,6 +148,27 @@ final class LumenUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["original-label"].exists, "original label should be gone after release")
     }
 
+    func testHoldWhileZoomedWithPanelOpenShowsOriginalThenReturns() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1", "-lumenDemoZoom", "2"])
+        XCTAssertTrue(el("panel").exists, "panel should be open before the hold")
+        let z0 = zoomLevel()
+        XCTAssertGreaterThan(z0, 1.5, "demo zoom should start zoomed in, got \(z0)")
+        el("photo").press(forDuration: 3)
+        sleep(1)
+        let ev = events().filter { $0.contains("original") }
+        let on = ev.first { $0.hasSuffix("original true") }.flatMap { Double($0.split(separator: " ")[0]) }
+        let off = ev.last { $0.hasSuffix("original false") }.flatMap { Double($0.split(separator: " ")[0]) }
+        XCTAssertNotNil(on, "holding a zoomed photo should show the original; events: \(ev)")
+        XCTAssertNotNil(off, "releasing should go back to the edit; events: \(ev)")
+        if let on, let off {
+            XCTAssertGreaterThan(off - on, 1.8, "original must stay up while the finger is down (was \(off - on)s)")
+        }
+        XCTAssertFalse(app.staticTexts["original-label"].exists, "original label should be gone after release")
+        XCTAssertTrue(el("panel").exists, "panel should still be open after the hold")
+        XCTAssertEqual(zoomLevel(), z0, accuracy: 0.1, "holding must not change the zoom")
+        XCTAssertTrue(valueOf("photo").contains("original false"), valueOf("photo"))
+    }
+
     func testNoEyeButtonAndTopBar() {
         launch(open: 0, tool: "Light")
         XCTAssertTrue(el("btn-undo").exists)
