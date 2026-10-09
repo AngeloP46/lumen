@@ -414,6 +414,9 @@ struct MaskOverlay: View {
     }
 
     private func norm(_ p: CGPoint) -> Pt { xform.normalised(p) }
+    /// Handles may go past the photo's edges (zoom the photo out in Masks to reach further), so a gradient or radial
+    /// can be much bigger than the picture.
+    private func free(_ p: CGPoint) -> Pt { xform.unclamped(p) }
 
     @ViewBuilder
     private func controls(_ c: MaskComponent) -> some View {
@@ -460,7 +463,7 @@ struct MaskOverlay: View {
         HandleDot()
             .position(p)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
-                .onChanged { v in onDrag(norm(v.location)) })
+                .onChanged { v in onDrag(free(v.location)) })
     }
 
     @ViewBuilder
@@ -488,12 +491,13 @@ struct MaskOverlay: View {
         HandleDot().scaleEffect(0.7).position(mid)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { v in
-                    let m = norm(v.location)
+                    let m = free(v.location)
                     let cx = (c.x0 + c.x1) / 2, cy = (c.y0 + c.y1) / 2
                     let ddx = m.x - cx, ddy = m.y - cy
+                    let lim: (Double) -> Double = { min(max($0, -1.5), 2.5) }
                     vm.updateComponent(c.id) {
-                        $0.x0 = min(max(c.x0 + ddx, 0), 1); $0.y0 = min(max(c.y0 + ddy, 0), 1)
-                        $0.x1 = min(max(c.x1 + ddx, 0), 1); $0.y1 = min(max(c.y1 + ddy, 0), 1)
+                        $0.x0 = lim(c.x0 + ddx); $0.y0 = lim(c.y0 + ddy)
+                        $0.x1 = lim(c.x1 + ddx); $0.y1 = lim(c.y1 + ddy)
                     }
                 })
     }
@@ -515,12 +519,12 @@ struct MaskOverlay: View {
         handle(at: CGPoint(x: centre.x + u.x * rx, y: centre.y + u.y * rx)) { p in
             let pt = xform.point(p.x, p.y)
             let d = (pt.x - centre.x) * u.x + (pt.y - centre.y) * u.y
-            vm.updateComponent(c.id) { $0.x1 = max(0.02, min(1.5, Double(abs(d) / max(r.width, 1)))) }
+            vm.updateComponent(c.id) { $0.x1 = max(0.02, min(3, Double(abs(d) / max(r.width, 1)))) }
         }
         handle(at: CGPoint(x: centre.x + v.x * ry, y: centre.y + v.y * ry)) { p in
             let pt = xform.point(p.x, p.y)
             let d = (pt.x - centre.x) * v.x + (pt.y - centre.y) * v.y
-            vm.updateComponent(c.id) { $0.y1 = max(0.02, min(1.5, Double(abs(d) / max(r.height, 1)))) }
+            vm.updateComponent(c.id) { $0.y1 = max(0.02, min(3, Double(abs(d) / max(r.height, 1)))) }
         }
     }
 }

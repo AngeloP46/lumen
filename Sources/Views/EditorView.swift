@@ -59,6 +59,9 @@ struct EditorView: View {
     @State private var panBase: CGSize?
     @GestureState private var holding = false
     @State private var lastHoldEnd = Date.distantPast
+    // two-finger pinch/pan (TwoFingerWatcher): where it started, and whether fingers are on the photo right now
+    @State private var twoFinger: (zoom: CGFloat, pan: CGSize, centre: CGPoint, spread: CGFloat)?
+    @State private var lastPinchEnd = Date.distantPast
 
     private let item: LibraryItem
     private let toolbarHeight: CGFloat = 52
@@ -99,11 +102,11 @@ struct EditorView: View {
             vm.panMode = false
             if new == .masks, vm.selectedMaskID == nil, let first = vm.settings.masks.first { vm.selectMask(first.id) }
             if new == .presets { vm.loadPresetThumbs(user: store.userPresets) }
-            if new == .crop { resetZoom() }
+            if new == .crop || (new != .masks && zoom < 0.999) { withAnimation(.easeOut(duration: 0.18)) { resetZoom() } }
         }
         .onChange(of: zoom) { _, z in vm.zoomChanged(z) }
         .onChange(of: holding) { _, h in
-            vm.showOriginal = h
+            vm.showOriginal = h && twoFinger == nil
             if !h { lastHoldEnd = Date() }
         }
         .confirmationDialog("Export", isPresented: $showExportChoices, titleVisibility: .visible) {
@@ -143,6 +146,16 @@ struct EditorView: View {
         }
     }
 
+    /// The everyday tools (everything but Crop and the mask Shape tab) share one panel height whenever the photo
+    /// leaves room for it, so switching between them never moves or resizes the photo.
+    private func sharesHeight(_ t: Tool) -> Bool {
+        switch t {
+        case .crop: return false
+        case .masks: return vm.selectedMask != nil && vm.maskTab == .adjust
+        default: return true
+        }
+    }
+
     /// The panel takes whatever vertical room the photo does not need, unless the user dragged it to a height of their
     /// own. Sliders are shown as a full list when there is room for at least four whole rows, otherwise one at a time.
     private func panelPlan(in size: CGSize) -> PanelPlan {
@@ -153,9 +166,13 @@ struct EditorView: View {
         let photoH = size.width / max(aspect, 0.2)
         let free = max(avail - photoH - 6, 0)
         let pad: CGFloat = 12
+        let shared = sliderStyle == "list" ? avail * 0.6 : min(free, avail * 0.6, 400)
+        let useShared = sharesHeight(tool) && sliderStyle != "strip" && shared >= 260
 
         var auto: CGFloat
-        if sp.rows > 0 {
+        if useShared {
+            auto = shared
+        } else if sp.rows > 0 {
             let cap = avail * 0.6
             let usable = sliderStyle == "list" ? cap : min(free, cap)
             let fit = Int((usable - sp.header - pad) / 40)
@@ -170,7 +187,7 @@ struct EditorView: View {
             auto = free > sp.compact + 30 ? min(sp.roomy, max(free, sp.compact)) : sp.compact
         }
 
-        let key = tool.rawValue + (tool == .masks ? vm.maskTab.rawValue : "")
+        let key = useShared ? "shared" : tool.rawValue + (tool == .masks ? vm.maskTab.rawValue : "")
         let minH: CGFloat = sp.rows > 0 ? sp.compact : min(sp.compact, 120)
         let maxH = max(avail * 0.78, minH)
         let base = panelUser[key] ?? auto
@@ -181,7 +198,7 @@ struct EditorView: View {
         if sp.rows > 0, sliderStyle != "strip", h >= sp.header + CGFloat(min(4, sp.rows)) * 40 + pad {
             layout = .list
             let all = sp.header + CGFloat(sp.rows) * 40 + pad
-            rowH = h >= all ? min(max((h - sp.header - pad) / CGFloat(sp.rows), 40), 48) : 40
+            rowH = h >= all ? min(max((h - sp.header - pad) / CGFloat(sp.rows), 40), 54) : 40
         }
         return PanelPlan(height: h, layout: layout, rowHeight: rowH, minHeight: minH, maxHeight: maxH, key: key)
     }
@@ -257,6 +274,7 @@ struct EditorView: View {
         }
         if let h = DemoMode.value("-lumenDemoPanel").flatMap(Double.init), let t = tool {
             panelUser[t.rawValue + (t == .masks ? vm.maskTab.rawValue : "")] = CGFloat(h)
+            panelUser["shared"] = CGFloat(h)
         }
         sliderStyle = DemoMode.value("-lumenDemoSlider") ?? "auto"
     }
@@ -266,6 +284,7 @@ struct EditorView: View {
     private var canvas: some View {
         GeometryReader { geo in
             let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan)
+            let origin = geo.frame(in: .global).origin
             ZStack {
                 Color.black
                 CanvasView(model: vm.canvas, xform: xform, hdr: vm.settings.hdr)
@@ -293,7 +312,11 @@ struct EditorView: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("canvas")
-            // pinch works over every tool (including the mask and crop overlays), anchored on your fingers
+            // two fingers pinch and pan together over every tool except Crop (including the mask overlay)
+            .gesture(TwoFingerGesture { phase, p, d in
+                twoFingers(phase, CGPoint(x: p.x - origin.x, y: p.y - origin.y), d, xform)
+            })
+            // fallback pinch in case the watcher above never sees the fingers
             .simultaneousGesture(zoomGesture(xform), including: tool == .crop ? .none : .all)
             .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
             .overlay(alignment: .topLeading) {
@@ -382,7 +405,10 @@ struct EditorView: View {
     // MARK: Gestures
 
     private var canNavigate: Bool { tool != .masks && tool != .crop }
-    private var canPan: Bool { canNavigate || (tool == .masks && vm.panMode) }
+    /// One finger pans a zoomed photo wherever it is not busy with something else (mask handles, brush, crop frame).
+    private var canPan: Bool { tool != .crop }
+    /// In Masks the photo can be made smaller than the screen, so a gradient or radial can reach far past its edges.
+    private var minZoom: CGFloat { tool == .masks ? 0.3 : 1 }
 
     /// Tap = hide/show the panels, double-tap = zoom to that spot (or back), press and hold = see the original until
     /// you let go, drag = pan when zoomed, swipe sideways = next/previous photo.
@@ -403,10 +429,11 @@ struct EditorView: View {
                         }
                     },
                 including: tool == .crop ? .none : .all)
-            .gesture(panGesture(xform), including: (canPan && zoom > 1.01) ? .all : .none)
+            .gesture(panGesture(xform), including: canPan ? .all : .none)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 50).onEnded { v in
-                    guard canNavigate, zoom <= 1.05, Date().timeIntervalSince(lastHoldEnd) > 0.5,
+                    guard canNavigate, zoom <= 1.05, zoom >= 0.95, twoFinger == nil,
+                          Date().timeIntervalSince(lastHoldEnd) > 0.5, Date().timeIntervalSince(lastPinchEnd) > 0.4,
                           abs(v.translation.width) > 110, abs(v.translation.height) < 70 else { return }
                     go(v.translation.width < 0 ? 1 : -1)
                 })
@@ -414,7 +441,10 @@ struct EditorView: View {
                 LongPressGesture(minimumDuration: 0.3, maximumDistance: 25)
                     .sequenced(before: DragGesture(minimumDistance: 0))
                     .updating($holding) { value, state, _ in
-                        if case .second(true, _) = value { state = true }
+                        // holding still shows the original; once the finger starts moving it is a pan, not a compare
+                        if case .second(true, let drag) = value {
+                            state = drag.map { hypot($0.translation.width, $0.translation.height) < 14 } ?? true
+                        }
                     },
                 including: canNavigate ? .all : .none)
     }
@@ -438,17 +468,20 @@ struct EditorView: View {
     }
 
     /// Keeps the photo from being dragged away: it can only move as far as its edges reach the edges of the view.
+    /// Zoomed out in Masks it may move further, so handles can be put well past any edge of the picture.
     private func clampPan(_ p: CGSize, zoom z: CGFloat, _ xf: ViewXform) -> CGSize {
-        guard z > 1.001, xf.image.width > 0, xf.image.height > 0 else { return .zero }
+        guard xf.image.width > 0, xf.image.height > 0, xf.canvas.width > 0, xf.canvas.height > 0 else { return .zero }
         let fit = min(xf.canvas.width / xf.image.width, xf.canvas.height / xf.image.height)
         let w = xf.image.width * fit * z, h = xf.image.height * fit * z
-        let mx = max((w - xf.canvas.width) / 2, 0), my = max((h - xf.canvas.height) / 2, 0)
+        var mx = max((w - xf.canvas.width) / 2, 0), my = max((h - xf.canvas.height) / 2, 0)
+        if tool == .masks && z < 0.999 { mx += xf.canvas.width * 0.3; my += xf.canvas.height * 0.3 }
+        guard mx > 0.5 || my > 0.5 else { return .zero }
         return CGSize(width: min(max(p.width, -mx), mx), height: min(max(p.height, -my), my))
     }
 
     /// Zooms to `z` keeping the image point under `anchor` where it was.
     private func setZoom(_ z: CGFloat, anchor: CGPoint, from base: (zoom: CGFloat, pan: CGSize), _ xf: ViewXform) {
-        let nz = min(max(z, 1), maxZoom)
+        let nz = min(max(z, minZoom), maxZoom)
         let c = CGPoint(x: xf.canvas.width / 2, y: xf.canvas.height / 2)
         let ratio = nz / base.zoom
         let dx = anchor.x - c.x, dy = anchor.y - c.y
@@ -459,13 +492,50 @@ struct EditorView: View {
 
     private func toggleZoom(at p: CGPoint, _ xf: ViewXform) {
         withAnimation(.easeInOut(duration: 0.22)) {
-            if zoom > 1.05 { resetZoom() } else { setZoom(3, anchor: p, from: (1, .zero), xf) }
+            if zoom > 1.05 || zoom < 0.95 { resetZoom() } else { setZoom(3, anchor: p, from: (1, .zero), xf) }
+        }
+    }
+
+    /// Two fingers: zoom by how far apart they are, around the point between them, and move the photo with that point,
+    /// all at once (like Photos). `p` is in canvas coordinates.
+    private func twoFingers(_ phase: TwoFingerWatcher.Phase, _ p: CGPoint, _ spread: CGFloat, _ xf: ViewXform) {
+        guard tool != .crop, xf.image != .zero else { return }
+        switch phase {
+        case .began:
+            if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
+            twoFinger = (zoom, pan, p, spread)
+            panBase = nil
+            pinchBase = nil
+            vm.showOriginal = false
+        case .changed:
+            guard let b = twoFinger else { return }
+            // a little give past the limits while the fingers are down; it settles back when they lift
+            let z = min(max(b.zoom * spread / b.spread, minZoom * 0.8), maxZoom * 1.15)
+            let c = CGPoint(x: xf.canvas.width / 2, y: xf.canvas.height / 2)
+            let qx = (b.centre.x - c.x - b.pan.width) / b.zoom, qy = (b.centre.y - c.y - b.pan.height) / b.zoom
+            zoom = z
+            pan = clampPan(CGSize(width: p.x - c.x - qx * z, height: p.y - c.y - qy * z), zoom: z, xf)
+        case .ended:
+            guard twoFinger != nil else { return }
+            twoFinger = nil
+            lastPinchEnd = Date()
+            settleZoom(xf)
+        }
+    }
+
+    /// After a pinch: back inside the zoom limits; anything close to "fit" snaps to it.
+    private func settleZoom(_ xf: ViewXform) {
+        let target = min(max(zoom, minZoom), maxZoom)
+        guard target != zoom || abs(target - 1) < 0.03 else { return }
+        withAnimation(.easeOut(duration: 0.18)) {
+            if abs(target - 1) < 0.03 { resetZoom() } else { zoom = target; pan = clampPan(pan, zoom: target, xf) }
         }
     }
 
     private func zoomGesture(_ xf: ViewXform) -> some Gesture {
         MagnifyGesture()
             .onChanged { v in
+                guard twoFinger == nil, Date().timeIntervalSince(lastPinchEnd) > 0.3 else { return }
                 if pinchBase == nil {
                     pinchBase = (zoom, pan)
                     if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
@@ -473,18 +543,24 @@ struct EditorView: View {
                 if let b = pinchBase { setZoom(b.zoom * v.magnification, anchor: v.startLocation, from: b, xf) }
             }
             .onEnded { _ in
+                guard pinchBase != nil else { return }
                 pinchBase = nil
-                if zoom < 1.02 { withAnimation(.easeOut(duration: 0.15)) { resetZoom() } }
+                settleZoom(xf)
             }
     }
 
+    /// One finger moves a zoomed photo. Picks up from wherever a pinch left it, so lifting one of two fingers never jumps.
     private func panGesture(_ xf: ViewXform) -> some Gesture {
         DragGesture(minimumDistance: 6)
             .onChanged { v in
-                if panBase == nil { panBase = pan }
+                if twoFinger != nil { panBase = nil; return }
+                if panBase == nil {
+                    panBase = CGSize(width: pan.width - v.translation.width, height: pan.height - v.translation.height)
+                }
                 if let b = panBase {
-                    pan = clampPan(CGSize(width: b.width + v.translation.width, height: b.height + v.translation.height),
-                                   zoom: zoom, xf)
+                    let p = clampPan(CGSize(width: b.width + v.translation.width, height: b.height + v.translation.height),
+                                     zoom: zoom, xf)
+                    if p != pan { pan = p }
                 }
             }
             .onEnded { _ in panBase = nil }

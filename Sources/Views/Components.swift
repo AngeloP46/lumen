@@ -104,7 +104,8 @@ struct ScrubSlider: View {
             }
             .frame(height: geo.size.height)
             .contentShape(Rectangle())
-            // simultaneous, so a vertical swipe on a slider still scrolls a list underneath it
+            // simultaneous, so a vertical swipe on a slider still scrolls the list it is in; the list only stops
+            // scrolling (onActive) once a drag has turned out to be sideways
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
@@ -122,14 +123,18 @@ struct ScrubSlider: View {
                             base = value
                             acc = 0
                             lastX = v.startLocation.x
-                            onActive?(true)
                         }
                         if ignoring { return }
                         let dx = v.location.x - v.startLocation.x
                         if !moved {
-                            guard abs(dx) > 5 else { return }   // dead zone: taps and scrolling never nudge the value
+                            // dead zone: taps never nudge the value. Then the first real movement decides: sideways
+                            // is this slider, up/down is a scroll of the list it sits in (the slider then lets go).
+                            let dy = v.location.y - v.startLocation.y
+                            guard abs(dx) > 6 || abs(dy) > 6 else { return }
+                            if abs(dy) >= abs(dx) { ignoring = true; return }
                             moved = true
                             lastX = v.location.x
+                            onActive?(true)
                             return
                         }
                         let dy = abs(v.location.y - v.startLocation.y)
@@ -155,11 +160,11 @@ struct ScrubSlider: View {
                         } else if moved {
                             lastTap = nil
                         }
+                        if moved { onActive?(false) }
                         dragging = false
                         moved = false
                         ignoring = false
                         fine = 1
-                        onActive?(false)
                     }
             )
         }

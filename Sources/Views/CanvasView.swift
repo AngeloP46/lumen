@@ -27,6 +27,14 @@ struct ViewXform: Equatable {
         guard r.width > 0, r.height > 0 else { return Pt(x: 0, y: 0) }
         return Pt(x: Double(min(max((p.x - r.minX) / r.width, 0), 1)), y: Double(min(max((p.y - r.minY) / r.height, 0), 1)))
     }
+
+    /// Like `normalised` but not stopped at the photo's edges (mask handles may sit outside the picture), within `limit`.
+    func unclamped(_ p: CGPoint, limit: ClosedRange<Double> = -1.5...2.5) -> Pt {
+        let r = rect
+        guard r.width > 0, r.height > 0 else { return Pt(x: 0, y: 0) }
+        let x = Double((p.x - r.minX) / r.width), y = Double((p.y - r.minY) / r.height)
+        return Pt(x: min(max(x, limit.lowerBound), limit.upperBound), y: min(max(y, limit.lowerBound), limit.upperBound))
+    }
 }
 
 /// Holds the image the Metal view should draw. Updated on the main thread; drawing is cheap because the graph is lazy.
@@ -76,7 +84,11 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
 
     init(model: CanvasModel) { self.model = model }
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    /// The view changed size (a different tool's panel, the panel dragged, chrome hidden): draw again at the new
+    /// size. Without this the last frame, drawn for the old size, stayed on screen stretched and out of place.
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        view.setNeedsDisplay()
+    }
 
     func draw(in view: MTKView) {
         guard let queue = LumenGPU.queue, let drawable = view.currentDrawable,
@@ -85,9 +97,17 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
         guard size.width > 1, size.height > 1 else { return }
         let bounds = CGRect(origin: .zero, size: size)
         var out = CIImage(color: .black).cropped(to: bounds)
-        let r = xform.rect
+        // Place the photo for the size the view really has right now, so the frame is never distorted even if
+        // SwiftUI's layout and the drawable are briefly out of step.
+        var xf = xform
+        if view.bounds.width > 1, view.bounds.height > 1 { xf.canvas = view.bounds.size }
+        let r = xf.rect
+        if DemoMode.isOn {
+            DemoMode.log(String(format: "draw canvas %.0fx%.0f view %.0fx%.0f", xform.canvas.width, xform.canvas.height,
+                                view.bounds.width, view.bounds.height))
+        }
         if let img = model.image, r.width > 1, r.height > 1, !img.extent.isEmpty, !img.extent.isInfinite {
-            let sf = view.contentScaleFactor
+            let sf = size.width / max(view.bounds.width, 1)
             let ext = img.extent
             let k = r.width * sf / ext.width
             var placed = img.transformed(by: CGAffineTransform(translationX: -ext.minX, y: -ext.minY))
@@ -145,6 +165,8 @@ struct CanvasView: UIViewRepresentable {
         v.isPaused = true
         v.isOpaque = true
         v.backgroundColor = .black
+        // while the view is being resized keep the last frame unscaled and centred (it is redrawn straight after)
+        v.contentMode = .center
         v.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         CanvasView.configure(v, renderer: context.coordinator, hdr: hdr)
         context.coordinator.hdrOn = hdr

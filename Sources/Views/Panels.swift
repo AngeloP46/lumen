@@ -34,7 +34,8 @@ struct LightPanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var sel = "Exposure"
     var body: some View {
-        var items = [
+        // HDR is simply on or off: how far above white the highlights may go follows the screen's own range
+        let items = [
             vm.param("Exposure", \.exposure, range: -5...5, decimals: 2),
             vm.param("Contrast", \.contrast),
             vm.param("Highlights", \.highlights),
@@ -42,9 +43,6 @@ struct LightPanel: View {
             vm.param("Whites", \.whites),
             vm.param("Blacks", \.blacks),
         ]
-        if vm.settings.hdr {
-            items.append(vm.param("HDR range", \.hdrStops, range: 1...3, decimals: 1, neutral: 2))
-        }
         return ParamPanel(items: items, selected: $sel, header: AnyView(
             HStack(spacing: 6) {
                 PillButton(title: "Auto", system: "wand.and.stars") { vm.auto() }
@@ -193,31 +191,18 @@ struct PresetsPanel: View {
     @State private var newName = ""
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                Button { newName = ""; naming = true } label: {
-                    VStack(spacing: 4) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8).fill(Theme.chip)
-                            Image(systemName: "plus").font(.title3)
-                        }
-                        .frame(width: 72, height: 72)
-                        Text("Save").font(.caption2)
-                    }
+        GeometryReader { geo in
+            if geo.size.height > 200 {
+                ScrollView(showsIndicators: false) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 10)], spacing: 10) { tiles }
+                        .padding(.horizontal, 12).padding(.vertical, 8)
                 }
-                ForEach(Preset.all) { p in
-                    tile(name: p.name, image: vm.presetThumbs[p.name]) { vm.apply(p) }
-                }
-                ForEach(store.userPresets) { p in
-                    tile(name: p.name, image: vm.presetThumbs[p.id.uuidString]) { vm.apply(preset: p.settings) }
-                        .contextMenu {
-                            Button(role: .destructive) { store.deleteUserPreset(p) } label: {
-                                Label("Delete preset", systemImage: "trash")
-                            }
-                        }
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) { tiles }
+                        .padding(.horizontal, 12).padding(.top, 8)
                 }
             }
-            .padding(.horizontal, 12).padding(.top, 8)
         }
         .onAppear { vm.loadPresetThumbs(user: store.userPresets) }
         .alert("Save preset", isPresented: $naming) {
@@ -227,6 +212,31 @@ struct PresetsPanel: View {
                 if !n.isEmpty { store.addUserPreset(name: n, from: vm.settings) }
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    @ViewBuilder
+    private var tiles: some View {
+        Button { newName = ""; naming = true } label: {
+            VStack(spacing: 4) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8).fill(Theme.chip)
+                    Image(systemName: "plus").font(.title3)
+                }
+                .frame(width: 72, height: 72)
+                Text("Save").font(.caption2)
+            }
+        }
+        ForEach(Preset.all) { p in
+            tile(name: p.name, image: vm.presetThumbs[p.name]) { vm.apply(p) }
+        }
+        ForEach(store.userPresets) { p in
+            tile(name: p.name, image: vm.presetThumbs[p.id.uuidString]) { vm.apply(preset: p.settings) }
+                .contextMenu {
+                    Button(role: .destructive) { store.deleteUserPreset(p) } label: {
+                        Label("Delete preset", systemImage: "trash")
+                    }
+                }
         }
     }
 

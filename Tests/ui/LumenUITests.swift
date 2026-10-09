@@ -59,6 +59,22 @@ final class LumenUITests: XCTestCase {
         shot("slider-after")
     }
 
+    func testVerticalSwipeOnASliderScrollsTheList() {
+        launch(open: 0, tool: "Detail", extra: ["-lumenDemoSlider", "list"])
+        let first = el("slider-Texture"), touched = el("slider-Sharpen")
+        XCTAssertTrue(touched.isHittable, "Sharpen row should be on screen")
+        let y0 = first.frame.minY
+        let before = valueOf("reset-Sharpen")
+        // start right on the slider's track and swipe up
+        touched.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: touched.coordinate(withNormalizedOffset: CGVector(dx: 0.52, dy: 0.5)).withOffset(CGVector(dx: 0, dy: -170)))
+        sleep(1)
+        let y1 = first.frame.minY
+        XCTAssertLessThan(y1, y0 - 40, "swiping up on a slider should scroll the list (Texture row \(y0) -> \(y1))")
+        XCTAssertEqual(valueOf("reset-Sharpen"), before, "a vertical swipe must not change the slider it started on")
+        shot("list-scrolled-from-slider")
+    }
+
     func testDragThenResetButton() {
         launch(open: 0, tool: "Light")
         let s = el("slider-Highlights")
@@ -74,33 +90,16 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(valueOf("reset-Highlights"), "0", "the value button should reset the slider")
     }
 
-    func testHDRPillTogglesRangeSlider() {
-        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "list", "-lumenDemoPanel", "440"])
-        XCTAssertFalse(el("slider-HDR range").exists, "HDR range slider should be hidden while HDR is off")
+    func testHDRPillTurnsHDROnAndOff() {
+        launch(open: 0, tool: "Light")
         XCTAssertFalse(el("hdr-badge").exists, "HDR badge should be hidden while HDR is off")
         el("pill-hdr").tap()
         sleep(1)
-        XCTAssertTrue(el("slider-HDR range").waitForExistence(timeout: 5), "HDR range slider should appear when HDR is on")
-        XCTAssertTrue(el("hdr-badge").exists, "HDR badge should show while HDR is on")
-        XCTAssertEqual(valueOf("reset-HDR range"), "2.0")
-        let s = el("slider-HDR range")
-        // the 7th row may sit below the visible part of the panel: grow the panel, then scroll the list
-        if !s.isHittable { el("panel-handle").swipeUp(); sleep(1) }
-        if !s.isHittable { el("panel").swipeUp(); sleep(1) }
-        XCTAssertTrue(s.isHittable, "HDR range slider should be reachable (frame \(s.frame))")
-        shot("hdr-before-drag")
-        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)))
-        sleep(1)
-        shot("hdr-after-drag")
-        XCTAssertNotEqual(valueOf("reset-HDR range"), "2.0",
-                          "dragging should change the HDR range (slider frame \(s.frame), value now \(valueOf("slider-HDR range")), highlights row \(el("slider-Highlights").frame))")
-        s.doubleTap()
-        sleep(1)
-        XCTAssertEqual(valueOf("reset-HDR range"), "2.0", "double-tap should reset the HDR range")
+        XCTAssertTrue(el("hdr-badge").waitForExistence(timeout: 5), "HDR badge should show while HDR is on")
+        XCTAssertFalse(el("slider-HDR range").exists, "HDR is just on or off: there is no range slider any more")
+        shot("hdr-on")
         el("pill-hdr").tap()
         sleep(1)
-        XCTAssertFalse(el("slider-HDR range").exists, "HDR range slider should disappear when HDR is turned off")
         XCTAssertFalse(el("hdr-badge").exists, "HDR badge should disappear when HDR is turned off")
     }
 
@@ -236,6 +235,58 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         XCTAssertEqual(zoomLevel(), 3.0, accuracy: 0.2, "double tap should zoom in")
         shot("double-tapped")
+    }
+
+    func testPinchSmallerThanFitSpringsBackOutsideMasks() {
+        launch(open: 0, tool: "Light")
+        el("photo").pinch(withScale: 0.5, velocity: -1)
+        sleep(1)
+        XCTAssertEqual(zoomLevel(), 1.0, accuracy: 0.05, "outside Masks the photo should spring back to fit")
+    }
+
+    func testMasksCanZoomOutPastThePhotoAndLeavingMasksRestoresFit() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "radial"])
+        el("photo").pinch(withScale: 0.45, velocity: -1)
+        sleep(1)
+        let z = zoomLevel()
+        XCTAssertLessThan(z, 0.85, "in Masks pinching in should make the photo smaller than the screen, got \(z)")
+        XCTAssertGreaterThan(z, 0.25, "but not smaller than the limit, got \(z)")
+        shot("masks-zoomed-out")
+        el("tool-Light").tap()
+        sleep(1)
+        XCTAssertEqual(zoomLevel(), 1.0, accuracy: 0.05, "leaving Masks should bring the photo back to fit")
+    }
+
+    /// The photo used to stay drawn for the old size (squashed, or out of line with the crop frame) after the panel
+    /// changed height. Every tool switch must end with a frame drawn for the size the view really has.
+    func testPhotoIsRedrawnAtTheNewSizeAfterEveryToolSwitch() {
+        launch(open: 0, tool: "Light")
+        for t in ["Crop", "Detail", "Color", "Presets", "Masks", "Light"] {
+            el("tool-\(t)").tap()
+            sleep(2)
+            let draws = events().filter { $0.contains(" draw canvas ") }
+            guard let last = draws.last else { XCTFail("no frame drawn after switching to \(t)"); continue }
+            let parts = last.split(separator: " ")   // <time> draw canvas WxH view WxH
+            XCTAssertEqual(parts.count, 6, "odd log line \(last)")
+            if parts.count == 6 {
+                XCTAssertEqual(String(parts[3]), String(parts[5]),
+                               "after switching to \(t) the last frame was drawn for another size: \(last)")
+            }
+            shot("redraw-\(t)")
+        }
+    }
+
+    func testEverydayToolsKeepThePhotoStill() {
+        launch(open: 0, tool: "Light")
+        var tops: [String: CGFloat] = ["Light": el("panel").frame.minY]   // Light is open already (tapping it would close it)
+        for t in ["Color", "Detail", "Grade", "Curve", "Presets"] {
+            el("tool-\(t)").tap()
+            sleep(1)
+            tops[t] = el("panel").frame.minY
+        }
+        let values = Array(tops.values)
+        XCTAssertLessThan((values.max() ?? 0) - (values.min() ?? 0), 2,
+                          "the panel (and so the photo) should stay the same height across everyday tools: \(tops)")
     }
 
     // MARK: panel
