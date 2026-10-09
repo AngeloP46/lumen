@@ -344,6 +344,7 @@ struct EditorView: View {
                     .background(Color.black.opacity(0.25), in: Circle())
                     .foregroundStyle(.white)
             }
+            .accessibilityIdentifier("btn-menu")
         }
         .padding(.horizontal, 10).padding(.top, 6)
     }

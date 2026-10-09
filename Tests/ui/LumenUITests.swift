@@ -394,4 +394,35 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         XCTAssertEqual(valueOf("crop-frame"), full, "Reset should bring back the full frame")
     }
+
+    // MARK: slider layout (More menu)
+
+    func testMoreMenuSliderLayoutSwitchesBetweenListAndStrip() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "strip"])
+        XCTAssertTrue(el("panel").waitForExistence(timeout: 10), "Light panel should be open")
+        // One at a time: a single slider, no per-row value buttons
+        XCTAssertTrue(el("slider-Exposure").waitForExistence(timeout: 10), "strip shows the selected slider")
+        XCTAssertFalse(el("reset-Highlights").exists, "strip layout must not list every slider")
+        XCTAssertFalse(el("slider-Highlights").exists, "strip layout shows only one slider at a time")
+        shot("layout-strip")
+
+        // Full list: every slider is visible with its own value button
+        el("btn-menu").tap()
+        let full = app.buttons["Full list"]
+        XCTAssertTrue(full.waitForExistence(timeout: 5), "More menu should offer Full list")
+        full.tap()
+        XCTAssertTrue(el("reset-Highlights").waitForExistence(timeout: 10), "Full list should show the Highlights row")
+        XCTAssertTrue(el("slider-Highlights").exists, "Full list should show the Highlights slider")
+        XCTAssertTrue(el("reset-Exposure").exists, "Full list should show the Exposure row")
+        shot("layout-list")
+
+        // back to One at a time
+        el("btn-menu").tap()
+        let one = app.buttons["One at a time"]
+        XCTAssertTrue(one.waitForExistence(timeout: 5), "More menu should offer One at a time")
+        one.tap()
+        sleep(1)
+        XCTAssertFalse(el("reset-Highlights").exists, "One at a time should hide the list again")
+        XCTAssertTrue(el("slider-Exposure").exists || el("slider-Highlights").exists, "a single slider remains")
+    }
 }
