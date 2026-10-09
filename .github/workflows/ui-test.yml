@@ -1,13 +1,8 @@
 name: UI screenshots
 on:
   workflow_dispatch:
-  push:
-    branches: [main, v2, v3]
-    paths:
-      - 'Sources/**'
-      - 'project.yml'
-      - '.github/ci/**'
-      - '.github/workflows/ui-test.yml'
+  # push trigger removed: it cost about 7 macOS minutes per push and the UI tests (uitest.yml) cover the same ground.
+  # Run it by hand from the Actions tab when you want screenshots.
 
 concurrency:
   group: ui-shots-${{ github.ref }}
