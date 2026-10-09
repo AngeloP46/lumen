@@ -91,16 +91,31 @@ final class LumenUITests: XCTestCase {
     }
 
     func testHDRPillTurnsHDROnAndOff() {
-        launch(open: 0, tool: "Light")
+        // pretend to be an HDR screen with 2 stops of headroom (the simulator has none)
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoHeadroom", "4"])
         XCTAssertFalse(el("hdr-badge").exists, "HDR badge should be hidden while HDR is off")
+        XCTAssertTrue(el("file-kind").exists, "the file type (RAW or JPEG) should show under the histogram")
         el("pill-hdr").tap()
-        sleep(1)
+        sleep(3)
         XCTAssertTrue(el("hdr-badge").waitForExistence(timeout: 5), "HDR badge should show while HDR is on")
         XCTAssertFalse(el("slider-HDR range").exists, "HDR is just on or off: there is no range slider any more")
+        let label = el("hdr-badge").label
+        XCTAssertTrue(label.hasPrefix("HDR +") || label.contains("nothing above white"),
+                      "on an HDR screen the badge should say how far above white it shows, got '\(label)'")
+        XCTAssertTrue(events().contains { $0.contains("reloaded hdr true") }, "turning HDR on should decode the photo for HDR")
         shot("hdr-on")
         el("pill-hdr").tap()
-        sleep(1)
+        sleep(2)
         XCTAssertFalse(el("hdr-badge").exists, "HDR badge should disappear when HDR is turned off")
+    }
+
+    func testHDRBadgeExplainsWhenTheScreenCannotShowHDR() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoHeadroom", "1"])
+        el("pill-hdr").tap()
+        sleep(3)
+        XCTAssertTrue(el("hdr-badge").waitForExistence(timeout: 5))
+        XCTAssertTrue(el("hdr-badge").label.contains("can't show") || el("hdr-badge").label.contains("Low Power"),
+                      "with no HDR headroom the badge should say why nothing changes, got '\(el("hdr-badge").label)'")
     }
 
     func testTapOnSliderDoesNotChangeIt() {

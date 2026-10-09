@@ -321,13 +321,22 @@ struct EditorView: View {
             .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
             .overlay(alignment: .topLeading) {
                 if showHistogram && !chromeHidden {
-                    HistogramView(data: vm.histogram).frame(width: 90, height: 40).padding(.leading, 10).padding(.top, 50)
-                        .allowsHitTesting(false)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HistogramView(data: vm.histogram).frame(width: vm.settings.hdr ? 124 : 90, height: 40)
+                            .accessibilityIdentifier("histogram")
+                        // RAW or not: a JPEG has no hidden highlight detail for Highlights or HDR to bring back
+                        Text(vm.fileKind).font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.white.opacity(0.75))
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.black.opacity(0.35), in: Capsule())
+                            .accessibilityIdentifier("file-kind")
+                    }
+                    .padding(.leading, 10).padding(.top, 50)
+                    .allowsHitTesting(false)
                 }
             }
             .overlay(alignment: .bottomLeading) {
                 if vm.settings.hdr && !chromeHidden && tool != .crop {
-                    Text("HDR").accessibilityIdentifier("hdr-badge").font(.caption2.bold())
+                    Text(vm.hdrBadge).accessibilityIdentifier("hdr-badge").font(.caption2.bold())
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(.ultraThinMaterial, in: Capsule()).padding(10)
                         .allowsHitTesting(false)

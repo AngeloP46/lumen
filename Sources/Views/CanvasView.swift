@@ -41,8 +41,9 @@ struct ViewXform: Equatable {
 final class CanvasModel {
     var image: CIImage?
     weak var view: MTKView?
-    /// Called on the main thread when the screen's EDR headroom changes by more than 5% (HDR mode only).
-    var onHeadroom: ((CGFloat) -> Void)?
+    /// Called on the main thread with the screen's (current, potential) EDR headroom when either changes by more than
+    /// 5% (HDR mode only).
+    var onHeadroom: ((CGFloat, CGFloat) -> Void)?
 
     func update(_ img: CIImage?) {
         image = img
@@ -57,23 +58,32 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
     var colorSpace: CGColorSpace = LumenGPU.displaySpace
     var hdrOn = false
     private var headroomTimer: Timer?
-    private var lastHeadroom: CGFloat = 1
+    private var lastHeadroom: (current: CGFloat, potential: CGFloat) = (1, 1)
 
     /// While HDR is on, checks the screen's EDR headroom about once a second (it follows brightness and ambient light).
+    /// iPhones report a current headroom of 1 until something brighter than white is on screen, so the potential
+    /// headroom is reported as well. `-lumenDemoHeadroom <x>` pretends to be an HDR screen (CI simulator).
     func trackHeadroom(_ on: Bool, view: MTKView) {
         headroomTimer?.invalidate()
         headroomTimer = nil
         guard on else {
-            if lastHeadroom != 1 { lastHeadroom = 1; model.onHeadroom?(1) }
+            if lastHeadroom.current != 1 || lastHeadroom.potential != 1 {
+                lastHeadroom = (1, 1)
+                model.onHeadroom?(1, 1)
+            }
             return
         }
+        let forced = DemoMode.value("-lumenDemoHeadroom").flatMap(Double.init).map { CGFloat($0) }
         let check: (MTKView?) -> Void = { [weak self] v in
             guard let self else { return }
             let screen = v?.window?.windowScene?.screen ?? UIScreen.main
-            let h = max(screen.currentEDRHeadroom, 1)
-            if abs(h - self.lastHeadroom) / self.lastHeadroom > 0.05 {
-                self.lastHeadroom = h
-                self.model.onHeadroom?(h)
+            let c = forced ?? max(screen.currentEDRHeadroom, 1)
+            let p = forced ?? max(screen.potentialEDRHeadroom, 1)
+            let moved = abs(c - self.lastHeadroom.current) / self.lastHeadroom.current > 0.05
+                || abs(p - self.lastHeadroom.potential) / self.lastHeadroom.potential > 0.05
+            if moved {
+                self.lastHeadroom = (c, p)
+                self.model.onHeadroom?(c, p)
             }
         }
         check(view)

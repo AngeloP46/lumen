@@ -825,6 +825,38 @@ func runHDRChecks() {
             check(b.count > a.count, "6: gain-map HEIC (\(b.count / 1024) KB) larger than SDR HEIC (\(a.count / 1024) KB)")
         } else { check(false, "6: HEIC export returned nil") }
     } else { print("HDR skip: 6 (needs macOS 15)") }
+    // 7. HDR mode decodes the RAW with more highlight range (extended dynamic range 2 instead of 1).
+    if let sdrSession = EditSession(url: arw), let hdrSession = EditSession(url: arw, expandHDR: true),
+       let a = sdrSession.makeSource(maxEdge: 1200, materialize: true),
+       let b = hdrSession.makeSource(maxEdge: 1200, materialize: true) {
+        func top(_ img: CIImage) -> Float { var m: Float = 0; let p = pixels(img); for i in 0..<(p.w * p.h) { m = max(m, lum(p, i)) }; return m }
+        let ma = top(a.base), mb = top(b.base)
+        check(mb > ma * 1.04, String(format: "7: HDR decode reaches higher above white (%.3f vs %.3f)", mb, ma))
+    } else { check(false, "7: cannot open \(arw.lastPathComponent) twice") }
+    // 8. HDR histogram: an overexposed RAW fills the HDR zone; the SDR rendition puts nothing there.
+    if let session = EditSession(url: arw, expandHDR: true), let source = session.makeSource(maxEdge: 1200, materialize: true) {
+        var s = EditSettings(); s.exposure = 1.5; s.hdr = true
+        let hdrImg = session.develop(s, source: source, geometry: true, hdrWeight: 1)
+        let sdrImg = session.develop(s, source: source, geometry: true)
+        let ctxImg = { (img: CIImage) -> CGImage? in
+            let k = 160 / max(img.extent.width, img.extent.height)
+            let sm = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+            return LumenGPU.context.createCGImage(sm, from: sm.extent, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        }
+        if let cg = ctxImg(sdrImg), var h = Histogram.compute(cg) {
+            Histogram.addHDR(&h, hdrImg, stops: s.hdrStops, screenStops: 1)
+            let zoneStart = Int(Float(Histogram.bins) * Histogram.sdrFraction) + 1
+            let zone = h.r[zoneStart...].reduce(0, +) + h.g[zoneStart...].reduce(0, +) + h.b[zoneStart...].reduce(0, +)
+            check(h.sdrFraction != nil && zone > 0.05 && h.hdrPeakStops > 0.3,
+                  String(format: "8a: HDR histogram zone filled (zone %.2f, peak +%.2f stops, %.1f%% above white)",
+                         zone, h.hdrPeakStops, h.hdrShare * 100))
+            var plain = h
+            Histogram.addHDR(&plain, sdrImg, stops: s.hdrStops, screenStops: 1)
+            let zone2 = plain.r[zoneStart...].reduce(0, +) + plain.g[zoneStart...].reduce(0, +) + plain.b[zoneStart...].reduce(0, +)
+            check(zone2 < 0.001 && plain.hdrPeakStops < 0.05,
+                  String(format: "8b: SDR rendition leaves the HDR zone empty (zone %.3f, peak +%.2f)", zone2, plain.hdrPeakStops))
+        } else { check(false, "8: histogram could not be computed") }
+    } else { check(false, "8: cannot open \(arw.lastPathComponent)") }
     print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")
     if failures > 0 { exit(1) }
 }

@@ -35,6 +35,7 @@ jobs:
           swiftc -Onone -g -o out/engine-test \
             Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift \
             Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift \
+            Sources/Edit/Histogram.swift \
             Tests/engine/main.swift
       - name: Run
         # The test's own exit status is the job's status. Only a crash (anything above 1) gets the lldb backtrace,

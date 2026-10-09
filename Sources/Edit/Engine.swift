@@ -149,12 +149,14 @@ final class EditSession: @unchecked Sendable {
 
     var ctx: CIContext { LumenGPU.context }
 
-    /// `expandHDR` (iOS 18+, HDR mode only): JPEG/HEIC files that carry a gain map are decoded with their
-    /// highlights above 1.0 instead of the SDR rendition. Default false keeps the SDR path unchanged.
+    /// `expandHDR` (HDR mode only): RAW files are decoded with all the highlight range Apple's RAW engine can give
+    /// (extended dynamic range 2: about twice as much above white as the default 1), and JPEG/HEIC files that carry a
+    /// gain map (iOS 18+) with their highlights above 1.0 instead of the SDR rendition. Default false keeps the SDR
+    /// path unchanged.
     init?(url: URL, expandHDR: Bool = false) {
         let isRaw = UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .rawImage) ?? false
         if isRaw, let f = CIRAWFilter(imageURL: url) {
-            f.extendedDynamicRangeAmount = 1.0
+            f.extendedDynamicRangeAmount = expandHDR ? 2.0 : 1.0
             f.sharpnessAmount = 0
             if let src = CGImageSourceCreateWithURL(url as CFURL, nil),
                let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],

@@ -387,6 +387,22 @@ struct HistogramView: View {
     var body: some View {
         Canvas { ctx, size in
             guard let d = data else { return }
+            if let f = d.sdrFraction, d.hdrStops > 0 {
+                // HDR zone: one segment per stop above SDR white; what the screen can't show right now is dimmed
+                let x0 = size.width * CGFloat(f)
+                let seg = (size.width - x0) / CGFloat(d.hdrStops)
+                ctx.fill(Path(CGRect(x: x0, y: 0, width: size.width - x0, height: size.height)),
+                         with: .color(Color.orange.opacity(0.16)))
+                for i in 0..<Int(d.hdrStops.rounded()) {
+                    let x = x0 + seg * CGFloat(i)
+                    ctx.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: size.height)), with: .color(Color.white.opacity(0.28)))
+                }
+                let shown = x0 + seg * CGFloat(min(d.screenStops, d.hdrStops))
+                if shown < size.width - 0.5 {
+                    ctx.fill(Path(CGRect(x: shown, y: 0, width: size.width - shown, height: size.height)),
+                             with: .color(Color.black.opacity(0.4)))
+                }
+            }
             func path(_ bins: [Float]) -> Path {
                 var p = Path()
                 p.move(to: CGPoint(x: 0, y: size.height))
@@ -402,13 +418,6 @@ struct HistogramView: View {
             ctx.fill(path(d.r), with: .color(Color.red.opacity(0.6)))
             ctx.fill(path(d.g), with: .color(Color.green.opacity(0.6)))
             ctx.fill(path(d.b), with: .color(Color.blue.opacity(0.6)))
-            if d.hdrShare > 0.001 {
-                // HDR zone: a warm bar at the right edge, taller the more of the picture is above SDR white
-                let bar = max(0.12, min(1, CGFloat(d.hdrShare).squareRoot()))
-                let zone = CGRect(x: size.width - 5, y: size.height * (1 - bar), width: 5, height: size.height * bar)
-                ctx.blendMode = .normal
-                ctx.fill(Path(zone), with: .color(Color.orange.opacity(0.9)))
-            }
         }
         .background(Color.black.opacity(0.35))
         .clipShape(RoundedRectangle(cornerRadius: 6))

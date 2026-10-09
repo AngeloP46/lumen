@@ -1,6 +1,7 @@
 import SwiftUI
 import Photos
 import CoreImage
+import UniformTypeIdentifiers
 
 private let histQueue = DispatchQueue(label: "lumen.hist", qos: .utility)
 private let workQueue = DispatchQueue(label: "lumen.work", qos: .userInitiated)
@@ -19,8 +20,16 @@ enum MaskTab: String, CaseIterable, Identifiable {
 final class EditorViewModel: ObservableObject {
     let item: LibraryItem
     let canvas = CanvasModel()
-    /// Current EDR headroom of the screen (1 = no HDR room). Only tracked while HDR is on.
-    private(set) var displayHeadroom: CGFloat = 1
+    /// The screen's EDR headroom right now and at most (1 = no HDR room). Only tracked while HDR is on.
+    private var currentHeadroom: CGFloat = 1
+    private var potentialHeadroom: CGFloat = 1
+    /// iPhone screens only switch into HDR once something brighter than white is drawn, and report a current headroom
+    /// of 1 until then. Waiting for it meant HDR never switched on, so the potential headroom is used until the screen
+    /// is in HDR mode; after that the real (current) headroom, so the highlights roll off instead of clipping.
+    private var effectiveHeadroom: CGFloat { currentHeadroom > 1.05 ? currentHeadroom : potentialHeadroom }
+    /// Stops above SDR white the screen shows for this photo right now (0 = none). Drives the HDR badge.
+    @Published private(set) var hdrScreenStops: Double = 0
+    private var loadGeneration = 0
 
     @Published var settings = EditSettings() {
         didSet { if settings != oldValue { settingsChanged(from: oldValue) } }
@@ -68,6 +77,7 @@ final class EditorViewModel: ObservableObject {
     private var histPending = false
     private var histImage: CIImage?
     private var histHDRImage: CIImage?
+    private var histStops: (Double, Double) = (2, 0)
     private var saveWork: DispatchWorkItem?
 
     // Undo / redo
@@ -80,10 +90,11 @@ final class EditorViewModel: ObservableObject {
 
     init(item: LibraryItem) {
         self.item = item
-        canvas.onHeadroom = { [weak self] h in
+        canvas.onHeadroom = { [weak self] current, potential in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.displayHeadroom = h
+                self.currentHeadroom = current
+                self.potentialHeadroom = potential
                 if self.settings.hdr { self.requestRender() }
             }
         }
@@ -127,8 +138,54 @@ final class EditorViewModel: ObservableObject {
                 if let src { self.imageSize = src.size }
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()
+                // HDR was switched while the photo was still loading: decode it again the other way
+                if self.settings.hdr != wantsHDR { self.reloadSource() }
             }
         }
+    }
+
+    /// HDR on or off changes how the file is decoded (RAW: more highlight range; gain-map JPEG/HEIC: the HDR version),
+    /// so decode it again. Automatic masks already found are kept.
+    private func reloadSource() {
+        guard let store, session != nil else { return }
+        loadGeneration += 1
+        let generation = loadGeneration
+        let url = store.fileURL(item)
+        let wantsHDR = settings.hdr
+        let previous = source
+        workQueue.async {
+            let s = EditSession(url: url, expandHDR: wantsHDR)
+            let src = s?.makeSource(maxEdge: 2560, materialize: true)
+            Task { @MainActor [weak self] in
+                guard let self, generation == self.loadGeneration, let s, let src else { return }
+                if let previous, previous.size == src.size {
+                    let (masks, tried) = previous.snapshotMasks()
+                    for key in tried { src.storeMask(key, masks[key]) }
+                }
+                self.session = s
+                self.source = src
+                self.detailSource = nil
+                if DemoMode.isOn { DemoMode.log("reloaded hdr \(wantsHDR)") }
+                self.requestRender()
+                self.prepareAutoMasksIfNeeded()
+            }
+        }
+    }
+
+    /// What the file is, so it is clear whether there is extra highlight detail to work with (RAW) or not (JPEG).
+    var fileKind: String {
+        let ext = (item.fileName as NSString).pathExtension.lowercased()
+        let raw = UTType(filenameExtension: ext)?.conforms(to: .rawImage) ?? false
+        return raw ? "RAW · \(ext.uppercased())" : (ext == "jpg" ? "JPEG" : ext.uppercased())
+    }
+
+    /// The HDR badge: how far above white the screen is showing this photo, or why nothing is.
+    var hdrBadge: String {
+        if hdrScreenStops < 0.1 {
+            return ProcessInfo.processInfo.isLowPowerModeEnabled ? "HDR · off in Low Power Mode" : "HDR · screen can't show it now"
+        }
+        if let h = histogram, h.sdrFraction != nil, h.hdrPeakStops < 0.05 { return "HDR · nothing above white in this photo" }
+        return String(format: "HDR +%.1f", hdrScreenStops)
     }
 
     private func settingsChanged(from old: EditSettings) {
@@ -143,6 +200,7 @@ final class EditorViewModel: ObservableObject {
         scheduleSave()
         requestRender()
         if settings.masks != old.masks { prepareAutoMasksIfNeeded() }
+        if settings.hdr != old.hdr { reloadSource() }
     }
 
     private func scheduleSave() {
@@ -170,19 +228,23 @@ final class EditorViewModel: ObservableObject {
         let applyCrop = !(cropEditing && !showOriginal)
         let useDetail = zoomLevel > 1.4 && detailSource != nil
         let active = (useDetail ? detailSource : nil) ?? source
-        // HDR: show as much of the gain as the screen can currently display (headroom 1 = none)
-        let hdrWeight = s.hdr ? min(max(log2(Double(displayHeadroom)) / s.hdrStops, 0), 1) : 0
+        // HDR: show as much of the highlights' range as the screen can display right now (headroom 1 = none)
+        let screenStops = min(max(log2(Double(effectiveHeadroom)), 0), settings.hdrStops)
+        let hdrWeight = s.hdr ? screenStops / max(s.hdrStops, 0.01) : 0
+        let badgeStops = settings.hdr ? screenStops : 0
+        if hdrScreenStops != badgeStops { hdrScreenStops = badgeStops }
         var img = session.develop(s, source: active, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: hdrWeight)
         // the histogram always reads the small SDR preview, even while the 100% view is showing
         let base = (useDetail || hdrWeight > 0) ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop) : img
-        let hdrImg = img
+        // in HDR the histogram shows everything the photo holds above white, also what the screen can't show now
+        let hdrImg: CIImage? = s.hdr ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: 1) : nil
         if overlayVisible, let m = selectedMask {
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure))
         }
         // sized from the preview so the shape stays right (crop, rotation, original) while the 100% view is showing
         if base.extent.size != imageSize { imageSize = base.extent.size }
         canvas.update(img)
-        scheduleHistogram(base, hdr: hdrWeight > 0 ? hdrImg : nil)
+        scheduleHistogram(base, hdr: hdrImg, stops: s.hdrStops, screenStops: screenStops)
     }
 
     // MARK: 100% view
@@ -278,14 +340,16 @@ final class EditorViewModel: ObservableObject {
         setCropAspect(1 / settings.cropAspect)
     }
 
-    private func scheduleHistogram(_ img: CIImage, hdr: CIImage? = nil) {
+    private func scheduleHistogram(_ img: CIImage, hdr: CIImage? = nil, stops: Double = 2, screenStops: Double = 0) {
         histImage = img
         histHDRImage = hdr
+        histStops = (stops, screenStops)
         guard !histPending else { return }
         histPending = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
             guard let self, let img = self.histImage else { return }
             let hdrImg = self.histHDRImage
+            let (stops, screenStops) = self.histStops
             self.histPending = false
             histQueue.async {
                 let e = img.extent
@@ -295,7 +359,7 @@ final class EditorViewModel: ObservableObject {
                 guard let cg = LumenGPU.context.createCGImage(small, from: small.extent, format: .RGBA8,
                                                               colorSpace: LumenGPU.displaySpace) else { return }
                 var h = Histogram.compute(cg)
-                if let hdrImg { h?.hdrShare = Histogram.hdrShare(hdrImg) }
+                if let hdrImg, h != nil { Histogram.addHDR(&h!, hdrImg, stops: stops, screenStops: screenStops) }
                 Task { @MainActor [weak self] in self?.histogram = h }
             }
         }
