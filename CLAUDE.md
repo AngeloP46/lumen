@@ -66,8 +66,12 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - NOT checkable in CI, so unverified: anything on the real HDR screen (how bright, how it looks), real-finger feel, Photos import from the real library, ProRAW DNG, subject-mask speed on the phone (Vision is too slow in the simulator).
 - The owner tests on the phone and reports bugs/feel issues in chat. Fix them on a branch, add a UI test for any gesture/layout bug, push (Build, Engine and UI tests run by themselves), and once green fast-forward `main`: about 2 minutes later the owner taps **Update** on Lumen in SideStore → My Apps. Tell them when it's there. Downloading to `LumenIPA\Lumen.ipa` is only needed to try a branch build with Sideloadly (download the artifact to a scratch folder, then `cp -f` it over the old file; do not use `rm` or `bash -c` with timeouts, the safety check blocks them).
 
-## Open questions for the owner
-- From the bugs loop: should the crop rotate buttons keep the crop (they reset it)? An undecodable file leaves a spinning thumbnail (show an error instead?). Recover automatically from a damaged `index.json`? What should the Background mask do when there is no subject? One blocked item: ScrubSlider cancelled drag (needs a UI test).
+## Decisions taken for the owner (2026-10-09; they asked Claude to decide)
+- Crop rotate buttons turn the crop (and a locked ratio) with the picture, like Lightroom, instead of resetting it (`CropPanel.rotate`).
+- A file that can't be decoded shows "Can't open" on its thumbnail (`LibraryStore.unreadable`); the editor already said "This file couldn't be opened."; missing thumbnails are remade at launch.
+- A damaged `index.json` recovers automatically: single bad entries are skipped; otherwise `index.backup.json` (copied at every good launch) is used, then the photo files themselves (named by id, so edits come back; original names become "Photo <date>"); files the list doesn't know are adopted; the user gets an alert. CI checks both paths (`-lumenDemoCorruptIndex index|both`).
+- Background mask with no subject found = the whole photo (everything is background), with a hint in the mask panel.
+- A drag the system cancels (call, Control Centre) no longer leaves a slider half-dragged with its list unable to scroll: `@GestureState` + a deferred tidy-up after any onEnded (ScrubSlider, pan and pinch).
 
 ## The phone side (SideStore, set up 2026-10-09)
 - On the iPhone: **LocalDevVPN** (App Store; a local loopback "VPN" SideStore needs to talk to the phone) and **SideStore 0.7.0** (installed with iloader's "SideStore (Stable)", signed in with the owner's free Apple ID), with the Lumen source added under Sources and Lumen installed from it. Any leftover Sideloadly copy of Lumen is dead (its certificate was revoked) and can be deleted.
