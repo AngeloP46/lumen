@@ -220,6 +220,28 @@ final class LumenUITests: XCTestCase {
         shot("after-swipe")
     }
 
+    func testBackToLibraryAndReopenKeepsEdit() {
+        launch(open: 0, tool: "Light")
+        let s = el("slider-Highlights")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(1)
+        let edited = Int(valueOf("reset-Highlights")) ?? 0
+        XCTAssertGreaterThan(edited, 10, "dragging right should raise Highlights, got \(edited)")
+        XCTAssertTrue(el("btn-back").waitForExistence(timeout: 10), "editor should have a back button")
+        el("btn-back").tap()
+        XCTAssertTrue(el("library-item").waitForExistence(timeout: 20), "back should return to the library grid")
+        XCTAssertFalse(el("photo").exists, "the editor should be gone after Back")
+        sleep(2)   // let the sidecar save settle
+        el("library-item").tap()
+        XCTAssertTrue(el("photo").waitForExistence(timeout: 30), "tapping the thumbnail should reopen the editor")
+        sleep(3)
+        if !el("slider-Highlights").exists, el("tool-Light").exists { el("tool-Light").tap(); sleep(1) }
+        XCTAssertTrue(el("reset-Highlights").waitForExistence(timeout: 10), "Light panel should show Highlights")
+        XCTAssertEqual(Int(valueOf("reset-Highlights")) ?? 0, edited, "the Highlights edit should be saved and restored")
+        shot("reopened")
+    }
+
     // MARK: nothing may overlap the tool bar
 
     func testEveryToolPanelStaysAboveToolBar() {
