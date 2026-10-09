@@ -12,6 +12,8 @@ jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 15
+    permissions:
+      contents: write   # lets the main branch publish to the `sidestore` release
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +32,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
 
       - name: Package IPA
@@ -42,3 +45,26 @@ jobs:
         with:
           name: Lumen-ipa
           path: Lumen.ipa
+
+      # SideStore on the owner's iPhone reads source.json from the `sidestore` release
+      # and installs/updates Lumen from it, so only finished (main) builds go there.
+      - name: Publish to the SideStore feed (main only)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          BUILD: ${{ github.run_number }}
+        run: |
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/sidestore"
+          cp Lumen.ipa "Lumen-${BUILD}.ipa"
+          python3 sidestore/make_source.py "Lumen-${BUILD}.ipa" "${base}/Lumen-${BUILD}.ipa" source.json
+          gh release view sidestore >/dev/null 2>&1 || gh release create sidestore \
+            --title "Lumen for SideStore" \
+            --notes "Add this source in SideStore (Sources > +): ${base}/source.json"
+          # Upload the IPA before the feed so the feed never points at a missing file.
+          gh release upload sidestore "Lumen-${BUILD}.ipa" --clobber
+          gh release upload sidestore source.json --clobber
+          # Keep the three newest IPAs so a download already in progress still works.
+          gh release view sidestore --json assets --jq '.assets[].name' \
+            | grep -E '^Lumen-[0-9]+\.ipa$' | sort -t- -k2 -n -r | tail -n +4 \
+            | while read -r old; do gh release delete-asset sidestore "$old" --yes; done

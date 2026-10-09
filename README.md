@@ -17,11 +17,17 @@ Edits Sony A9 `.ARW` and iPhone ProRAW `.DNG` (plus JPEG/HEIC) non-destructively
 
 ## Get it on your iPhone (no Mac needed)
 
-1. Create a GitHub repo and push this folder to it.
-2. The **Build IPA** workflow runs automatically on push (Actions tab). When it's green, download the `Lumen-ipa` artifact and unzip it to get `Lumen.ipa`.
-3. Install [AltStore](https://altstore.io) (AltServer on your PC + AltStore on the phone), then open `Lumen.ipa` with AltStore (or use Sideloadly). They sign it with your Apple ID.
-   - Free Apple ID: apps expire after 7 days; AltStore refreshes them while AltServer is running on the same Wi-Fi.
-   - $99/yr developer account: 1-year signing.
+Every push to `main` builds Lumen and publishes it as a [SideStore](https://sidestore.io) source:
+
+```
+https://github.com/AngeloP46/lumen/releases/download/sidestore/source.json
+```
+
+1. Install SideStore once from a PC with [iloader](https://github.com/nab138/iloader) (needs iTunes, a cable and your Apple ID), plus **LocalDevVPN** from the App Store.
+2. In SideStore: **Sources → +**, paste the URL above, then install Lumen from it. New builds show up as updates.
+3. Free Apple ID: apps expire after 7 days. Open SideStore (LocalDevVPN connected) and tap **Refresh All** once a week; this works anywhere with internet, no PC needed.
+
+Other branches still upload a `Lumen-ipa` artifact (Actions tab) that you can sideload by hand with Sideloadly.
 
 ## Getting A9 files onto the phone
 

@@ -7,7 +7,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.1"
     CURRENT_PROJECT_VERSION: "1"
 targets:
   Lumen:
@@ -19,6 +19,9 @@ targets:
       path: Config/Info.plist
       properties:
         CFBundleDisplayName: Lumen
+        # CI passes CURRENT_PROJECT_VERSION=<run number>, so every build has its own version (SideStore needs this to see updates).
+        CFBundleShortVersionString: "$(MARKETING_VERSION).$(CURRENT_PROJECT_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
