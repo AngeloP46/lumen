@@ -111,6 +111,24 @@ final class LumenUITests: XCTestCase {
         shot("undo-redo")
     }
 
+    // MARK: group reset
+
+    func testGroupResetPillResetsSeveralSliders() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])
+        // the demo edit sets Exposure 0.30, Contrast 20 and Highlights -30
+        XCTAssertEqual(valueOf("reset-Exposure"), "0.30")
+        XCTAssertEqual(valueOf("reset-Contrast"), "20")
+        XCTAssertEqual(valueOf("reset-Highlights"), "-30")
+        XCTAssertTrue(el("pill-Reset").waitForExistence(timeout: 10), "the Light panel should have a Reset pill")
+        el("pill-Reset").tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("reset-Exposure"), "0.00", "group Reset should reset Exposure")
+        XCTAssertEqual(valueOf("reset-Contrast"), "0", "group Reset should reset Contrast")
+        XCTAssertEqual(valueOf("reset-Highlights"), "0", "group Reset should reset Highlights")
+        XCTAssertEqual(valueOf("reset-Shadows"), "0")
+        shot("group-reset")
+    }
+
     // MARK: compare / chrome
 
     func testHoldShowsOriginalUntilRelease() {
