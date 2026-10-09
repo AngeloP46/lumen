@@ -74,6 +74,29 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(valueOf("reset-Highlights"), "0", "the value button should reset the slider")
     }
 
+    func testHDRPillTogglesRangeSlider() {
+        launch(open: 0, tool: "Light")
+        XCTAssertFalse(el("slider-HDR range").exists, "HDR range slider should be hidden while HDR is off")
+        XCTAssertFalse(el("hdr-badge").exists, "HDR badge should be hidden while HDR is off")
+        el("pill-hdr").tap()
+        sleep(1)
+        XCTAssertTrue(el("slider-HDR range").waitForExistence(timeout: 5), "HDR range slider should appear when HDR is on")
+        XCTAssertTrue(el("hdr-badge").exists, "HDR badge should show while HDR is on")
+        XCTAssertEqual(valueOf("reset-HDR range"), "2.0")
+        let s = el("slider-HDR range")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)))
+        sleep(1)
+        XCTAssertNotEqual(valueOf("reset-HDR range"), "2.0", "dragging should change the HDR range")
+        s.doubleTap()
+        sleep(1)
+        XCTAssertEqual(valueOf("reset-HDR range"), "2.0", "double-tap should reset the HDR range")
+        el("pill-hdr").tap()
+        sleep(1)
+        XCTAssertFalse(el("slider-HDR range").exists, "HDR range slider should disappear when HDR is turned off")
+        XCTAssertFalse(el("hdr-badge").exists, "HDR badge should disappear when HDR is turned off")
+    }
+
     func testTapOnSliderDoesNotChangeIt() {
         launch(open: 0, tool: "Light")
         el("slider-Contrast").coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)).tap()
