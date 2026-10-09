@@ -81,6 +81,36 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(valueOf("reset-Contrast"), "0", "a single tap must not move a slider")
     }
 
+    // MARK: undo / redo
+
+    func testUndoRedoRestoresSliderValue() {
+        launch(open: 0, tool: "Light")
+        XCTAssertFalse(el("btn-undo").isEnabled, "undo should be disabled before any edit")
+        XCTAssertFalse(el("btn-redo").isEnabled, "redo should be disabled before any edit")
+        let s = el("slider-Highlights")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(1)
+        let edited = Int(valueOf("reset-Highlights")) ?? 0
+        XCTAssertGreaterThan(edited, 10, "dragging right should raise Highlights, got \(edited)")
+        XCTAssertTrue(el("btn-undo").isEnabled, "undo should be enabled after an edit")
+        XCTAssertFalse(el("btn-redo").isEnabled, "redo should still be disabled after an edit")
+        // a long drag may leave more than one history step, so undo until the slider is back at 0
+        var taps = 0
+        while taps < 6, valueOf("reset-Highlights") != "0", el("btn-undo").isEnabled {
+            el("btn-undo").tap()
+            taps += 1
+            sleep(1)
+        }
+        XCTAssertEqual(valueOf("reset-Highlights"), "0", "undo should restore Highlights to 0 (\(taps) taps)")
+        XCTAssertTrue(el("btn-redo").isEnabled, "redo should be enabled after an undo")
+        el("btn-redo").tap()
+        sleep(1)
+        let redone = Int(valueOf("reset-Highlights")) ?? 0
+        XCTAssertGreaterThan(redone, 0, "redo should re-apply the edit, got \(redone)")
+        shot("undo-redo")
+    }
+
     // MARK: compare / chrome
 
     func testHoldShowsOriginalUntilRelease() {
