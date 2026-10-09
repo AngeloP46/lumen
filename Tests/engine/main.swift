@@ -176,6 +176,20 @@ func maskValues(_ img: CIImage, width: Int = 64) -> (v: [Float], w: Int, h: Int)
     return ((0..<(w * h)).map { buf[$0 * 4] }, w, h)
 }
 
+/// Raw float RGBA values of an image `width` pixels wide (no colour management), for NaN/Inf checks.
+func floatPixels(_ img: CIImage, width: Int = 64) -> [Float]? {
+    let k = CGFloat(width) / img.extent.width
+    let scaled = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+    let r = scaled.extent.integral
+    let w = Int(r.width), h = Int(r.height)
+    guard w > 0, h > 0 else { return nil }
+    var buf = [Float](repeating: 0, count: w * h * 4)
+    buf.withUnsafeMutableBytes { p in
+        LumenGPU.context.render(scaled, toBitmap: p.baseAddress!, rowBytes: w * 16, bounds: r, format: .RGBAf, colorSpace: nil)
+    }
+    return buf
+}
+
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
 var opened = 0
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
@@ -444,6 +458,37 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             check(sb.v.reduce(0, +) < f.v.reduce(0, +), "\(stem) subtracting a radial mask did not reduce the mask area")
         } else {
             check(false, "\(stem) subtract/intersect: could not render the masks")
+        }
+    }
+
+    // Extremes: every main slider at its minimum and maximum renders finite values (no NaN / Inf); apart from
+    // exposure (which may legitimately go black or white) the frame must be neither all black nor all white.
+    do {
+        let sliders: [(String, WritableKeyPath<EditSettings, Double>, Double, Double)] = [
+            ("exposure", \.exposure, -5, 5), ("contrast", \.contrast, -100, 100), ("highlights", \.highlights, -100, 100),
+            ("shadows", \.shadows, -100, 100), ("whites", \.whites, -100, 100), ("blacks", \.blacks, -100, 100),
+            ("temperature", \.temperature, -100, 100), ("tint", \.tint, -100, 100), ("vibrance", \.vibrance, -100, 100),
+            ("saturation", \.saturation, -100, 100), ("texture", \.texture, -100, 100), ("clarity", \.clarity, -100, 100),
+            ("dehaze", \.dehaze, -100, 100), ("vignette", \.vignette, -100, 100), ("grain", \.grain, 0, 100),
+            ("sharpness", \.sharpness, 0, 100), ("noiseReduction", \.noiseReduction, 0, 100), ("colorNoise", \.colorNoise, 0, 100),
+        ]
+        for (name, kp, lo, hi) in sliders {
+            for v in [lo, hi] {
+                var s = EditSettings()
+                s[keyPath: kp] = v
+                let label = "\(stem) extreme \(name)=\(v)"
+                guard let px = floatPixels(session.develop(s, source: source, geometry: true)) else {
+                    check(false, "\(label): could not render"); continue
+                }
+                check(px.allSatisfy { $0.isFinite }, "\(label): output contains NaN or Inf")
+                if name != "exposure" {
+                    if let cg = smallRender(session.develop(s, source: source, geometry: true)), let st = lumaStats(cg) {
+                        check(st.mean > 0.5 && st.mean < 254.5, "\(label): frame is all black or all white (mean luma \(st.mean))")
+                    } else {
+                        check(false, "\(label): could not render 8-bit frame")
+                    }
+                }
+            }
         }
     }
 
