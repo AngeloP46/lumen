@@ -342,7 +342,7 @@ struct EditorView: View {
                 Button(role: .destructive) { vm.reset() } label: { Label("Reset all", systemImage: "arrow.counterclockwise") }
                 Divider()
                 ForEach(ExportFormat.allCases) { f in
-                    Button { vm.export(f) } label: { Label("Export \(f.label)", systemImage: "square.and.arrow.up") }
+                    Button { vm.export(f) } label: { Label("Export \(f.label)\(vm.settings.hdr && f != .tiff ? " HDR" : "")", systemImage: "square.and.arrow.up") }
                 }
             } label: {
                 Image(systemName: "ellipsis")

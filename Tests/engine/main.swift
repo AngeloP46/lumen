@@ -319,7 +319,14 @@ func runHDRChecks() {
 
     _ = checks(arw, tag: "arw-exp+1", exposure: 1, rangeChecks: true)
     if first != arw { _ = checks(first, tag: "\(first.deletingPathExtension().lastPathComponent)-exp+1", exposure: 1, rangeChecks: false) }
-    // 6. (gain-map export) is added with the export item.
+    // 6. Gain-map HEIC export is larger than the SDR-only HEIC (needs macOS 15 Core Image).
+    if #available(macOS 15.0, *), let session = EditSession(url: arw) {
+        var off = EditSettings(); off.exposure = 1
+        var on = off; on.hdr = true
+        if let a = session.renderData(off, format: .heic, quality: 0.9), let b = session.renderData(on, format: .heic, quality: 0.9) {
+            check(b.count > a.count, "6: gain-map HEIC (\(b.count / 1024) KB) larger than SDR HEIC (\(a.count / 1024) KB)")
+        } else { check(false, "6: HEIC export returned nil") }
+    } else { print("HDR skip: 6 (needs macOS 15)") }
     print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")
     if failures > 0 { exit(1) }
 }

@@ -116,10 +116,30 @@ extension EditSession {
         guard let src = makeSource(maxEdge: nil, materialize: false) else { return nil }
         prepareAutoMasks(s, source: src)
         let img = develop(s, source: src, geometry: true)
-        let q = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
+        let q: [CIImageRepresentationOption: Any] = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
+        // HDR: the SDR rendition is the base image; the gain-map options need iOS 18 / macOS 15.
+        let wantHDR = s.hdr && format != .tiff && LumenKernels.shared?.applyGain != nil
+        let hdrImg: CIImage? = wantHDR ? develop(s, source: src, geometry: true, hdrWeight: 1) : nil
         switch format {
-        case .jpeg: return try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q)
-        case .heic: return try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q)
+        case .jpeg:
+            if let hdrImg, #available(iOS 18.0, macOS 15.0, *) {
+                var o = q
+                o[.hdrImage] = hdrImg
+                if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return d }
+            }
+            return try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q)
+        case .heic:
+            if let hdrImg {
+                if #available(iOS 18.0, macOS 15.0, *) {
+                    var o = q
+                    o[.hdrImage] = hdrImg
+                    if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: o) { return d }
+                } else if let hlg = CGColorSpace(name: CGColorSpace.itur_2100_HLG),
+                          let d = try? ctx.heif10Representation(of: hdrImg, colorSpace: hlg, options: q) {
+                    return d
+                }
+            }
+            return try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q)
         case .tiff: return try? ctx.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:])
         }
     }
