@@ -43,6 +43,9 @@ final class CanvasModel {
 final class CanvasRenderer: NSObject, MTKViewDelegate {
     let model: CanvasModel
     var xform = ViewXform(canvas: .zero, image: .zero)
+    /// Colour space the drawable is rendered in; switched together with the view's pixel format for HDR.
+    var colorSpace: CGColorSpace = LumenGPU.displaySpace
+    var hdrOn = false
 
     init(model: CanvasModel) { self.model = model }
 
@@ -72,7 +75,7 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
             placed = placed.transformed(by: CGAffineTransform(translationX: r.minX * sf, y: size.height - (r.minY * sf + h)))
             out = placed.composited(over: out)
         }
-        LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: LumenGPU.displaySpace)
+        LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)
         cb.present(drawable)
         cb.commit()
     }
@@ -81,6 +84,25 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
 struct CanvasView: UIViewRepresentable {
     let model: CanvasModel
     let xform: ViewXform
+    /// true = extended-range (EDR) drawable so highlights can go above paper white.
+    var hdr: Bool = false
+
+    /// Switches the view between today's 8-bit Display P3 drawable and a half-float extended-linear EDR one.
+    static func configure(_ v: MTKView, renderer: CanvasRenderer, hdr: Bool) {
+        let layer = v.layer as? CAMetalLayer
+        if hdr {
+            let space = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) ?? LumenGPU.displaySpace
+            v.colorPixelFormat = .rgba16Float
+            layer?.wantsExtendedDynamicRangeContent = true
+            layer?.colorspace = space
+            renderer.colorSpace = space
+        } else {
+            v.colorPixelFormat = .bgra8Unorm
+            layer?.wantsExtendedDynamicRangeContent = false
+            layer?.colorspace = LumenGPU.displaySpace
+            renderer.colorSpace = LumenGPU.displaySpace
+        }
+    }
 
     func makeCoordinator() -> CanvasRenderer { CanvasRenderer(model: model) }
 
@@ -93,7 +115,8 @@ struct CanvasView: UIViewRepresentable {
         v.isOpaque = true
         v.backgroundColor = .black
         v.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-        (v.layer as? CAMetalLayer)?.colorspace = LumenGPU.displaySpace
+        CanvasView.configure(v, renderer: context.coordinator, hdr: hdr)
+        context.coordinator.hdrOn = hdr
         v.delegate = context.coordinator
         model.view = v
         return v
@@ -101,6 +124,10 @@ struct CanvasView: UIViewRepresentable {
 
     func updateUIView(_ v: MTKView, context: Context) {
         context.coordinator.xform = xform
+        if context.coordinator.hdrOn != hdr {
+            context.coordinator.hdrOn = hdr
+            CanvasView.configure(v, renderer: context.coordinator, hdr: hdr)
+        }
         model.view = v
         v.setNeedsDisplay()
     }
