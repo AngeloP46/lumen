@@ -253,7 +253,9 @@ struct EditorView: View {
 
     /// CI-only: pre-build some edits so the screenshot shows the interesting panels.
     private func applyDemo() {
+        // opening straight into a tool skips onChange(of: tool), which normally switches these modes on
         if tool == .masks { vm.maskEditing = true }
+        if tool == .crop { vm.cropEditing = true }
         if let kind = DemoMode.value("-lumenDemoMask").flatMap({ MaskKind(rawValue: $0) }) {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
