@@ -230,8 +230,9 @@ func runHDRChecks() {
 
     struct Pixels { var w = 0, h = 0, f: [Float] = [] }
     func pixels(_ img: CIImage) -> Pixels {
-        let scale = 600 / max(img.extent.width, 1)
-        let sm = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        // No downscaling: averaging boosted highlights into neighbouring mid-tones would break check 3b by construction.
+        let scale = min(1, 1800 / max(img.extent.width, 1))
+        let sm = scale < 1 ? img.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) : img
         let r = sm.extent.integral
         let w = Int(r.width), h = Int(r.height)
         var buf = [Float](repeating: 0, count: w * h * 4)
