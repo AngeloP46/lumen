@@ -259,7 +259,7 @@ struct EditorView: View {
             let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan)
             ZStack {
                 Color.black
-                CanvasView(model: vm.canvas, xform: xform)
+                CanvasView(model: vm.canvas, xform: xform, hdr: vm.settings.hdr)
                     .allowsHitTesting(false)
                 if vm.imageSize != .zero {
                     gestureLayer(xform)

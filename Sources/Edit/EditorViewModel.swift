@@ -19,6 +19,8 @@ enum MaskTab: String, CaseIterable, Identifiable {
 final class EditorViewModel: ObservableObject {
     let item: LibraryItem
     let canvas = CanvasModel()
+    /// Current EDR headroom of the screen (1 = no HDR room). Only tracked while HDR is on.
+    private(set) var displayHeadroom: CGFloat = 1
 
     @Published var settings = EditSettings() {
         didSet { if settings != oldValue { settingsChanged(from: oldValue) } }
@@ -75,7 +77,16 @@ final class EditorViewModel: ObservableObject {
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
 
-    init(item: LibraryItem) { self.item = item }
+    init(item: LibraryItem) {
+        self.item = item
+        canvas.onHeadroom = { [weak self] h in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.displayHeadroom = h
+                if self.settings.hdr { self.requestRender() }
+            }
+        }
+    }
 
     var selectedMask: Mask? { settings.masks.first { $0.id == selectedMaskID } }
     var selectedComponent: MaskComponent? {
@@ -151,9 +162,11 @@ final class EditorViewModel: ObservableObject {
         let applyCrop = !(cropEditing && !showOriginal)
         let useDetail = zoomLevel > 1.4 && detailSource != nil
         let active = (useDetail ? detailSource : nil) ?? source
-        var img = session.develop(s, source: active, geometry: !skipGeometry, applyCrop: applyCrop)
-        // the histogram always reads the small preview, even while the 100% view is showing
-        let base = useDetail ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop) : img
+        // HDR: show as much of the gain as the screen can currently display (headroom 1 = none)
+        let hdrWeight = s.hdr ? min(max(log2(Double(displayHeadroom)) / s.hdrStops, 0), 1) : 0
+        var img = session.develop(s, source: active, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: hdrWeight)
+        // the histogram always reads the small SDR preview, even while the 100% view is showing
+        let base = (useDetail || hdrWeight > 0) ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop) : img
         if overlayVisible, let m = selectedMask {
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure))
         }
