@@ -180,6 +180,17 @@ func maskValues(_ img: CIImage, width: Int = 64) -> (v: [Float], w: Int, h: Int)
     return ((0..<(w * h)).map { buf[$0 * 4] }, w, h)
 }
 
+/// Mean display luma (0...255) of the darkest 10% and the brightest 10% of pixels.
+func lumaTails(_ cg: CGImage) -> (low: Double, high: Double)? {
+    guard let p = rgbaBytes(cg), cg.width > 0, cg.height > 0 else { return nil }
+    let n = cg.width * cg.height
+    var ys = [Double](repeating: 0, count: n)
+    for i in 0..<n { ys[i] = 0.2126 * Double(p[i * 4]) + 0.7152 * Double(p[i * 4 + 1]) + 0.0722 * Double(p[i * 4 + 2]) }
+    ys.sort()
+    let k = max(1, n / 10)
+    return (ys[0..<k].reduce(0, +) / Double(k), ys[(n - k)..<n].reduce(0, +) / Double(k))
+}
+
 /// Raw float RGBA values of an image `width` pixels wide (no colour management), for NaN/Inf checks.
 func floatPixels(_ img: CIImage, width: Int = 64) -> [Float]? {
     let k = CGFloat(width) / img.extent.width
@@ -430,6 +441,49 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             }
         } else {
             check(false, "\(stem) mono: could not render the B&W / saturation cases")
+        }
+    }
+
+    // Preview source size: long edge at most 1800 px (never upscaled) and the aspect ratio of the native picture.
+    do {
+        let native = session.nativeSize
+        let nl = Double(max(native.width, native.height)), sl = Double(max(source.size.width, source.size.height))
+        check(sl <= 1800.5, "\(stem) preview source: long edge \(sl) exceeds 1800 px")
+        check(sl <= nl + 1, "\(stem) preview source: long edge \(sl) is larger than the native \(nl)")
+        check(sl >= min(nl, 1800) - 3, "\(stem) preview source: long edge \(sl) is much smaller than expected \(min(nl, 1800))")
+        let na = Double(native.width / native.height), sa = Double(source.size.width / source.size.height)
+        check(abs(na - sa) / na < 0.01, "\(stem) preview source: aspect \(sa) differs from native aspect \(na)")
+    }
+
+    // Grain: amount 50 changes the picture, and the grain pattern is deterministic (same settings twice = same bytes).
+    do {
+        func grainRender(_ s: EditSettings) -> CGImage? { smallRender(session.develop(s, source: source, geometry: true), width: 400) }
+        if let g0 = grainRender(EditSettings()), let g1 = grainRender(edit { $0.grain = 50 }), let g2 = grainRender(edit { $0.grain = 50 }),
+           let b1 = rgbaBytes(g1), let b2 = rgbaBytes(g2), let diff = compareImages(g1, g0) {
+            print("  grain: mean |grain50 - grain0| \(String(format: "%.2f", diff.all)) levels; repeat identical \(b1 == b2)")
+            check(diff.all > 0.2, "\(stem) grain 50: render is not different from grain 0 (mean diff \(diff.all))")
+            check(b1 == b2, "\(stem) grain 50: two renders of the same settings differ (grain is not deterministic)")
+        } else {
+            check(false, "\(stem) grain: could not render the grain cases")
+        }
+    }
+
+    // Tonal range sliders act on their own part of the histogram: whites up lifts the brightest 10%, blacks down
+    // lowers the darkest 10%, highlights down lowers the brightest 10%. Skipped where the default is already clipped.
+    do {
+        func tails(_ s: EditSettings) -> (low: Double, high: Double)? {
+            guard let cg = smallRender(session.develop(s, source: source, geometry: true)) else { return nil }
+            return lumaTails(cg)
+        }
+        if let d = tails(EditSettings()), let w = tails(edit { $0.whites = 70 }), let b = tails(edit { $0.blacks = -70 }),
+           let h = tails(edit { $0.highlights = -100 }) {
+            print("  tails: low/high default \(String(format: "%.1f", d.low))/\(String(format: "%.1f", d.high)) whites+70 high \(String(format: "%.1f", w.high))"
+                  + " blacks-70 low \(String(format: "%.1f", b.low)) highlights-100 high \(String(format: "%.1f", h.high))")
+            if d.high < 240 { check(w.high > d.high + 1, "\(stem) whites +70: brightest 10% luma \(w.high) is not above default \(d.high)") }
+            if d.low > 15 { check(b.low < d.low - 1, "\(stem) blacks -70: darkest 10% luma \(b.low) is not below default \(d.low)") }
+            if d.high > 60 { check(h.high < d.high - 1, "\(stem) highlights -100: brightest 10% luma \(h.high) is not below default \(d.high)") }
+        } else {
+            check(false, "\(stem) tails: could not render the whites/blacks/highlights cases")
         }
     }
 
