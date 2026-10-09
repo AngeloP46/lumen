@@ -291,11 +291,16 @@ struct ParamPanel: View {
                                 }
                                 .padding(.horizontal, 10).padding(.vertical, 5)
                                 .frame(minWidth: 62)
-                                .background(it.id == current?.id ? Color.white.opacity(0.16) : Theme.chip,
+                                // the selected slider is unmistakable: accent fill and outline
+                                .background(it.id == current?.id ? Theme.accent.opacity(0.3) : Theme.chip,
                                             in: RoundedRectangle(cornerRadius: 9))
-                                .foregroundStyle(it.id == current?.id ? Color.white : Color(white: 0.75))
+                                .overlay(RoundedRectangle(cornerRadius: 9)
+                                    .stroke(it.id == current?.id ? Theme.accent : Color.clear, lineWidth: 1.6))
+                                .foregroundStyle(it.id == current?.id ? Color.white : Color(white: 0.7))
                             }
                             .id(it.id)
+                            .accessibilityIdentifier("chip-\(it.id)")
+                            .accessibilityAddTraits(it.id == current?.id ? .isSelected : [])
                             .contextMenu { Button("Reset \(it.title)") { reset(it) } }
                         }
                     }

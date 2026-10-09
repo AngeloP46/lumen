@@ -580,17 +580,18 @@ final class EditorViewModel: ObservableObject {
 
     // MARK: Export
 
-    func export(_ format: ExportFormat) {
+    func export(_ o: ExportOptions) {
         guard let session, !isExporting else { return }
         isExporting = true
         let s = settings
         let name = item.displayName
         workQueue.async {
-            let data = session.renderData(s, format: format, quality: 0.92)
+            let data = session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
             var url: URL?
             if let data {
-                let u = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-lumen.\(format.ext)")
+                let u = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-lumen.\(o.format.ext)")
                 if (try? data.write(to: u, options: .atomic)) != nil { url = u }
+                if DemoMode.isOn { DemoMode.log("exported \(o.format.rawValue) q \(Int(o.quality)) edge \(o.longEdge) bytes \(data.count)") }
             }
             Task { @MainActor [weak self] in
                 self?.isExporting = false

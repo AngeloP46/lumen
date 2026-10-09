@@ -151,7 +151,7 @@ struct MaskPanel: View {
                         Button { vm.maskTab = t } label: {
                             Text(t.rawValue).font(.system(size: 13, weight: .semibold))
                                 .frame(maxWidth: .infinity).frame(height: 30)
-                                .background(vm.maskTab == t ? Color.white.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                                .background(vm.maskTab == t ? Theme.accent.opacity(0.85) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
                                 .foregroundStyle(vm.maskTab == t ? Color.white : Color(white: 0.6))
                         }
                     }

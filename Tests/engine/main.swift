@@ -607,6 +607,19 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             print(" export full-res:", data.count / 1024, "KB in", Int((now() - t) * 1000), "ms")
             try? data.write(to: outDir.appendingPathComponent("\(stem)-export.jpg"))
         } else { check(false, "\(stem): full-resolution export (renderData .jpeg) returned nil") }
+        // export options: long edge and JPEG quality
+        func longEdge(_ d: Data) -> Int {
+            guard let src = CGImageSourceCreateWithData(d as CFData, nil),
+                  let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return -1 }
+            return max(p[kCGImagePropertyPixelWidth] as? Int ?? 0, p[kCGImagePropertyPixelHeight] as? Int ?? 0)
+        }
+        if let small = session.renderData(exportEdits, format: .jpeg, quality: 0.9, maxEdge: 1080),
+           let low = session.renderData(exportEdits, format: .jpeg, quality: 0.5, maxEdge: 1080),
+           let high = session.renderData(exportEdits, format: .jpeg, quality: 0.98, maxEdge: 1080) {
+            check(longEdge(small) == 1080, "\(stem): export at 1080 px long edge gave \(longEdge(small)) px")
+            check(low.count < high.count, "\(stem): JPEG quality 50 (\(low.count / 1024) KB) should be smaller than 98 (\(high.count / 1024) KB)")
+            print(" export 1080 px: q50 \(low.count / 1024) KB, q90 \(small.count / 1024) KB, q98 \(high.count / 1024) KB")
+        } else { check(false, "\(stem): export with a size limit returned nil") }
     }
     print(" timing default:"); timeIt(EditSettings())
     print(" timing heavy:")

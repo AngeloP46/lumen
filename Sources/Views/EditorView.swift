@@ -1,8 +1,9 @@
 import SwiftUI
 
 private enum Tool: String, CaseIterable, Identifiable {
-    case presets = "Presets", crop = "Crop", light = "Light", color = "Color"
-    case grade = "Grade", curve = "Curve", detail = "Detail", masks = "Masks"
+    // tool bar order, left to right; Presets is last (least used)
+    case crop = "Crop", light = "Light", color = "Color", grade = "Grade"
+    case curve = "Curve", detail = "Detail", masks = "Masks", presets = "Presets"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -109,13 +110,8 @@ struct EditorView: View {
             vm.showOriginal = h && twoFinger == nil
             if !h { lastHoldEnd = Date() }
         }
-        .confirmationDialog("Export", isPresented: $showExportChoices, titleVisibility: .visible) {
-            ForEach(ExportFormat.allCases) { f in
-                Button(f.label + (vm.settings.hdr && f != .tiff ? " HDR" : "")) { vm.export(f) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Saves a full-size copy with your edits.")
+        .sheet(isPresented: $showExportChoices) {
+            ExportOptionsSheet(count: 1, hdrAvailable: vm.settings.hdr) { vm.export($0) }
         }
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },
@@ -131,7 +127,7 @@ struct EditorView: View {
         case .presets: return ToolSpec(compact: 112, roomy: 112)
         case .crop: return ToolSpec(compact: 168, roomy: 184)
         case .grade: return ToolSpec(compact: 250, roomy: 262)
-        case .curve: return ToolSpec(compact: 216, roomy: 236)
+        case .curve: return ToolSpec(compact: 280, roomy: 340)   // the curve fills its panel: bigger is easier
         case .light: return ToolSpec(compact: 100, roomy: 0, rows: 6, header: 44)
         case .color:
             // the colour mixer has a row of swatches above its three sliders
@@ -458,9 +454,11 @@ struct EditorView: View {
                 including: canNavigate ? .all : .none)
     }
 
-    /// The photo before/after this one in the library (rejected photos are skipped).
+    /// The photo before/after this one in the library, in the order the library shows them (rejected photos skipped).
     private func neighbour(_ delta: Int) -> LibraryItem? {
-        let items = store.items.filter { $0.flag != -1 || $0.id == item.id }
+        let shown = store.browseOrder.compactMap { store.item($0) }
+        let base = shown.contains(where: { $0.id == item.id }) ? shown : store.items
+        let items = base.filter { $0.flag != -1 || $0.id == item.id }
         guard let i = items.firstIndex(where: { $0.id == item.id }), items.indices.contains(i + delta) else { return nil }
         return items[i + delta]
     }

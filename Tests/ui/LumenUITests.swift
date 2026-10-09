@@ -23,6 +23,20 @@ final class LumenUITests: XCTestCase {
         sleep(3)   // let the photo load
     }
 
+    /// Opens the app on the library (no photo open). The demo library always holds exactly the sample photos.
+    func launchLibrary(extra: [String] = []) {
+        app = XCUIApplication()
+        let env = ProcessInfo.processInfo.environment
+        let dir = env["DEMO_DIR"] ?? "/tmp/demo"
+        logPath = (env["OUT_DIR"] ?? NSTemporaryDirectory()) + "/events-\(UUID().uuidString).log"
+        app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra
+        app.launch()
+        XCTAssertTrue(el("library-item").waitForExistence(timeout: 60), "library did not show any photos")
+        sleep(3)
+    }
+
+    func items() -> XCUIElementQuery { app.descendants(matching: .any).matching(identifier: "library-item") }
+
     func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
 
     func valueOf(_ id: String) -> String { (el(id).value as? String) ?? "" }
@@ -471,10 +485,131 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(app.buttons["JPEG"].waitForExistence(timeout: 10), "Export should offer JPEG")
         XCTAssertTrue(app.buttons["HEIC"].exists, "Export should offer HEIC")
         XCTAssertTrue(app.buttons["TIFF"].exists, "Export should offer TIFF")
+        XCTAssertTrue(el("export-quality").exists, "Export should have a quality slider")
         shot("export-choices")
         app.buttons["Cancel"].tap()
         sleep(1)
         XCTAssertFalse(app.buttons["JPEG"].exists, "Cancel should close the export choices")
+    }
+
+    func testExportUsesTheChosenQualityAndSize() {
+        launch(open: 0, tool: "Light")
+        el("btn-export").tap()
+        XCTAssertTrue(app.buttons["JPEG"].waitForExistence(timeout: 10))
+        app.buttons["JPEG"].tap()
+        app.buttons["60"].tap()
+        XCTAssertEqual(el("export-quality-value").label, "60", "the quality preset should set the slider")
+        app.buttons["1080 px"].tap()
+        shot("export-options")
+        el("export-go").tap()
+        XCTAssertTrue(app.navigationBars["Exported"].waitForExistence(timeout: 90), "the export should finish and offer Save / Share")
+        XCTAssertTrue(events().contains { $0.contains("exported jpeg q 60 edge 1080") },
+                      "the export should use quality 60 and 1080 px: \(events().filter { $0.contains("exported") })")
+        app.buttons["Done"].tap()
+    }
+
+    func testToolBarHasPresetsOnTheFarRight() {
+        launch(open: 0, tool: "Light")
+        let presets = el("tool-Presets").frame
+        for t in ["Crop", "Light", "Color", "Grade", "Curve", "Detail", "Masks"] {
+            XCTAssertLessThan(el("tool-\(t)").frame.minX, presets.minX, "\(t) should be left of Presets")
+        }
+    }
+
+    func testSelectedSliderChipIsMarked() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "strip"])
+        XCTAssertTrue(el("chip-Contrast").waitForExistence(timeout: 10))
+        el("chip-Contrast").tap()
+        sleep(1)
+        XCTAssertTrue(el("chip-Contrast").isSelected, "the tapped slider chip should be marked as selected")
+        XCTAssertFalse(el("chip-Exposure").isSelected, "only one chip is selected")
+        shot("strip-selected-chip")
+    }
+
+    func testCurveFillsThePanelAndBendsWithADrag() {
+        launch(open: 0, tool: "Curve")
+        let c = el("curve")
+        XCTAssertTrue(c.waitForExistence(timeout: 10))
+        XCTAssertGreaterThan(c.frame.width, 300, "the curve should use the panel's width (\(c.frame))")
+        XCTAssertGreaterThan(c.frame.height, 200, "the curve should use the panel's height (\(c.frame))")
+        let before = (c.value as? String) ?? ""
+        c.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: c.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
+        sleep(1)
+        let after = (c.value as? String) ?? ""
+        XCTAssertNotEqual(before, after, "dragging on the curve should bend it")
+        XCTAssertEqual(after.split(separator: " ").count, 3, "the drag should add one point: \(after)")
+        shot("curve-bent")
+    }
+
+    // MARK: library
+
+    func testLibraryShowsDateSectionsAndRawBadges() {
+        launchLibrary()
+        XCTAssertTrue(el("library-section").exists, "photos should be grouped under a date")
+        XCTAssertEqual(items().count, 3, "the demo library has three photos")
+        shot("library")
+    }
+
+    func testSelectAndDeleteSeveralPhotos() {
+        launchLibrary()
+        XCTAssertEqual(items().count, 3)
+        el("btn-select").tap()
+        items().element(boundBy: 0).tap()
+        items().element(boundBy: 1).tap()
+        XCTAssertEqual(items().element(boundBy: 0).value as? String, "selected")
+        shot("library-selected")
+        el("lib-delete").tap()
+        let confirm = app.buttons["Remove 2 photos"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "deleting should ask first")
+        confirm.tap()
+        sleep(2)
+        XCTAssertEqual(items().count, 1, "two photos should be gone")
+    }
+
+    func testPasteEditsOntoSelectedPhotos() {
+        // an edit made by hand (demo mode would re-apply its own sample edits to every photo it opens)
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "list"])
+        let s = el("slider-Shadows")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(1)
+        let edited = valueOf("reset-Shadows")
+        XCTAssertNotEqual(edited, "0", "dragging should raise Shadows")
+        el("btn-menu").tap()
+        app.buttons["Copy edits"].tap()
+        sleep(1)
+        el("btn-back").tap()
+        XCTAssertTrue(el("btn-select").waitForExistence(timeout: 20))
+        el("btn-select").tap()
+        items().element(boundBy: 1).tap()
+        items().element(boundBy: 2).tap()
+        el("lib-paste").tap()
+        let look = app.buttons["Paste the look (keep each photo's crop and masks)"]
+        XCTAssertTrue(look.waitForExistence(timeout: 5), "Paste edits should offer pasting the look")
+        look.tap()
+        XCTAssertTrue(el("library-notice").waitForExistence(timeout: 5), "pasting should confirm")
+        el("btn-select-done").tap()
+        sleep(1)
+        items().element(boundBy: 1).tap()
+        XCTAssertTrue(el("photo").waitForExistence(timeout: 40))
+        sleep(2)
+        if !el("reset-Shadows").exists, el("tool-Light").exists { el("tool-Light").tap(); sleep(1) }
+        XCTAssertEqual(valueOf("reset-Shadows"), edited, "the pasted Shadows edit should be on the second photo")
+    }
+
+    func testBatchExportOfSelectedPhotos() {
+        launchLibrary()
+        el("btn-select").tap()
+        el("lib-select-all").tap()
+        el("lib-export").tap()
+        XCTAssertTrue(app.buttons["1080 px"].waitForExistence(timeout: 10), "batch export should show the export options")
+        app.buttons["JPEG"].tap()
+        app.buttons["1080 px"].tap()
+        el("export-go").tap()
+        XCTAssertTrue(el("batch-exported").waitForExistence(timeout: 180), "the batch export should finish: \(events().suffix(3))")
+        XCTAssertTrue(events().contains { $0.contains("batch exported 3 of 3") }, "all three photos should export")
+        shot("batch-exported")
     }
 
     func testMoreMenuIsShortAndEveryItemIsOnScreen() {

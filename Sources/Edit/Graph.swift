@@ -111,15 +111,24 @@ extension EditSession {
         return ctx.createCGImage(img, from: img.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
     }
 
-    /// Full-size export.
-    func renderData(_ s: EditSettings, format: ExportFormat, quality: Double) -> Data? {
+    /// Export. `quality` 0...1 (JPEG/HEIC), `maxEdge` = long edge in pixels (nil = full size), `includeHDR` adds the
+    /// HDR gain map when the photo is edited in HDR.
+    func renderData(_ s: EditSettings, format: ExportFormat, quality: Double, maxEdge: CGFloat? = nil,
+                    includeHDR: Bool = true) -> Data? {
         guard let src = makeSource(maxEdge: nil, materialize: false) else { return nil }
         prepareAutoMasks(s, source: src)
-        let img = develop(s, source: src, geometry: true)
+        var img = develop(s, source: src, geometry: true)
         let q: [CIImageRepresentationOption: Any] = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
         // HDR: the SDR rendition is the base image; the gain-map options need iOS 18 / macOS 15.
-        let wantHDR = s.hdr && format != .tiff && LumenKernels.shared?.applyGain != nil
-        let hdrImg: CIImage? = wantHDR ? develop(s, source: src, geometry: true, hdrWeight: 1) : nil
+        let wantHDR = includeHDR && s.hdr && format != .tiff && LumenKernels.shared?.applyGain != nil
+        var hdrImg: CIImage? = wantHDR ? develop(s, source: src, geometry: true, hdrWeight: 1) : nil
+        // smaller sizes are made from the full-size result, so they are as sharp as they can be
+        let long = max(img.extent.width, img.extent.height)
+        if let m = maxEdge, m > 0, long > m {
+            let k = m / long
+            img = Self.downscaled(img, k)
+            hdrImg = hdrImg.map { Self.downscaled($0, k) }
+        }
         switch format {
         case .jpeg:
             if let hdrImg, #available(iOS 18.0, macOS 15.0, *) {
@@ -142,5 +151,11 @@ extension EditSession {
             return try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q)
         case .tiff: return try? ctx.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:])
         }
+    }
+
+    static func downscaled(_ img: CIImage, _ k: CGFloat) -> CIImage {
+        let s = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
+            .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0])
+        return s.cropped(to: CGRect(x: 0, y: 0, width: floor(s.extent.width), height: floor(s.extent.height)))
     }
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 import Photos
 import PhotosUI
+import ImageIO
 import UniformTypeIdentifiers
 
 struct LibraryItem: Codable, Identifiable, Hashable {
@@ -10,9 +11,18 @@ struct LibraryItem: Codable, Identifiable, Hashable {
     var added: Date
     var rating: Int = 0     // 0...5
     var flag: Int = 0       // 1 = pick, -1 = reject
+    /// When the photo was taken (EXIF), nil if the file doesn't say. Older libraries fill it in on first launch.
+    var taken: Date? = nil
+}
+
+/// Photos exported together, for the "save all / share" sheet.
+struct BatchResult: Identifiable {
+    let id = UUID()
+    let urls: [URL]
 }
 
 private let thumbQueue = DispatchQueue(label: "lumen.thumbs", qos: .utility)
+private let exportQueue = DispatchQueue(label: "lumen.batch-export", qos: .userInitiated)
 
 /// Imported originals live in Documents/Library/files; edits are JSON sidecars in Documents/Library/edits.
 @MainActor
@@ -25,6 +35,11 @@ final class LibraryStore: ObservableObject {
     @Published var importing = false
     @Published var importTotal = 0
     @Published var importDone = 0
+    /// Batch export in progress (done, total), and its result.
+    @Published var batchProgress: (done: Int, total: Int)?
+    @Published var batchResult: BatchResult?
+    /// The order the library shows (date sorted); the editor's swipe / next / previous follow it.
+    @Published var browseOrder: [UUID] = []
     private var activeImports = 0
 
     private let fm = FileManager.default
@@ -46,6 +61,7 @@ final class LibraryStore: ObservableObject {
            let decoded = try? JSONDecoder().decode([LibraryItem].self, from: data) {
             items = decoded
         }
+        fillInDatesTaken()
         if let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
            let decoded = try? JSONDecoder().decode([UserPreset].self, from: data) {
             userPresets = decoded
@@ -114,6 +130,112 @@ final class LibraryStore: ObservableObject {
 
     func save(_ s: EditSettings, for item: LibraryItem) {
         if let data = try? JSONEncoder().encode(s) { try? data.write(to: editURL(item), options: .atomic) }
+    }
+
+    func delete(_ list: [LibraryItem]) {
+        for item in list { delete(item) }
+    }
+
+    /// Puts `edits` on every photo in `list`. `keepOwn` keeps each photo's own crop, straighten, rotation and masks
+    /// (those belong to one picture), so only the look is copied.
+    func apply(_ edits: EditSettings, to list: [LibraryItem], keepOwn: Bool) {
+        for item in list {
+            var s = edits
+            if keepOwn {
+                let own = settings(for: item)
+                s.masks = own.masks
+                s.straighten = own.straighten
+                s.quarterTurns = own.quarterTurns
+                s.cropAspect = own.cropAspect
+                s.cropL = own.cropL; s.cropT = own.cropT; s.cropR = own.cropR; s.cropB = own.cropB
+            }
+            save(s, for: item)
+            refreshThumbnail(item)
+        }
+    }
+
+    // MARK: Batch export
+
+    /// Exports every photo in `list` one after another in the background, then offers them in `batchResult`.
+    func export(_ list: [LibraryItem], options o: ExportOptions) {
+        guard batchProgress == nil, !list.isEmpty else { return }
+        batchProgress = (0, list.count)
+        let jobs = list.map { (url: fileURL($0), edits: settings(for: $0), name: $0.displayName) }
+        let dir = fm.temporaryDirectory.appendingPathComponent("lumen-export-\(UUID().uuidString)", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        exportQueue.async {
+            var urls: [URL] = []
+            var used = Set<String>()
+            for (n, job) in jobs.enumerated() {
+                autoreleasepool {
+                    guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr && o.hdr),
+                          let data = session.renderData(job.edits, format: o.format, quality: o.quality / 100,
+                                                        maxEdge: o.maxEdge, includeHDR: o.hdr) else { return }
+                    var name = job.name + "-lumen", k = 2
+                    while used.contains(name) { name = "\(job.name)-lumen-\(k)"; k += 1 }
+                    used.insert(name)
+                    let u = dir.appendingPathComponent("\(name).\(o.format.ext)")
+                    if (try? data.write(to: u, options: .atomic)) != nil { urls.append(u) }
+                }
+                Task { @MainActor [weak self] in self?.batchProgress = (n + 1, jobs.count) }
+            }
+            let done = urls
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.batchProgress = nil
+                if DemoMode.isOn { DemoMode.log("batch exported \(done.count) of \(jobs.count)") }
+                if done.count < jobs.count { self.lastError = "\(jobs.count - done.count) of \(jobs.count) photos could not be exported." }
+                if !done.isEmpty { self.batchResult = BatchResult(urls: done) }
+            }
+        }
+    }
+
+    /// Saves exported files to the Photos library. Returns a message for the user.
+    func saveToPhotos(_ urls: [URL]) async -> String {
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard status == .authorized || status == .limited else {
+            return "Photos access was denied. Enable it in Settings, or use Share → Save to Files."
+        }
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                for u in urls { PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: u, options: nil) }
+            }
+            return "Saved \(urls.count) photo\(urls.count == 1 ? "" : "s") to Photos."
+        } catch {
+            return "Couldn't save: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: Dates
+
+    /// When the photo was taken, from its EXIF (RAW files included); nil if the file doesn't say.
+    nonisolated static func dateTaken(_ url: URL) -> Date? {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return nil }
+        let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+        guard let text = (exif?[kCGImagePropertyExifDateTimeOriginal] as? String)
+                ?? (exif?[kCGImagePropertyExifDateTimeDigitized] as? String)
+                ?? (tiff?[kCGImagePropertyTIFFDateTime] as? String) else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        return f.date(from: text)
+    }
+
+    /// Libraries from before dates were kept: read them from the files once, in the background.
+    private func fillInDatesTaken() {
+        let missing = items.filter { $0.taken == nil }.map { (id: $0.id, url: fileURL($0)) }
+        guard !missing.isEmpty else { return }
+        thumbQueue.async {
+            let found = missing.compactMap { m in Self.dateTaken(m.url).map { (m.id, $0) } }
+            guard !found.isEmpty else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                for (id, d) in found { if let i = self.items.firstIndex(where: { $0.id == id }) { self.items[i].taken = d } }
+                self.saveIndex()
+            }
+        }
     }
 
     func delete(_ item: LibraryItem) {
@@ -227,8 +349,9 @@ final class LibraryStore: ObservableObject {
         let id = UUID()
         let ext = src.pathExtension.lowercased()
         let fileName = ext.isEmpty ? id.uuidString : "\(id.uuidString).\(ext)"
-        try fm.copyItem(at: src, to: filesDir.appendingPathComponent(fileName))
-        let item = LibraryItem(id: id, displayName: name, fileName: fileName, added: Date())
+        let dst = filesDir.appendingPathComponent(fileName)
+        try fm.copyItem(at: src, to: dst)
+        let item = LibraryItem(id: id, displayName: name, fileName: fileName, added: Date(), taken: Self.dateTaken(dst))
         items.insert(item, at: 0)
         saveIndex()
         refreshThumbnail(item)
