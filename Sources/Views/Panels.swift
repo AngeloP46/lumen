@@ -378,6 +378,7 @@ struct GradePanel: View {
                 HStack(alignment: .center, spacing: 14) {
                     ColorWheel(hue: zb(kp, \.hue), sat: zb(kp, \.sat))
                         .frame(width: wheel, height: wheel)
+                        .accessibilityElement(children: .ignore)
                         .accessibilityIdentifier("grade-wheel")
                     VStack(alignment: .leading, spacing: 10) {
                         Text(zones[i].0).font(.system(size: 15, weight: .semibold))
