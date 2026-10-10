@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 
 /// Builds the lazy Core Image graph for a set of edits. Nothing is rendered here, so this is cheap to call per slider tick.
 extension EditSession {
-    func develop(_ s: EditSettings, source: ImageSource, geometry: Bool, applyCrop: Bool = true, hdrWeight: Double = 0) -> CIImage {
+    func develop(_ edits: EditSettings, source: ImageSource, geometry: Bool, applyCrop: Bool = true, hdrWeight: Double = 0) -> CIImage {
+        // sections switched off in the Edits sheet render as if untouched
+        let s = edits.effective
         guard let k = LumenKernels.shared else { return source.base }
         let ext = source.extent
         let E = source.longEdge

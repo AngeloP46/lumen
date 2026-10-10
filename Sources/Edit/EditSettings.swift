@@ -95,6 +95,9 @@ struct BrushStroke: Codable, Equatable, Hashable {
     var points: [Pt]
     var size: Double   // brush diameter as a fraction of the long edge
     var erase: Bool
+    /// Softness this stroke was painted with (0...100). nil = older strokes: they follow the component's feather.
+    /// Changing the Feather slider only affects strokes painted afterwards.
+    var feather: Double?
 }
 
 struct ColorSample: Codable, Equatable, Hashable {
@@ -170,6 +173,7 @@ struct Mask: Codable, Equatable, Identifiable, Hashable {
 protocol DefaultValue { associatedtype Value: Codable & Equatable; static var value: Value { get } }
 enum DefaultFalse: DefaultValue { static let value = false }
 enum DefaultHDRStops: DefaultValue { static let value = 2.0 }
+enum DefaultNoSections: DefaultValue { static let value: [String] = [] }
 
 /// Decodes to the default when the key is absent, so sidecars and saved presets from before the key existed still load.
 @propertyWrapper
@@ -238,9 +242,86 @@ struct EditSettings: Codable, Equatable {
     var cropR: Double = 1
     var cropB: Double = 1
 
+    // Sections switched off in the Edits sheet (their values are kept, they just don't apply)
+    @Defaulted<DefaultNoSections> var disabled: [String]
+
     var hasCrop: Bool { cropL > 0 || cropT > 0 || cropR < 1 || cropB < 1 }
 
     var isDefault: Bool { self == EditSettings() }
+}
+
+// MARK: - Sections (Edits sheet: switch a tool's edits off / on, reset one tool)
+
+enum EditSection: String, CaseIterable, Identifiable {
+    case light = "Light", color = "Color", grade = "Grade", curve = "Curve", detail = "Detail", masks = "Masks", crop = "Crop"
+    var id: String { rawValue }
+    /// Crop can be reset but not switched off (masks and the crop frame are placed on the cropped photo).
+    var canSwitchOff: Bool { self != .crop }
+    var icon: String {
+        switch self {
+        case .light: "sun.max"
+        case .color: "thermometer.medium"
+        case .grade: "circle.hexagongrid"
+        case .curve: "point.topleft.down.curvedto.point.bottomright.up"
+        case .detail: "triangle"
+        case .masks: "circle.dashed.inset.filled"
+        case .crop: "crop.rotate"
+        }
+    }
+}
+
+extension EditSettings {
+    func isOn(_ s: EditSection) -> Bool { !disabled.contains(s.rawValue) }
+
+    mutating func setOn(_ s: EditSection, _ on: Bool) {
+        guard s.canSwitchOff else { return }
+        disabled.removeAll { $0 == s.rawValue }
+        if !on { disabled.append(s.rawValue) }
+    }
+
+    /// Puts one section back to its defaults (HDR is a photo-wide mode, not part of any section).
+    mutating func reset(_ s: EditSection) {
+        let d = EditSettings()
+        switch s {
+        case .light:
+            exposure = d.exposure; contrast = d.contrast; highlights = d.highlights
+            shadows = d.shadows; whites = d.whites; blacks = d.blacks
+        case .color:
+            temperature = d.temperature; tint = d.tint; vibrance = d.vibrance; saturation = d.saturation
+            blackAndWhite = d.blackAndWhite; hsl = d.hsl
+        case .grade:
+            grading = d.grading
+        case .curve:
+            curves = d.curves
+        case .detail:
+            texture = d.texture; clarity = d.clarity; dehaze = d.dehaze
+            vignette = d.vignette; vignetteMidpoint = d.vignetteMidpoint; vignetteFeather = d.vignetteFeather
+            vignetteRoundness = d.vignetteRoundness
+            grain = d.grain; grainSize = d.grainSize; grainRoughness = d.grainRoughness
+            sharpness = d.sharpness; sharpenMasking = d.sharpenMasking
+            noiseReduction = d.noiseReduction; colorNoise = d.colorNoise
+        case .masks:
+            masks = d.masks
+        case .crop:
+            straighten = d.straighten; quarterTurns = d.quarterTurns; cropAspect = d.cropAspect
+            cropL = d.cropL; cropT = d.cropT; cropR = d.cropR; cropB = d.cropB
+        }
+    }
+
+    func hasEdits(_ s: EditSection) -> Bool {
+        var c = self
+        c.reset(s)
+        return c != self
+    }
+
+    /// What actually gets rendered: switched-off sections count as untouched.
+    var effective: EditSettings {
+        guard !disabled.isEmpty else { return self }
+        var e = self
+        for s in EditSection.allCases where s.canSwitchOff && !isOn(s) { e.reset(s) }
+        e.disabled = []
+        return e
+    }
 }
 
 // MARK: - Presets
