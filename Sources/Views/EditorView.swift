@@ -312,25 +312,13 @@ struct EditorView: View {
 
     // MARK: Canvas
 
-    /// The photo sits directly on top of the panel: any spare height goes above it, under the floating buttons and the
-    /// histogram, instead of a black gap between the photo and the panel (owner's request 2026-10-10). Masks and Crop
-    /// keep the whole area so handles and the crop frame have room around the photo.
-    private func topSpare(_ size: CGSize) -> CGFloat {
-        guard !chromeHidden, tool != .masks, tool != .crop,
-              vm.imageSize.width > 0, vm.imageSize.height > 0, size.width > 0, size.height > 0 else { return 0 }
-        let fit = min(size.width / vm.imageSize.width, size.height / vm.imageSize.height)
-        let spare = size.height - vm.imageSize.height * fit
-        return spare > 2 ? floor(spare) : 0
-    }
+    /// The photo sits directly on top of the panel (spare height above it, under the floating buttons and the
+    /// histogram) and grows upwards into that space when zoomed. Masks and Crop keep it centred, so handles and the crop
+    /// frame have room all round.
+    private var alignBottom: Bool { !chromeHidden && tool != .masks && tool != .crop }
 
     private var canvas: some View {
-        GeometryReader { outer in
-            let top = topSpare(outer.size)
-            VStack(spacing: 0) {
-                Color.black.frame(height: top)
-                photoArea
-            }
-        }
+        photoArea
         .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
         .overlay(alignment: .topLeading) {
             if showHistogram && !chromeHidden {
@@ -351,7 +339,7 @@ struct EditorView: View {
 
     private var photoArea: some View {
         GeometryReader { geo in
-            let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan)
+            let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan, bottomAlign: alignBottom)
             let origin = geo.frame(in: .global).origin
             ZStack {
                 Color.black
@@ -531,7 +519,7 @@ struct EditorView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityIdentifier("photo")
             .accessibilityLabel(item.displayName)
-            .accessibilityValue("zoom \(String(format: "%.1f", Double(zoom))) original \(vm.showOriginal) chrome \(chromeHidden ? "hidden" : "shown") overlay \(vm.overlayVisible) image \(Int(vm.imageSize.width))x\(Int(vm.imageSize.height))")
+            .accessibilityValue("zoom \(String(format: "%.1f", Double(zoom))) original \(vm.showOriginal) chrome \(chromeHidden ? "hidden" : "shown") overlay \(vm.overlayVisible) image \(Int(vm.imageSize.width))x\(Int(vm.imageSize.height)) drawn \(Int(xform.rect.minY)) \(Int(xform.rect.maxY)) of \(Int(xform.canvas.height))")
             .gesture(
                 SpatialTapGesture(count: 2)
                     .exclusively(before: TapGesture(count: 1))
@@ -596,12 +584,22 @@ struct EditorView: View {
     }
 
     /// Zooms to `z` keeping the image point under `anchor` where it was.
+    /// How far below the view's centre the photo's centre sits at zoom `z` (photo resting on the panel), before panning.
+    private func drop(_ z: CGFloat, _ xf: ViewXform) -> CGFloat {
+        var x = xf
+        x.zoom = z
+        x.pan = .zero
+        return x.rect.midY - xf.canvas.height / 2
+    }
+
     private func setZoom(_ z: CGFloat, anchor: CGPoint, from base: (zoom: CGFloat, pan: CGSize), _ xf: ViewXform) {
         let nz = min(max(z, minZoom), maxZoom)
         let c = CGPoint(x: xf.canvas.width / 2, y: xf.canvas.height / 2)
         let ratio = nz / base.zoom
-        let dx = anchor.x - c.x, dy = anchor.y - c.y
-        let p = CGSize(width: dx - (dx - base.pan.width) * ratio, height: dy - (dy - base.pan.height) * ratio)
+        let dx = anchor.x - c.x
+        // the photo point under the anchor stays under it (allowing for the photo resting on the panel)
+        let qy = (anchor.y - c.y - drop(base.zoom, xf) - base.pan.height) / base.zoom
+        let p = CGSize(width: dx - (dx - base.pan.width) * ratio, height: anchor.y - c.y - drop(nz, xf) - qy * nz)
         zoom = nz
         pan = clampPan(p, zoom: nz, xf)
     }
@@ -629,9 +627,10 @@ struct EditorView: View {
             // a little give past the limits while the fingers are down; it settles back when they lift
             let z = min(max(b.zoom * spread / b.spread, minZoom * 0.8), maxZoom * 1.15)
             let c = CGPoint(x: xf.canvas.width / 2, y: xf.canvas.height / 2)
-            let qx = (b.centre.x - c.x - b.pan.width) / b.zoom, qy = (b.centre.y - c.y - b.pan.height) / b.zoom
+            let qx = (b.centre.x - c.x - b.pan.width) / b.zoom
+            let qy = (b.centre.y - c.y - drop(b.zoom, xf) - b.pan.height) / b.zoom
             zoom = z
-            pan = clampPan(CGSize(width: p.x - c.x - qx * z, height: p.y - c.y - qy * z), zoom: z, xf)
+            pan = clampPan(CGSize(width: p.x - c.x - qx * z, height: p.y - c.y - drop(z, xf) - qy * z), zoom: z, xf)
         case .ended:
             vm.pinching = false
             guard twoFinger != nil else { return }

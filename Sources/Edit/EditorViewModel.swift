@@ -121,7 +121,19 @@ final class EditorViewModel: ObservableObject {
         started = true
         self.store = store
         applyingHistory = true
-        settings = store.settings(for: item)
+        var loaded = store.settings(for: item)
+        // brush strokes painted before strokes kept their own softness: fix them at the softness they show now,
+        // so moving the Feather slider never changes strokes already on the photo
+        for mi in loaded.masks.indices {
+            for ci in loaded.masks[mi].components.indices where loaded.masks[mi].components[ci].kind == .brush {
+                let f = loaded.masks[mi].components[ci].feather
+                for si in loaded.masks[mi].components[ci].strokes.indices
+                where loaded.masks[mi].components[ci].strokes[si].feather == nil {
+                    loaded.masks[mi].components[ci].strokes[si].feather = f
+                }
+            }
+        }
+        settings = loaded
         applyingHistory = false
         let url = store.fileURL(item)
         let wantsHDR = settings.hdr

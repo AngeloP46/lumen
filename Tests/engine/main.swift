@@ -974,5 +974,54 @@ do {
     } else { check(false, "SourceGeometry check: no photo could be opened") }
 }
 
+// UI refresh (2026-10-10): a switched-off tool renders as untouched; brush strokes keep their own softness
+do {
+    if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f),
+       let source = session.makeSource(maxEdge: 900, materialize: true) {
+        var on = EditSettings(); on.exposure = 1.2; on.contrast = 40
+        var off = on; off.setOn(.light, false)
+        check(off.exposure == 1.2 && off.effective.exposure == 0, "switching Light off keeps its values but does not apply them")
+        check(on.hasEdits(.light) && !on.hasEdits(.grade), "hasEdits should see Light edits and no Grade edits")
+        var back = off; back.setOn(.light, true)
+        check(back.effective.exposure == 1.2, "switching Light back on applies it again")
+        if let a = smallRender(session.develop(off, source: source, geometry: true)),
+           let b = smallRender(session.develop(EditSettings(), source: source, geometry: true)),
+           let c = smallRender(session.develop(on, source: source, geometry: true)),
+           let ab = compareImages(a, b), let ac = compareImages(a, c) {
+            check(ab.all < 0.5, "Light switched off should render like no Light edits (mean difference \(ab.all))")
+            check(ac.all > 2, "Light switched off should look different from Light on (mean difference \(ac.all))")
+        } else { check(false, "edit sections: a render failed") }
+
+        // two strokes, one hard (feather 0) on the left and one soft (feather 100) on the right
+        func row(_ comp: MaskComponent) -> [Float]? {
+            let m = Mask(name: "b", components: [comp])
+            guard let img = session.maskImage(m, source: source, gain: 1), let mv = maskValues(img, width: 300) else { return nil }
+            let y = mv.h / 2
+            return Array(mv.v[(y * mv.w)..<((y + 1) * mv.w)])
+        }
+        var comp = MaskComponent.make(.brush)
+        comp.feather = 50
+        comp.strokes = [BrushStroke(points: [Pt(x: 0.15, y: 0.5), Pt(x: 0.3, y: 0.5)], size: 0.06, erase: false, feather: 0),
+                        BrushStroke(points: [Pt(x: 0.65, y: 0.5), Pt(x: 0.8, y: 0.5)], size: 0.06, erase: false, feather: 100)]
+        if let r = row(comp) {
+            let half = r.count / 2
+            let soft = { (vals: ArraySlice<Float>) in vals.filter { $0 > 0.08 && $0 < 0.92 }.count }
+            let hardEdge = soft(r[0..<half]), softEdge = soft(r[half...])
+            check(softEdge > hardEdge + 3, "a stroke painted with Feather 100 should have a softer edge than one painted with 0 (\(softEdge) vs \(hardEdge) partly-covered pixels)")
+            check((r[0..<half].max() ?? 0) > 0.9, "the hard stroke should be fully painted (max \(r[0..<half].max() ?? 0))")
+        } else { check(false, "brush feather: mask render failed") }
+
+        // paint (soft), then erase the middle with a different softness: the erased part must be gone
+        var comp2 = MaskComponent.make(.brush)
+        comp2.strokes = [BrushStroke(points: [Pt(x: 0.1, y: 0.5), Pt(x: 0.9, y: 0.5)], size: 0.1, erase: false, feather: 30),
+                         BrushStroke(points: [Pt(x: 0.45, y: 0.5), Pt(x: 0.55, y: 0.5)], size: 0.12, erase: true, feather: 0)]
+        if let r = row(comp2) {
+            let n = r.count
+            check(r[n / 2] < 0.1, "erasing with a different Feather should still remove the paint (centre \(r[n / 2]))")
+            check(r[n / 4] > 0.85, "paint away from the eraser should stay (quarter \(r[n / 4]))")
+        } else { check(false, "brush erase: mask render failed") }
+    } else { check(false, "UI refresh checks: no photo could be opened") }
+}
+
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
 finishChecks()

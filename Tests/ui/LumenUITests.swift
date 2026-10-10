@@ -889,4 +889,26 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(el("mask-rotate").exists, "radial mask should have a turn handle")
         shot("radial-handles")
     }
+
+    /// "drawn <top> <bottom> of <view height>" from the photo's accessibility value.
+    func drawn() -> (top: Int, bottom: Int, height: Int)? {
+        let parts = valueOf("photo").split(separator: " ")
+        guard let i = parts.firstIndex(of: "drawn"), parts.count > i + 4,
+              let t = Int(parts[i + 1]), let b = Int(parts[i + 2]), let h = Int(parts[i + 4]) else { return nil }
+        return (t, b, h)
+    }
+
+    func testPhotoRestsOnThePanelAndGrowsUpwardsWhenZoomed() {
+        launch(open: 0, tool: "Light")
+        guard let d0 = drawn() else { return XCTFail("photo should report where it is drawn: \(valueOf("photo"))") }
+        XCTAssertEqual(d0.bottom, d0.height, accuracy: 2, "at fit the photo should sit on the panel, not leave a gap (\(d0))")
+        XCTAssertGreaterThan(d0.top, 10, "a landscape photo leaves space above it (\(d0))")
+        el("photo").pinch(withScale: 2.5, velocity: 2)
+        sleep(1)
+        guard let d1 = drawn() else { return XCTFail("no drawn value after zoom") }
+        XCTAssertGreaterThan(zoomLevel(), 1.5, "the pinch should zoom in")
+        XCTAssertLessThanOrEqual(d1.top, 2, "zoomed in, the photo should grow up into the free space (\(d1))")
+        XCTAssertGreaterThanOrEqual(d1.bottom, d1.height - 2, "and still reach the panel (\(d1))")
+        shot("zoomed-fills-height")
+    }
 }

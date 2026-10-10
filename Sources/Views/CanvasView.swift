@@ -8,12 +8,17 @@ struct ViewXform: Equatable {
     var image: CGSize
     var zoom: CGFloat = 1
     var pan: CGSize = .zero
+    /// The photo sits on the bottom edge (on top of the panel) while it is shorter than the view, and grows upwards into
+    /// the free space as it is zoomed; once it is taller than the view it is centred as usual (owner's request 2026-10-10).
+    var bottomAlign = false
 
     var rect: CGRect {
         guard image.width > 0, image.height > 0, canvas.width > 0, canvas.height > 0 else { return .zero }
         let s = min(canvas.width / image.width, canvas.height / image.height) * zoom
         let w = image.width * s, h = image.height * s
-        return CGRect(x: canvas.width / 2 + pan.width - w / 2, y: canvas.height / 2 + pan.height - h / 2, width: w, height: h)
+        let drop = bottomAlign ? max((canvas.height - h) / 2, 0) : 0
+        return CGRect(x: canvas.width / 2 + pan.width - w / 2, y: canvas.height / 2 + pan.height - h / 2 + drop,
+                      width: w, height: h)
     }
 
     /// Normalised (0...1, top-left origin) -> canvas point.
