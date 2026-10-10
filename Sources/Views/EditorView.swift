@@ -387,7 +387,8 @@ struct EditorView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("canvas")
             // two fingers pinch and pan together over every tool except Crop (including the mask overlay)
-            .gesture(TwoFingerGesture { phase, p, d in
+            // simultaneous: a finger that lands on a mask handle or the crop frame must not stop a two-finger pinch
+            .simultaneousGesture(TwoFingerGesture { phase, p, d in
                 twoFingers(phase, CGPoint(x: p.x - origin.x, y: p.y - origin.y), d, xform)
             })
             // fallback pinch in case the watcher above never sees the fingers
@@ -618,6 +619,7 @@ struct EditorView: View {
         guard tool != .crop, xf.image != .zero else { return }
         switch phase {
         case .began:
+            vm.pinching = true
             if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
             twoFinger = (zoom, pan, p, spread)
             panBase = nil
@@ -632,6 +634,7 @@ struct EditorView: View {
             zoom = z
             pan = clampPan(CGSize(width: p.x - c.x - qx * z, height: p.y - c.y - qy * z), zoom: z, xf)
         case .ended:
+            vm.pinching = false
             guard twoFinger != nil else { return }
             twoFinger = nil
             lastPinchEnd = Date()

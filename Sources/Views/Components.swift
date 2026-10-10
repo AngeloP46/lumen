@@ -344,13 +344,14 @@ struct SectionHeading: View {
                 .font(.system(size: 11, weight: .semibold))
                 .tracking(0.6)
                 .foregroundStyle(Color(white: 0.5))
+                // on the text only: an identifier on the whole row would rename the accessory button inside it
+                .accessibilityIdentifier("section-\(title)")
             Spacer()
             if let accessory { accessory }
         }
         .padding(.horizontal, 14)
         .frame(height: 28, alignment: .bottom)
         .padding(.bottom, 2)
-        .accessibilityIdentifier("section-\(title)")
     }
 }
 

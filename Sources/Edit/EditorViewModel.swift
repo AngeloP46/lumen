@@ -57,6 +57,8 @@ final class EditorViewModel: ObservableObject {
     @Published var brushErase = false
     @Published var colorAddMode = false
     @Published var colorMix = false           // Color tool is showing the colour mixer
+    /// Two fingers are on the photo: mask handles ignore the drag (the fingers are zooming, not moving the mask).
+    var pinching = false
     @Published var panMode = false          // single finger pans the zoomed photo instead of painting / dragging handles
     private var strokeStart: Date?
     private var strokeOpen = false

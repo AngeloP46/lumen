@@ -568,6 +568,7 @@ struct MaskOverlay: View {
             Color.clear.contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                     .onChanged { v in
+                    guard !vm.pinching else { return }
                         cursor = v.location
                         guard xform.rect.contains(v.location) else { return }
                         let p = norm(v.location)
@@ -585,7 +586,8 @@ struct MaskOverlay: View {
         HandleDot()
             .position(p)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
-                .onChanged { v in onDrag(v.location) })
+                .onChanged { v in
+                    guard !vm.pinching else { return }; onDrag(v.location) })
     }
 
     @ViewBuilder
@@ -618,6 +620,7 @@ struct MaskOverlay: View {
         RotateDot().position(knob)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { v in
+                    guard !vm.pinching else { return }
                     let fx = v.location.x - mid.x, fy = v.location.y - mid.y
                     let fl = hypot(fx, fy)
                     guard fl > 8 else { return }
@@ -634,6 +637,7 @@ struct MaskOverlay: View {
         PinDot().position(mid)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { v in
+                    guard !vm.pinching else { return }
                     let m = free(v.location)
                     let cx = (c.x0 + c.x1) / 2, cy = (c.y0 + c.y1) / 2
                     let ddx = m.x - cx, ddy = m.y - cy
@@ -665,13 +669,15 @@ struct MaskOverlay: View {
             .allowsHitTesting(false)
         PinDot().position(centre)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
-                .onChanged { v in let p = free(v.location); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } })
+                .onChanged { v in
+                    guard !vm.pinching else { return }; let p = free(v.location); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } })
             .accessibilityElement(children: .ignore)
             .accessibilityIdentifier("mask-pin")
         // turn: a knob just outside the top of the ellipse; drag it round the centre
         RotateDot().position(CGPoint(x: centre.x - v.x * (ry + 34), y: centre.y - v.y * (ry + 34)))
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { g in
+                    guard !vm.pinching else { return }
                     let fx = g.location.x - centre.x, fy = g.location.y - centre.y
                     guard hypot(fx, fy) > 12 else { return }
                     // the knob sits along -v, i.e. at (screen angle - 90°); an ellipse looks the same turned 180°
