@@ -57,6 +57,9 @@ jobs:
           code=$?
           grep -E "Test Case|error:|XCTAssert|Executed|TEST (SUCCEEDED|FAILED)|BUILD (SUCCEEDED|FAILED)" uiout/xcodebuild.log | head -300
           echo "xcodebuild exit code: $code"
+          # failures as annotations too, so they can be read through the API without downloading logs
+          grep -E "error:|Test Case .* failed" uiout/xcodebuild.log | sed -E 's#^/[^:]*/##' | sort -u \
+            | head -40 | while IFS= read -r line; do echo "::error::${line:0:900}"; done
           exit "$code"
       - uses: actions/upload-artifact@v4
         if: always()
