@@ -215,6 +215,8 @@ struct ParamItem: Identifiable {
     var track: [Color]?
     var tint: Color?
     var dot: Color?
+    /// Small heading shown above the first slider of a group in the full list (e.g. "Sharpening").
+    var section: String?
 
     var isNeutral: Bool { abs(value.wrappedValue - (neutral ?? (range.contains(0) ? 0 : range.lowerBound))) < 0.0001 }
     var display: String {
@@ -230,6 +232,9 @@ struct ParamPanel: View {
     let items: [ParamItem]
     @Binding var selected: String
     var header: AnyView?
+    /// Extra control shown beside a section heading (e.g. the white balance picker next to "White balance").
+    /// In the one-at-a-time layout, where there are no headings, it sits in the chip row instead.
+    var accessories: [String: AnyView] = [:]
     @Environment(\.sliderLayout) private var layout
     @Environment(\.listRowHeight) private var rowHeight
     @State private var sliding = false
@@ -251,34 +256,11 @@ struct ParamPanel: View {
                 if let header {
                     header.padding(.horizontal, 14).padding(.bottom, 4)
                 }
-                ForEach(items) { it in
-                    HStack(spacing: 8) {
-                        HStack(spacing: 5) {
-                            if let dot = it.dot { Circle().fill(dot).frame(width: 8, height: 8) }
-                            Text(it.title).font(.system(size: 13)).lineLimit(1)
-                        }
-                        .frame(width: 80, alignment: .leading)
-                        .foregroundStyle(Color(white: 0.82))
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2) { reset(it) }
-                        ScrubSlider(value: it.value, range: it.range, neutral: it.neutral, decimals: it.decimals,
-                                    track: it.track, height: 34, bubble: false, onActive: { sliding = $0 }, axID: it.id)
-                        // the value doubles as a reset button once the slider has been moved
-                        Button { reset(it) } label: {
-                            HStack(spacing: 3) {
-                                if !it.isNeutral { Image(systemName: "arrow.counterclockwise").font(.system(size: 9, weight: .bold)) }
-                                Text(it.display).font(.system(size: 13, weight: .medium).monospacedDigit())
-                            }
-                            .foregroundStyle(it.isNeutral ? Color.secondary : Theme.accent)
-                            .frame(width: 58, height: rowHeight, alignment: .trailing)
-                            .contentShape(Rectangle())
-                        }
-                        .disabled(it.isNeutral)
-                        .accessibilityIdentifier("reset-\(it.id)")
-                        .accessibilityValue(it.display)
+                ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
+                    if let sec = it.section, i == 0 || items[i - 1].section != sec {
+                        SectionHeading(title: sec, accessory: accessories[sec])
                     }
-                    .padding(.horizontal, 14)
-                    .frame(height: rowHeight)
+                    SliderRow(item: it, height: rowHeight, onActive: { sliding = $0 }, reset: { reset(it) })
                 }
             }
             .padding(.vertical, 4)
@@ -295,11 +277,13 @@ struct ParamPanel: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         if let header { header }
+                        ForEach(Array(accessories.keys.sorted()), id: \.self) { k in accessories[k] }
                         ForEach(items) { it in
                             Button { selected = it.id } label: {
                                 VStack(spacing: 1) {
                                     HStack(spacing: 4) {
                                         if let dot = it.dot { Circle().fill(dot).frame(width: 8, height: 8) }
+                                        else if !it.isNeutral { EditedDot() }
                                         Text(it.title).font(.system(size: 12, weight: .medium))
                                     }
                                     Text(it.display)
@@ -340,6 +324,75 @@ struct ParamPanel: View {
             }
         }
         .padding(.top, 4)
+    }
+}
+
+// MARK: - Shared slider row (every slider page uses this, so they all look and behave the same)
+
+/// Small accent dot: "this has been changed from its default".
+struct EditedDot: View {
+    var body: some View { Circle().fill(Theme.accent).frame(width: 5, height: 5) }
+}
+
+/// Group heading inside a slider list.
+struct SectionHeading: View {
+    let title: String
+    var accessory: AnyView?
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(Color(white: 0.5))
+            Spacer()
+            if let accessory { accessory }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 28, alignment: .bottom)
+        .padding(.bottom, 2)
+        .accessibilityIdentifier("section-\(title)")
+    }
+}
+
+/// Name (with a dot once changed) · slider · value. Tapping the value, or double-tapping the name or the slider,
+/// resets it.
+struct SliderRow: View {
+    let item: ParamItem
+    var height: CGFloat = 40
+    var labelWidth: CGFloat = 84
+    var inset: CGFloat = 14
+    var onActive: ((Bool) -> Void)?
+    let reset: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 5) {
+                if let dot = item.dot { Circle().fill(dot).frame(width: 8, height: 8) }
+                Text(item.title).font(.system(size: 13)).lineLimit(1).minimumScaleFactor(0.8)
+                if item.dot == nil && !item.isNeutral { EditedDot() }
+            }
+            .frame(width: labelWidth, alignment: .leading)
+            .foregroundStyle(item.isNeutral ? Color(white: 0.75) : Color.white)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { reset() }
+            ScrubSlider(value: item.value, range: item.range, neutral: item.neutral, decimals: item.decimals,
+                        track: item.track, height: 34, bubble: false, onActive: onActive, axID: item.id)
+            // the value doubles as a reset button once the slider has been moved
+            Button(action: reset) {
+                HStack(spacing: 3) {
+                    if !item.isNeutral { Image(systemName: "arrow.counterclockwise").font(.system(size: 9, weight: .bold)) }
+                    Text(item.display).font(.system(size: 13, weight: .medium).monospacedDigit())
+                }
+                .foregroundStyle(item.isNeutral ? Color.secondary : Theme.accent)
+                .frame(width: 58, height: max(height, 34), alignment: .trailing)
+                .contentShape(Rectangle())
+            }
+            .disabled(item.isNeutral)
+            .accessibilityIdentifier("reset-\(item.id)")
+            .accessibilityValue(item.display)
+        }
+        .padding(.horizontal, inset)
+        .frame(height: height)
     }
 }
 
@@ -452,4 +505,8 @@ enum Tracks {
     static let tint: [Color] = [Color(red: 0.2, green: 0.8, blue: 0.3), Color(red: 0.9, green: 0.2, blue: 0.8)]
     static let hue: [Color] = (0...12).map { Color(hue: Double($0) / 12, saturation: 0.85, brightness: 1) }
     static let saturation: [Color] = [.gray, Color(red: 1, green: 0.3, blue: 0.3)]
+    /// Grey to colour, softer than Saturation (Vibrance lifts the duller colours most).
+    static let vibrance: [Color] = [Color(white: 0.45), Color(red: 0.95, green: 0.55, blue: 0.35)]
+    static let fullSaturation: [Color] = [Color(white: 0.45), Color(red: 1, green: 0.2, blue: 0.35),
+                                          Color(red: 1, green: 0.75, blue: 0.1)]
 }

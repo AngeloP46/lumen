@@ -17,6 +17,8 @@ private enum Tool: String, CaseIterable, Identifiable {
         case .masks: return "circle.dashed.inset.filled"
         }
     }
+    /// The part of the edit this tool owns (Presets owns none).
+    var section: EditSection? { EditSection(rawValue: rawValue) }
 }
 
 /// What a tool needs: heights for the compact and roomy forms, and for slider tools the row count and header height.
@@ -47,6 +49,8 @@ struct EditorView: View {
     @State private var tool: Tool? = Tool(rawValue: DemoMode.value("-lumenDemoTool") ?? "") ?? .light
     @State private var chromeHidden = false
     @State private var showExportChoices = false
+    @State private var showEdits = false
+    @State private var wbMark: CGPoint?
 
     // panel height the user chose by dragging the handle (per tool); nil = automatic
     @State private var panelUser: [String: CGFloat] = [:]
@@ -101,6 +105,8 @@ struct EditorView: View {
         }
         .onDisappear { vm.flushSave(); store.refreshThumbnail(item) }
         .onChange(of: tool) { _, new in
+            vm.wbPicking = false
+            wbMark = nil
             vm.maskEditing = (new == .masks)
             vm.cropEditing = (new == .crop)
             vm.panMode = false
@@ -126,6 +132,8 @@ struct EditorView: View {
             ExportOptionsSheet(count: 1, hdrAvailable: vm.settings.hdr) { vm.export($0) }
         }
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
+        .sheet(isPresented: $showEdits) { EditsSheet(vm: vm) }
+        .onChange(of: vm.wbPicking) { _, on in if !on { wbMark = nil } }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },
                                              set: { if !$0 { vm.message = nil } })) {
             Button("OK", role: .cancel) {}
@@ -144,13 +152,13 @@ struct EditorView: View {
         case .color:
             // the colour mixer has a row of swatches above its three sliders
             return vm.colorMix ? ToolSpec(compact: 150, roomy: 0, rows: 3, header: 44 + 46)
-                               : ToolSpec(compact: 100, roomy: 0, rows: 4, header: 44)
-        case .detail: return ToolSpec(compact: 100, roomy: 0, rows: 14, header: 44)
+                               : ToolSpec(compact: 100, roomy: 0, rows: 4, header: 44 + 2 * 30)
+        case .detail: return ToolSpec(compact: 100, roomy: 0, rows: 14, header: 44 + 5 * 30)
         case .masks:
             if vm.settings.masks.isEmpty || vm.selectedMask == nil { return ToolSpec(compact: 150, roomy: 176) }
             // header rows (mask chips + Shape/Adjust tabs) sit above the sliders; the list also has a Reset row
             return vm.maskTab == .shape ? ToolSpec(compact: 250, roomy: 330)
-                                        : ToolSpec(compact: 190, roomy: 0, rows: 14, header: 82 + 44)
+                                        : ToolSpec(compact: 190, roomy: 0, rows: 14, header: 82 + 44 + 4 * 30)
         }
     }
 
@@ -241,6 +249,19 @@ struct EditorView: View {
             )
             .onTapGesture(count: 2) { withAnimation(.easeOut(duration: 0.2)) { panelUser[plan.key] = nil } }
 
+            if let sec = t.section, !vm.settings.isOn(sec) {
+                HStack(spacing: 8) {
+                    Image(systemName: "eye.slash").font(.system(size: 12))
+                    Text("\(sec.rawValue) is switched off").font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    Button("Turn on") { vm.settings.setOn(sec, true) }
+                        .font(.system(size: 12, weight: .semibold))
+                        .accessibilityIdentifier("section-turn-on")
+                }
+                .foregroundStyle(Color(white: 0.8))
+                .padding(.horizontal, 14).frame(height: 30)
+                .background(Color.orange.opacity(0.18))
+            }
             panel(for: t)
                 .environment(\.sliderLayout, plan.layout)
                 .environment(\.listRowHeight, plan.rowHeight)
@@ -291,7 +312,44 @@ struct EditorView: View {
 
     // MARK: Canvas
 
+    /// The photo sits directly on top of the panel: any spare height goes above it, under the floating buttons and the
+    /// histogram, instead of a black gap between the photo and the panel (owner's request 2026-10-10). Masks and Crop
+    /// keep the whole area so handles and the crop frame have room around the photo.
+    private func topSpare(_ size: CGSize) -> CGFloat {
+        guard !chromeHidden, tool != .masks, tool != .crop,
+              vm.imageSize.width > 0, vm.imageSize.height > 0, size.width > 0, size.height > 0 else { return 0 }
+        let fit = min(size.width / vm.imageSize.width, size.height / vm.imageSize.height)
+        let spare = size.height - vm.imageSize.height * fit
+        return spare > 2 ? floor(spare) : 0
+    }
+
     private var canvas: some View {
+        GeometryReader { outer in
+            let top = topSpare(outer.size)
+            VStack(spacing: 0) {
+                Color.black.frame(height: top)
+                photoArea
+            }
+        }
+        .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
+        .overlay(alignment: .topLeading) {
+            if showHistogram && !chromeHidden {
+                VStack(alignment: .leading, spacing: 3) {
+                    HistogramView(data: vm.histogram).frame(width: vm.settings.hdr ? 124 : 90, height: 40)
+                        .accessibilityIdentifier("histogram")
+                    // RAW or not: a JPEG has no hidden highlight detail for Highlights or HDR to bring back
+                    Text(vm.fileKind).font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.white.opacity(0.75))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.black.opacity(0.35), in: Capsule())
+                        .accessibilityIdentifier("file-kind")
+                }
+                .padding(.leading, 10).padding(.top, 50)
+                .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var photoArea: some View {
         GeometryReader { geo in
             let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan)
             let origin = geo.frame(in: .global).origin
@@ -308,6 +366,7 @@ struct EditorView: View {
                             // hidden (not removed, so a drag in progress survives) while the original is showing
                             .opacity(vm.showOriginal ? 0 : 1)
                     }
+                    if tool == .color && vm.wbPicking && !vm.colorMix { wbLayer(xform) }
                 }
                 if vm.isLoading || vm.isExporting { ProgressView().tint(.white) }
                 if vm.detailLoading && zoom > 1.4 {
@@ -336,27 +395,19 @@ struct EditorView: View {
             // press and hold = the original, in every tool but Crop and the mask Shape tab (there a finger places the
             // mask: handles, brush, picks, and a pause before dragging used to flick to the original)
             .simultaneousGesture(holdGesture, including: canCompare ? .all : .none)
-            .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
-            .overlay(alignment: .topLeading) {
-                if showHistogram && !chromeHidden {
-                    VStack(alignment: .leading, spacing: 3) {
-                        HistogramView(data: vm.histogram).frame(width: vm.settings.hdr ? 124 : 90, height: 40)
-                            .accessibilityIdentifier("histogram")
-                        // RAW or not: a JPEG has no hidden highlight detail for Highlights or HDR to bring back
-                        Text(vm.fileKind).font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.white.opacity(0.75))
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Color.black.opacity(0.35), in: Capsule())
-                            .accessibilityIdentifier("file-kind")
-                    }
-                    .padding(.leading, 10).padding(.top, 50)
-                    .allowsHitTesting(false)
-                }
-            }
             .overlay(alignment: .bottomLeading) {
                 if vm.settings.hdr && !chromeHidden && tool != .crop {
                     Text(vm.hdrBadge).accessibilityIdentifier("hdr-badge").font(.caption2.bold())
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(.ultraThinMaterial, in: Capsule()).padding(10)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .top) {
+                if tool == .color && vm.wbPicking && !vm.colorMix && !vm.showOriginal {
+                    Text("Tap something that should be white or grey").font(.caption2.bold())
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(.ultraThinMaterial, in: Capsule()).padding(8)
                         .allowsHitTesting(false)
                 }
             }
@@ -370,12 +421,46 @@ struct EditorView: View {
         }
     }
 
+    /// Color tool, white balance picker on: a tap on the photo makes that spot neutral.
+    private func wbLayer(_ xform: ViewXform) -> some View {
+        let sg = SourceGeometry(source: vm.sourceSize, settings: vm.settings)
+        return ZStack {
+            Color.clear.contentShape(Rectangle())
+                .gesture(SpatialTapGesture().onEnded { v in
+                    guard xform.rect.contains(v.location) else { return }
+                    let p = sg.toSource(xform.unclamped(v.location, limit: -10...10))
+                    vm.pickWhiteBalance(at: Pt(x: min(max(p.x, 0), 1), y: min(max(p.y, 0), 1)))
+                    wbMark = v.location
+                })
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("wb-layer")
+            if let m = wbMark {
+                Circle().stroke(Color.white, lineWidth: 2).frame(width: 30, height: 30)
+                    .overlay(Circle().stroke(Color.black.opacity(0.5), lineWidth: 1).frame(width: 33, height: 33))
+                    .position(m).allowsHitTesting(false)
+            }
+        }
+    }
+
     // MARK: Floating top buttons
 
     private var floatingBar: some View {
         HStack(spacing: 8) {
             FloatButton(system: "chevron.left") { dismiss() }.accessibilityIdentifier("btn-back")
+            // HDR is a photo-wide mode, so it sits up here rather than inside the Light page
+            Button { vm.settings.hdr.toggle() } label: {
+                Text("HDR").font(.system(size: 13, weight: .bold))
+                    .padding(.horizontal, 12).frame(height: 36)
+                    .background(vm.settings.hdr ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
+                    .background(Color.black.opacity(vm.settings.hdr ? 0 : 0.25), in: Capsule())
+                    .foregroundStyle(.white)
+            }
+            .accessibilityIdentifier("pill-hdr")
+            .accessibilityValue(vm.settings.hdr ? "on" : "off")
             Spacer()
+            // every tool's edits: switch one off to compare, reset one, or reset all
+            FloatButton(system: "switch.2", active: !vm.settings.disabled.isEmpty) { showEdits = true }
+                .accessibilityIdentifier("btn-edits")
             FloatButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }.accessibilityIdentifier("btn-undo")
             FloatButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }.accessibilityIdentifier("btn-redo")
             // Export has its own button: it used to be the last entry of a long menu that could not always be scrolled.
@@ -606,15 +691,25 @@ struct EditorView: View {
         HStack(spacing: 0) {
             ForEach(Tool.allCases) { t in
                 Button { withAnimation(.easeOut(duration: 0.15)) { tool = (tool == t) ? nil : t } } label: {
+                    let sec = t.section
+                    let off = sec.map { !vm.settings.isOn($0) } ?? false
+                    let edited = sec.map { vm.settings.hasEdits($0) } ?? false
                     VStack(spacing: 2) {
                         Image(systemName: t.icon).font(.system(size: 18))
+                            .opacity(off ? 0.35 : 1)
+                            .overlay(alignment: .topTrailing) {
+                                if off { Image(systemName: "eye.slash").font(.system(size: 9, weight: .bold)).offset(x: 8, y: -4) }
+                            }
                         Text(t.rawValue).font(.system(size: 9.5, weight: .medium))
+                        // the same "changed" dot as on the sliders: this tool has edits
+                        Circle().fill(edited && !off ? Theme.accent : Color.clear).frame(width: 4, height: 4)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: toolbarHeight)
                     .foregroundStyle(tool == t ? Theme.accent : Color(white: 0.6))
                 }
                 .accessibilityIdentifier("tool-\(t.rawValue)")
+                .accessibilityValue(t.section.map { vm.settings.isOn($0) ? "on" : "off" } ?? "")
             }
         }
         .padding(.horizontal, 2)

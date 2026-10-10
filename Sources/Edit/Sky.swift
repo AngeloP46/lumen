@@ -122,6 +122,30 @@ enum SkyFinder {
         // A sky that fills almost nothing is probably noise.
         guard queue.count > n / 40 else { return nil }
 
+        // Blue sky seen through gaps (between leaves, under branches) is not connected to the top of the frame, so the
+        // growing above never reaches it. Add pixels that are clearly blue sky and very close in colour to the sky
+        // already found, in the upper part of the frame. Only for a blue sky: a white or grey sky would also match
+        // white cars, walls and clothes.
+        let grown = queue
+        var skyMean = (Float(0), Float(0), Float(0))
+        for i in grown { skyMean.0 += r[i]; skyMean.1 += gg[i]; skyMean.2 += b[i] }
+        let gn = Float(grown.count)
+        skyMean = (skyMean.0 / gn, skyMean.1 / gn, skyMean.2 / gn)
+        if skyMean.2 > skyMean.0 + 0.06 {
+            let lowestRow = h * 6 / 10
+            for yy in 0..<lowestRow {
+                for xx in 0..<w {
+                    let i = yy * w + xx
+                    guard mask[i] == 0 else { continue }
+                    let rr = r[i], g_ = gg[i], bb = b[i]
+                    guard bb > rr + 0.05, bb >= g_ - 0.02, y[i] > medianY * 0.7, grad[i] < 0.08 else { continue }
+                    let dm = ((rr - skyMean.0) * (rr - skyMean.0) + (g_ - skyMean.1) * (g_ - skyMean.1)
+                              + (bb - skyMean.2) * (bb - skyMean.2)).squareRoot()
+                    if dm < 0.07 { mask[i] = 255 }
+                }
+            }
+        }
+
         // Fill small holes (birds, hot pixels) and drop specks.
         closeHoles(&mask, w, h, maxArea: max(12, n / 400))
         return mask

@@ -8,17 +8,17 @@ struct LabeledSlider: View {
     var range: ClosedRange<Double> = 0...100
     var decimals = 0
     var neutral: Double?
-    var labelWidth: CGFloat = 70
+    var labelWidth: CGFloat = 84
     var axID = ""
 
+    /// Same look and behaviour as the rows on the Light / Color / Detail pages (it is the same row).
     var body: some View {
-        HStack(spacing: 8) {
-            Text(title).font(.system(size: 12)).foregroundStyle(Color(white: 0.8)).frame(width: labelWidth, alignment: .leading)
-            ScrubSlider(value: $value, range: range, neutral: neutral, decimals: decimals, axID: axID)
-            Text(decimals == 0 ? "\(Int(value.rounded()))" : String(format: "%.\(decimals)f", value))
-                .font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary).frame(width: 38, alignment: .trailing)
+        let item = ParamItem(id: axID.isEmpty ? title : axID, title: title, value: $value, range: range,
+                             decimals: decimals, neutral: neutral)
+        SliderRow(item: item, height: 40, labelWidth: max(labelWidth, 84), inset: 0) {
+            value = neutral ?? (range.contains(0) ? 0 : range.lowerBound)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
-        .frame(height: 34)
     }
 }
 
@@ -34,7 +34,7 @@ struct LumRangeEditor: View {
     @Binding var highFeather: Double
     let histogram: [Float]?
 
-    @State private var active: Int?   // 0 = start handle, 1 = end handle
+    @State private var active: Int?   // 0 / 1 = band start / end, 2 / 3 = dark / light soft edge
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -62,74 +62,99 @@ struct LumRangeEditor: View {
         return Chip(title: title, selected: on) { low = lo; high = hi; lowFeather = lf; highFeather = hf }
     }
 
+    /// The brightness bar. White handles (top corners of the band) set where it starts and ends; the small blue
+    /// handles (bottom corners) pull its soft edges out, the same as the Dark edge / Light edge sliders.
     private var bar: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let barH: CGFloat = 30
+            let top: CGFloat = 14              // room above the bar for the white handles
             let x: (Double) -> CGFloat = { CGFloat(min(max($0, 0), 1)) * w }
+            let ends: [CGPoint] = [
+                CGPoint(x: x(low), y: top), CGPoint(x: x(high), y: top),                                   // 0, 1: band
+                CGPoint(x: x(low - lowFeather), y: top + barH), CGPoint(x: x(high + highFeather), y: top + barH), // 2, 3: soft edges
+            ]
             ZStack(alignment: .topLeading) {
-                LinearGradient(colors: [.black, .white], startPoint: .leading, endPoint: .trailing)
-                    .frame(height: barH).clipShape(RoundedRectangle(cornerRadius: 6))
-                if let h = histogram {
-                    Canvas { ctx, size in
-                        var p = Path()
-                        p.move(to: CGPoint(x: 0, y: barH))
-                        for (i, v) in h.enumerated() {
-                            p.addLine(to: CGPoint(x: size.width * CGFloat(i) / CGFloat(h.count - 1), y: barH * (1 - CGFloat(v))))
+                Group {
+                    LinearGradient(colors: [.black, .white], startPoint: .leading, endPoint: .trailing)
+                        .frame(height: barH).clipShape(RoundedRectangle(cornerRadius: 6))
+                    if let h = histogram {
+                        Canvas { ctx, size in
+                            var p = Path()
+                            p.move(to: CGPoint(x: 0, y: barH))
+                            for (i, v) in h.enumerated() {
+                                p.addLine(to: CGPoint(x: size.width * CGFloat(i) / CGFloat(h.count - 1), y: barH * (1 - CGFloat(v))))
+                            }
+                            p.addLine(to: CGPoint(x: size.width, y: barH))
+                            ctx.fill(p, with: .color(Theme.accent.opacity(0.5)))
                         }
-                        p.addLine(to: CGPoint(x: size.width, y: barH))
-                        ctx.fill(p, with: .color(Theme.accent.opacity(0.5)))
+                        .frame(height: barH).allowsHitTesting(false)
                     }
-                    .frame(height: barH).allowsHitTesting(false)
+                    // the selected band, with its two sloping soft edges
+                    Path { p in
+                        p.move(to: CGPoint(x: x(low - lowFeather), y: barH))
+                        p.addLine(to: CGPoint(x: x(low), y: 0))
+                        p.addLine(to: CGPoint(x: x(high), y: 0))
+                        p.addLine(to: CGPoint(x: x(high + highFeather), y: barH))
+                        p.closeSubpath()
+                    }
+                    .fill(Theme.accent.opacity(0.4))
+                    .overlay(Path { p in
+                        p.move(to: CGPoint(x: x(low - lowFeather), y: barH))
+                        p.addLine(to: CGPoint(x: x(low), y: 0))
+                        p.addLine(to: CGPoint(x: x(high), y: 0))
+                        p.addLine(to: CGPoint(x: x(high + highFeather), y: barH))
+                    }.stroke(Theme.accent, lineWidth: 1.6))
+                    .allowsHitTesting(false)
                 }
-                // the selected band, with its two sloping soft edges
-                Path { p in
-                    p.move(to: CGPoint(x: x(low - lowFeather), y: barH))
-                    p.addLine(to: CGPoint(x: x(low), y: 0))
-                    p.addLine(to: CGPoint(x: x(high), y: 0))
-                    p.addLine(to: CGPoint(x: x(high + highFeather), y: barH))
-                    p.closeSubpath()
-                }
-                .fill(Theme.accent.opacity(0.4))
-                .overlay(Path { p in
-                    p.move(to: CGPoint(x: x(low - lowFeather), y: barH))
-                    p.addLine(to: CGPoint(x: x(low), y: 0))
-                    p.addLine(to: CGPoint(x: x(high), y: 0))
-                    p.addLine(to: CGPoint(x: x(high + highFeather), y: barH))
-                }.stroke(Theme.accent, lineWidth: 1.6))
-                .allowsHitTesting(false)
+                .offset(y: top)
 
-                // the two range handles
-                ForEach(0..<2, id: \.self) { i in
-                    let v = i == 0 ? low : high
-                    Rectangle().fill(Color.white).frame(width: 2, height: barH + 8)
-                        .position(x: x(v), y: barH / 2 + 4)
-                    Circle().fill(Color.white).frame(width: 24, height: 24)
-                        .overlay(Circle().stroke(Color.black.opacity(0.35), lineWidth: 1))
+                // band handles (white, on top) and soft-edge handles (small, blue, underneath)
+                ForEach(0..<4, id: \.self) { i in
+                    let p = ends[i]
+                    let big = i < 2
+                    Circle().fill(big ? Color.white : Theme.accent)
+                        .overlay(Circle().stroke(big ? Color.black.opacity(0.35) : Color.white, lineWidth: big ? 1 : 1.5))
                         .shadow(radius: 2)
-                        .position(x: min(max(x(v), 12), w - 12), y: barH + 16)
+                        .frame(width: big ? 22 : 16, height: big ? 22 : 16)
+                        .scaleEffect(active == i ? 1.25 : 1)
+                        .position(x: min(max(p.x, big ? 11 : 8), w - (big ? 11 : 8)), y: p.y)
+                        .allowsHitTesting(false)
                 }
             }
-            .frame(height: barH + 30)
+            .frame(height: top + barH + 14)
             .contentShape(Rectangle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier("lum-bar")
+            .accessibilityValue(String(format: "low %.2f high %.2f soft %.2f %.2f", low, high, lowFeather, highFeather))
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { g in
                     if active == nil {
-                        let dl = abs(g.startLocation.x - x(low)), dh = abs(g.startLocation.x - x(high))
-                        if abs(dl - dh) < 1 { active = g.startLocation.x < x(low) ? 0 : 1 } else { active = dl < dh ? 0 : 1 }
+                        // nearest handle to where the finger landed; the top half of the bar picks the band handles,
+                        // the bottom half the soft edges
+                        let st = g.startLocation
+                        let wantSoft = st.y > top + barH / 2
+                        let a = wantSoft ? 2 : 0, b = a + 1
+                        let da = abs(ends[a].x - st.x), db = abs(ends[b].x - st.x)
+                        if abs(da - db) < 1 { active = st.x < ends[a].x ? a : b } else { active = da < db ? a : b }
                     }
                     let v = Double(min(max(g.location.x / w, 0), 1))
-                    if active == 0 {
+                    switch active ?? 3 {
+                    case 0:
                         low = min(v, high - 0.02)
                         lowFeather = min(lowFeather, low)
-                    } else {
+                    case 1:
                         high = max(v, low + 0.02)
                         highFeather = min(highFeather, 1 - high)
+                    case 2:
+                        lowFeather = min(max(low - v, 0), min(0.5, low))
+                    default:
+                        highFeather = min(max(v - high, 0), min(0.5, 1 - high))
                     }
                 }
                 .onEnded { _ in active = nil })
         }
-        .frame(height: 60)
+        .frame(height: 58)
     }
 }
 
@@ -163,12 +188,8 @@ struct MaskPanel: View {
                     ScrollView { shapeControls(m).padding(.horizontal, 14).padding(.bottom, 8) }
                 } else {
                     ParamPanel(items: localItems(m), selected: $sel, header: AnyView(
-                        HStack {
-                            PillButton(title: "Reset adjustments", system: "arrow.counterclockwise") {
-                                vm.updateMask(m.id) { $0.adjust = LocalAdjust() }
-                            }
-                            Spacer()
-                        }))
+                        PanelActions(resetTitle: "Reset adjustments", resetEnabled: !m.adjust.isNeutral,
+                                     reset: { vm.updateMask(m.id) { $0.adjust = LocalAdjust() } }) { EmptyView() }))
                 }
             } else {
                 header(nil)
@@ -205,11 +226,20 @@ struct MaskPanel: View {
         }
     }
 
+    /// Your masks, a + to add one, the overlay eye, and a ⋯ menu for the rest (fewer buttons in one row, so mask
+    /// names are not cut off).
     private func header(_ m: Mask?) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    Chip(title: "New", system: "plus", selected: false) { adding = true }
+                    Button { adding = true } label: {
+                        Image(systemName: "plus").font(.system(size: 14, weight: .semibold))
+                            .frame(width: 34, height: 32)
+                            .background(Theme.chip, in: Capsule())
+                            .foregroundStyle(.white)
+                    }
+                    .accessibilityIdentifier("mask-add")
+                    .accessibilityLabel("New mask")
                     ForEach(vm.settings.masks) { mk in
                         Chip(title: mk.name, system: mk.components.first?.kind.icon, selected: mk.id == vm.selectedMaskID) {
                             vm.selectMask(mk.id)
@@ -219,11 +249,25 @@ struct MaskPanel: View {
                 .padding(.leading, 12)
             }
             if let m {
-                IconButton(system: "hand.draw", active: vm.panMode) { vm.panMode.toggle() }
                 IconButton(system: eyeOn ? "eye" : "eye.slash", active: eyeOn) {
                     if vm.maskTab == .shape { vm.overlayEnabled.toggle() } else { vm.peekOverlay.toggle() }
                 }
-                IconButton(system: "trash") { vm.deleteMask(m.id) }.padding(.trailing, 6)
+                .frame(width: 44, height: 44)
+                .accessibilityIdentifier("mask-eye")
+                Menu {
+                    Button { vm.panMode.toggle() } label: {
+                        Label(vm.panMode ? "Stop moving the photo" : "Move the photo with one finger",
+                              systemImage: vm.panMode ? "checkmark" : "hand.draw")
+                    }
+                    Divider()
+                    Button(role: .destructive) { vm.deleteMask(m.id) } label: { Label("Delete mask", systemImage: "trash") }
+                } label: {
+                    Image(systemName: "ellipsis.circle").font(.system(size: 18))
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(vm.panMode ? Theme.accent : Color.white)
+                }
+                .accessibilityIdentifier("mask-menu")
+                .padding(.trailing, 6)
             }
         }
     }
@@ -244,61 +288,70 @@ struct MaskPanel: View {
 
     private func local(_ m: Mask, _ title: String, _ kp: WritableKeyPath<LocalAdjust, Double>,
                        range: ClosedRange<Double> = -100...100, decimals: Int = 0,
-                       track: [Color]? = nil) -> ParamItem {
+                       track: [Color]? = nil, section: String) -> ParamItem {
         ParamItem(id: title, title: title,
                   value: Binding(get: { vm.settings.masks.first { $0.id == m.id }?.adjust[keyPath: kp] ?? 0 },
                                  set: { v in vm.updateMask(m.id) { $0.adjust[keyPath: kp] = v } }),
-                  range: range, decimals: decimals, track: track)
+                  range: range, decimals: decimals, track: track, section: section)
     }
 
     private func localItems(_ m: Mask) -> [ParamItem] {
         [
-            local(m, "Exposure", \.exposure, range: -5...5, decimals: 2),
-            local(m, "Contrast", \.contrast),
-            local(m, "Highlights", \.highlights),
-            local(m, "Shadows", \.shadows),
-            local(m, "Whites", \.whites),
-            local(m, "Blacks", \.blacks),
-            local(m, "Temp", \.temperature, track: Tracks.temperature),
-            local(m, "Tint", \.tint, track: Tracks.tint),
-            local(m, "Saturation", \.saturation),
-            local(m, "Clarity", \.clarity),
-            local(m, "Texture", \.texture),
-            local(m, "Dehaze", \.dehaze),
-            local(m, "Sharpen", \.sharpness, range: 0...100),
-            local(m, "Noise", \.noise, range: 0...100),
+            local(m, "Exposure", \.exposure, range: -5...5, decimals: 2, section: "Light"),
+            local(m, "Contrast", \.contrast, section: "Light"),
+            local(m, "Highlights", \.highlights, section: "Light"),
+            local(m, "Shadows", \.shadows, section: "Light"),
+            local(m, "Whites", \.whites, section: "Light"),
+            local(m, "Blacks", \.blacks, section: "Light"),
+            local(m, "Saturation", \.saturation, track: Tracks.fullSaturation, section: "Colour"),
+            local(m, "Temp", \.temperature, track: Tracks.temperature, section: "Colour"),
+            local(m, "Tint", \.tint, track: Tracks.tint, section: "Colour"),
+            local(m, "Clarity", \.clarity, section: "Effects"),
+            local(m, "Texture", \.texture, section: "Effects"),
+            local(m, "Dehaze", \.dehaze, section: "Effects"),
+            local(m, "Sharpen", \.sharpness, range: 0...100, section: "Detail"),
+            local(m, "Noise", \.noise, range: 0...100, section: "Detail"),
         ]
     }
 
     // MARK: shape tab
 
-    @ViewBuilder
-    private func shapeControls(_ m: Mask) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(m.components) { c in
-                        Chip(title: c.kind.title, system: c.op == .add ? c.kind.icon : c.op.symbol,
-                             selected: c.id == vm.selectedComponent?.id) {
-                            vm.selectedComponentID = c.id
-                        }
-                    }
-                    Menu {
-                        ForEach(MaskOp.allCases) { op in
-                            Menu(op.title) {
-                                ForEach(MaskKind.allCases) { k in
-                                    Button { vm.addComponent(k, op: op) } label: { Label(k.title, systemImage: k.icon) }
-                                }
-                            }
-                        }
-                    } label: {
-                        Label("Add / subtract", systemImage: "plus.circle")
-                            .font(.system(size: 12, weight: .medium))
-                            .padding(.horizontal, 10).padding(.vertical, 7)
-                            .background(Theme.chip, in: Capsule())
-                            .foregroundStyle(Color(white: 0.82))
+    private var addSubtractMenu: some View {
+        Menu {
+            ForEach(MaskOp.allCases) { op in
+                Menu(op.title) {
+                    ForEach(MaskKind.allCases) { k in
+                        Button { vm.addComponent(k, op: op) } label: { Label(k.title, systemImage: k.icon) }
                     }
                 }
+            }
+        } label: {
+            Label("Add / subtract", systemImage: "plus.circle")
+                .font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(Theme.chip, in: Capsule())
+                .foregroundStyle(Color(white: 0.82))
+        }
+    }
+
+    @ViewBuilder
+    private func shapeControls(_ m: Mask) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if m.components.count > 1 {
+                // the parts of this mask (only shown once there is more than one)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(m.components) { c in
+                            Chip(title: c.kind.title, system: c.op == .add ? c.kind.icon : c.op.symbol,
+                                 selected: c.id == vm.selectedComponent?.id) {
+                                vm.selectedComponentID = c.id
+                            }
+                        }
+                        addSubtractMenu
+                    }
+                }
+            } else {
+                HStack { addSubtractMenu; Spacer() }
             }
             if let c = vm.selectedComponent {
                 if m.components.count > 1 {
@@ -327,19 +380,25 @@ struct MaskPanel: View {
     private func componentControls(_ c: MaskComponent) -> some View {
         switch c.kind {
         case .linear:
-            hint("Drag the two handles on the photo. Full effect at the first, fading to none at the second. Drag the middle to move it.")
+            hint("Full effect at the first line, fading to none at the second. Drag the blue pin to move it, the round arrow to turn it.", kind: .linear)
         case .radial:
-            hint("Drag the centre, or the side handles to resize.")
+            hint("Drag the blue pin to move it, the side handles to resize, the round arrow to turn it.", kind: .radial)
             LabeledSlider(title: "Feather", value: cb(c, \.feather), range: 0...100, neutral: 50)
             LabeledSlider(title: "Angle", value: cb(c, \.angle), range: -90...90, neutral: 0)
         case .brush:
-            hint("Paint on the photo with your finger.")
-            LabeledSlider(title: "Size", value: $vm.brushSize, range: 0.01...0.25, decimals: 2, neutral: 0.06)
-            LabeledSlider(title: "Feather", value: cb(c, \.feather), range: 0...100, neutral: 50)
-            HStack {
-                Toggle("Erase", isOn: $vm.brushErase).font(.system(size: 13))
-                Toggle("Auto mask", isOn: cb(c, \.autoMask)).font(.system(size: 13))
+            Picker("Brush", selection: $vm.brushErase) {
+                Text("Paint").tag(false)
+                Text("Erase").tag(true)
             }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("brush-mode")
+            hint("Paint on the photo with your finger. Size and Feather apply to the strokes you paint next.", kind: .brush)
+            // size shown 1...100 (100 = a quarter of the photo's long edge)
+            LabeledSlider(title: "Size", value: Binding(get: { (vm.brushSize * 400).rounded() },
+                                                        set: { vm.brushSize = max($0, 1) / 400 }),
+                          range: 1...100, neutral: 24)
+            LabeledSlider(title: "Feather", value: cb(c, \.feather), range: 0...100, neutral: 50)
+            Toggle("Auto mask (stick to similar colours)", isOn: cb(c, \.autoMask)).font(.system(size: 13))
             Button(role: .destructive) { vm.updateComponent(c.id) { $0.strokes = [] } } label: {
                 Label("Clear strokes", systemImage: "xmark.circle").font(.caption)
             }
@@ -358,12 +417,12 @@ struct MaskPanel: View {
             }
             LabeledSlider(title: "Soften", value: cb(c, \.feather), range: 0...100, neutral: 0)
         case .luminance:
-            hint("Choose a band of brightness: drag the two white handles, or tap the photo to pick one. Soften either edge below.")
+            hint("Drag the white handles for the band and the small blue ones to soften its edges, or tap the photo to pick a brightness.", kind: .luminance)
             LumRangeEditor(low: cb(c, \.lumLow), high: cb(c, \.lumHigh),
                            lowFeather: cb(c, \.lumLowFeather), highFeather: cb(c, \.lumHighFeather),
                            histogram: vm.histogram?.luma)
         case .color:
-            hint("Tap the photo to pick a colour. Hold the + to add more colours (up to 4).")
+            hint("Tap the photo to pick a colour. Turn on the + to add more colours (up to 4).", kind: .color)
             HStack(spacing: 8) {
                 ForEach(Array(c.samples.enumerated()), id: \.offset) { i, s in
                     Button { vm.updateComponent(c.id) { $0.samples.remove(at: i) } } label: {
@@ -382,8 +441,20 @@ struct MaskPanel: View {
         }
     }
 
-    private func hint(_ s: String) -> some View {
-        Text(s).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    /// How-to text. With a `kind` it shows only until that kind of mask has been used once (it is how-to, not news);
+    /// without one it always shows (status messages such as "couldn't find a sky").
+    @AppStorage("maskHintsSeen") private var hintsSeen = ""
+    @ViewBuilder
+    private func hint(_ s: String, kind: MaskKind? = nil) -> some View {
+        if let kind, hintsSeen.split(separator: ",").contains(Substring(kind.rawValue)) {
+            EmptyView()
+        } else {
+            Text(s).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .onDisappear {
+                    guard let kind, !hintsSeen.split(separator: ",").contains(Substring(kind.rawValue)) else { return }
+                    hintsSeen = hintsSeen.isEmpty ? kind.rawValue : hintsSeen + "," + kind.rawValue
+                }
+        }
     }
 }
 
@@ -395,6 +466,37 @@ private struct HandleDot: View {
             .fill(Color.black.opacity(0.35))
             .overlay(Circle().stroke(Color.white, lineWidth: 2))
             .frame(width: 30, height: 30)
+            .frame(width: 44, height: 44)   // finger-sized target (Apple: at least 44 pt)
+            .contentShape(Circle())
+    }
+}
+
+/// The blue pin: drag it to move the whole shape (Lightroom's pin).
+private struct PinDot: View {
+    var body: some View {
+        Circle()
+            .fill(Theme.accent)
+            .overlay(Circle().stroke(Color.white, lineWidth: 2.5))
+            .overlay(Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                .font(.system(size: 10, weight: .bold)).foregroundStyle(.white))
+            .shadow(color: .black.opacity(0.5), radius: 2)
+            .frame(width: 30, height: 30)
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+    }
+}
+
+/// Drag it round to turn the shape.
+private struct RotateDot: View {
+    var body: some View {
+        Circle()
+            .fill(Color.black.opacity(0.45))
+            .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+            .overlay(Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 11, weight: .bold)).foregroundStyle(.white))
+            .frame(width: 26, height: 26)
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
     }
 }
 
@@ -495,10 +597,14 @@ struct MaskOverlay: View {
         let len = max(hypot(dx, dy), 1)
         let nx = -dy / len, ny = dx / len
         let reach: CGFloat = 1600
+        // the rotate knob sits on the centre line, a little way from the pin
+        let knob = CGPoint(x: mid.x + nx * 70, y: mid.y + ny * 70)
         Path { p in
             p.move(to: a); p.addLine(to: b)
+            // centre line, where the effect is half strength
+            p.move(to: CGPoint(x: mid.x - nx * reach, y: mid.y - ny * reach)); p.addLine(to: CGPoint(x: mid.x + nx * reach, y: mid.y + ny * reach))
         }
-        .stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
+        .stroke(Color.white.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
         .allowsHitTesting(false)
         Path { p in
             p.move(to: CGPoint(x: a.x - nx * reach, y: a.y - ny * reach)); p.addLine(to: CGPoint(x: a.x + nx * reach, y: a.y + ny * reach))
@@ -508,7 +614,23 @@ struct MaskOverlay: View {
         .allowsHitTesting(false)
         handle(at: a) { loc in let p = free(loc); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } }
         handle(at: b) { loc in let p = free(loc); vm.updateComponent(c.id) { $0.x1 = p.x; $0.y1 = p.y } }
-        HandleDot().scaleEffect(0.7).position(mid)
+        // turn: keep the centre and the width, point the lines along the finger
+        RotateDot().position(knob)
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
+                .onChanged { v in
+                    let fx = v.location.x - mid.x, fy = v.location.y - mid.y
+                    let fl = hypot(fx, fy)
+                    guard fl > 8 else { return }
+                    // the knob lies along n; a->b is n turned back a quarter
+                    let ux = fx / fl, uy = fy / fl
+                    let half = CGPoint(x: uy * len / 2, y: -ux * len / 2)
+                    let pa = free(CGPoint(x: mid.x - half.x, y: mid.y - half.y))
+                    let pb = free(CGPoint(x: mid.x + half.x, y: mid.y + half.y))
+                    vm.updateComponent(c.id) { $0.x0 = pa.x; $0.y0 = pa.y; $0.x1 = pb.x; $0.y1 = pb.y }
+                })
+            .accessibilityIdentifier("mask-rotate")
+        // move: the blue pin carries both lines
+        PinDot().position(mid)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { v in
                     let m = free(v.location)
@@ -520,6 +642,7 @@ struct MaskOverlay: View {
                         $0.x1 = lim(c.x1 + ddx); $0.y1 = lim(c.y1 + ddy)
                     }
                 })
+            .accessibilityIdentifier("mask-pin")
     }
 
     @ViewBuilder
@@ -538,7 +661,24 @@ struct MaskOverlay: View {
             .rotationEffect(.degrees(deg))
             .position(centre)
             .allowsHitTesting(false)
-        handle(at: centre) { loc in let p = free(loc); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } }
+        PinDot().position(centre)
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
+                .onChanged { v in let p = free(v.location); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } })
+            .accessibilityIdentifier("mask-pin")
+        // turn: a knob just outside the top of the ellipse; drag it round the centre
+        RotateDot().position(CGPoint(x: centre.x - v.x * (ry + 34), y: centre.y - v.y * (ry + 34)))
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
+                .onChanged { g in
+                    let fx = g.location.x - centre.x, fy = g.location.y - centre.y
+                    guard hypot(fx, fy) > 12 else { return }
+                    // the knob sits along -v, i.e. at (screen angle - 90°); an ellipse looks the same turned 180°
+                    var d = Double(atan2(fy, fx)) * 180 / .pi + 90 - Double(geo.clockwise)
+                    d = (d + 90).truncatingRemainder(dividingBy: 180)
+                    if d < 0 { d += 180 }
+                    d -= 90
+                    vm.updateComponent(c.id) { $0.angle = (d * 2).rounded() / 2 }
+                })
+            .accessibilityIdentifier("mask-rotate")
         handle(at: CGPoint(x: centre.x + u.x * rx, y: centre.y + u.y * rx)) { loc in
             let d = (loc.x - centre.x) * u.x + (loc.y - centre.y) * u.y
             vm.updateComponent(c.id) { $0.x1 = max(0.02, min(3, Double(abs(d) / max(pxW, 1)))) }

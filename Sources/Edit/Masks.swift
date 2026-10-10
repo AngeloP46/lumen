@@ -143,31 +143,67 @@ extension EditSession {
         let longSide = max(ext.width, ext.height)
         let mw = max(1, Int(1024 * ext.width / longSide))
         let mh = max(1, Int(1024 * ext.height / longSide))
-        guard let gctx = CGContext(data: nil, width: mw, height: mh, bitsPerComponent: 8, bytesPerRow: 0,
-                                   space: CGColorSpaceCreateDeviceGray(),
-                                   bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
-        gctx.setFillColor(gray: 0, alpha: 1)
-        gctx.fill(CGRect(x: 0, y: 0, width: mw, height: mh))
-        gctx.setLineCap(.round)
-        gctx.setLineJoin(.round)
         let side = CGFloat(max(mw, mh))
-        func cg(_ p: Pt) -> CGPoint { CGPoint(x: CGFloat(p.x) * CGFloat(mw), y: CGFloat(1 - p.y) * CGFloat(mh)) }
-        var refPoints: [Pt] = []
-        for st in c.strokes {
-            guard let first = st.points.first else { continue }
-            gctx.setStrokeColor(gray: st.erase ? 0 : 1, alpha: 1)
-            gctx.setLineWidth(max(1, CGFloat(st.size) * side))
-            gctx.beginPath()
-            gctx.move(to: cg(first))
-            gctx.addLine(to: cg(first))
-            for p in st.points.dropFirst() { gctx.addLine(to: cg(p)) }
-            gctx.strokePath()
-            if !st.erase { refPoints.append(contentsOf: st.points) }
+        let refPoints: [Pt] = c.strokes.filter { !$0.erase }.flatMap(\.points)
+
+        /// Draws strokes into a black mask (paint = white, erase = black) and softens it by `feather`.
+        func layer(_ strokes: [BrushStroke], feather: Double, eraseAsWhite: Bool = false) -> CIImage? {
+            guard let gctx = CGContext(data: nil, width: mw, height: mh, bitsPerComponent: 8, bytesPerRow: 0,
+                                       space: CGColorSpaceCreateDeviceGray(),
+                                       bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+            gctx.setFillColor(gray: 0, alpha: 1)
+            gctx.fill(CGRect(x: 0, y: 0, width: mw, height: mh))
+            gctx.setLineCap(.round)
+            gctx.setLineJoin(.round)
+            func cg(_ p: Pt) -> CGPoint { CGPoint(x: CGFloat(p.x) * CGFloat(mw), y: CGFloat(1 - p.y) * CGFloat(mh)) }
+            for st in strokes {
+                guard let first = st.points.first else { continue }
+                gctx.setStrokeColor(gray: (st.erase && !eraseAsWhite) ? 0 : 1, alpha: 1)
+                gctx.setLineWidth(max(1, CGFloat(st.size) * side))
+                gctx.beginPath()
+                gctx.move(to: cg(first))
+                gctx.addLine(to: cg(first))
+                for p in st.points.dropFirst() { gctx.addLine(to: cg(p)) }
+                gctx.strokePath()
+            }
+            guard let image = gctx.makeImage() else { return nil }
+            var ci = Self.expandRed(CIImage(cgImage: image, options: [.colorSpace: NSNull()]))
+            let blurRadius = feather / 100 * 0.03 * Double(side)
+            if blurRadius > 0.5 { ci = Self.blur(ci, CGFloat(blurRadius), ci.extent) }
+            return ci
         }
-        guard let image = gctx.makeImage() else { return nil }
-        var ci = Self.expandRed(CIImage(cgImage: image, options: [.colorSpace: NSNull()]))
-        let blurRadius = c.feather / 100 * 0.03 * Double(side)
-        if blurRadius > 0.5 { ci = Self.blur(ci, CGFloat(blurRadius), ci.extent) }
+
+        // Each stroke keeps the softness it was painted with (older strokes follow the component's Feather).
+        let feathers = c.strokes.map { $0.feather ?? c.feather }
+        var maskImage: CIImage?
+        if Set(feathers).count <= 1 {
+            // one softness for everything: draw all strokes together, exactly as before
+            maskImage = layer(c.strokes, feather: feathers.first ?? c.feather)
+        } else {
+            // softness changed between strokes: soften each run of strokes on its own, then combine them in order
+            // (paint runs are added, erase runs cut away what was painted before them)
+            var acc: CIImage?
+            var i = 0
+            while i < c.strokes.count {
+                var j = i + 1
+                while j < c.strokes.count, c.strokes[j].erase == c.strokes[i].erase, feathers[j] == feathers[i] { j += 1 }
+                let run = Array(c.strokes[i..<j])
+                if let img = layer(run, feather: feathers[i], eraseAsWhite: run[0].erase) {
+                    let base = acc ?? Self.constant(0, img.extent)
+                    if run[0].erase {
+                        let keep = img.applyingFilter("CIColorInvert")
+                        acc = keep.applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: base])
+                            .cropped(to: img.extent)
+                    } else {
+                        acc = img.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: base])
+                            .cropped(to: img.extent)
+                    }
+                }
+                i = j
+            }
+            maskImage = acc
+        }
+        guard let ci = maskImage else { return nil }
         var out = Self.fit(ci, to: ext)
 
         if c.autoMask, !refPoints.isEmpty, let k = LumenKernels.shared {

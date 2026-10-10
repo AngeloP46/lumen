@@ -4,10 +4,28 @@ extension EditorViewModel {
     /// A panel entry bound to one Double on EditSettings.
     func param(_ title: String, _ kp: WritableKeyPath<EditSettings, Double>,
                range: ClosedRange<Double> = -100...100, decimals: Int = 0,
-               neutral: Double? = nil, track: [Color]? = nil) -> ParamItem {
+               neutral: Double? = nil, track: [Color]? = nil, section: String? = nil) -> ParamItem {
         ParamItem(id: title, title: title,
                   value: Binding(get: { self.settings[keyPath: kp] }, set: { self.settings[keyPath: kp] = $0 }),
-                  range: range, decimals: decimals, neutral: neutral, track: track)
+                  range: range, decimals: decimals, neutral: neutral, track: track, section: section)
+    }
+}
+
+/// The row of buttons at the top of a slider page: actions on the left, Reset on the right. Same on every page.
+struct PanelActions<Leading: View>: View {
+    var resetTitle = "Reset"
+    var resetEnabled = true
+    let reset: () -> Void
+    @ViewBuilder let leading: () -> Leading
+
+    var body: some View {
+        HStack(spacing: 6) {
+            leading()
+            Spacer(minLength: 6)
+            PillButton(title: resetTitle, system: "arrow.counterclockwise", action: reset)
+                .opacity(resetEnabled ? 1 : 0.45)
+                .disabled(!resetEnabled)
+        }
     }
 }
 
@@ -34,7 +52,7 @@ struct LightPanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var sel = "Exposure"
     var body: some View {
-        // HDR is simply on or off: how far above white the highlights may go follows the screen's own range
+        // HDR is a photo-wide mode: it lives in the top bar now (owner's request 2026-10-10)
         let items = [
             vm.param("Exposure", \.exposure, range: -5...5, decimals: 2),
             vm.param("Contrast", \.contrast),
@@ -44,46 +62,53 @@ struct LightPanel: View {
             vm.param("Blacks", \.blacks),
         ]
         return ParamPanel(items: items, selected: $sel, header: AnyView(
-            HStack(spacing: 6) {
-                PillButton(title: "Auto", system: "wand.and.stars") { vm.auto() }
-                PillButton(title: "HDR", system: "sun.max", active: vm.settings.hdr) {
-                    vm.settings.hdr.toggle()
-                }
-                .accessibilityIdentifier("pill-hdr")
-                PillButton(title: "Reset", system: "arrow.counterclockwise") {
-                    vm.settings.exposure = 0; vm.settings.contrast = 0; vm.settings.highlights = 0
-                    vm.settings.shadows = 0; vm.settings.whites = 0; vm.settings.blacks = 0
-                }
-                Spacer()
+            PanelActions(resetEnabled: vm.settings.hasEdits(.light), reset: { vm.settings.reset(.light) }) {
+                // lit while the values Auto chose are untouched; tap again to undo it
+                PillButton(title: "Auto", system: "wand.and.stars", active: vm.autoActive) { vm.toggleAuto() }
+                    .accessibilityIdentifier("pill-auto")
+                    .accessibilityValue(vm.autoActive ? "on" : "off")
             }))
     }
 }
 
 struct ColorPanel: View {
     @ObservedObject var vm: EditorViewModel
-    @State private var sel = "Temp"
+    @State private var sel = "Saturation"
     var body: some View {
         if vm.colorMix {
             HSLPanel(vm: vm, back: { vm.colorMix = false })
         } else {
+            // owner's order (2026-10-10): Saturation, Vibrance, then Temp and Tint
             ParamPanel(items: [
-                vm.param("Temp", \.temperature, track: Tracks.temperature),
-                vm.param("Tint", \.tint, track: Tracks.tint),
-                vm.param("Vibrance", \.vibrance),
-                vm.param("Saturation", \.saturation),
+                vm.param("Saturation", \.saturation, track: Tracks.fullSaturation, section: "Colour"),
+                vm.param("Vibrance", \.vibrance, track: Tracks.vibrance, section: "Colour"),
+                vm.param("Temp", \.temperature, track: Tracks.temperature, section: "White balance"),
+                vm.param("Tint", \.tint, track: Tracks.tint, section: "White balance"),
             ], selected: $sel, header: AnyView(
-                HStack(spacing: 6) {
+                // the page's Reset leaves the colour mix alone (it has its own resets), as before
+                PanelActions(resetEnabled: pageEdited, reset: resetPage) {
                     PillButton(title: "B&W", system: "circle.lefthalf.filled", active: vm.settings.blackAndWhite) {
                         vm.settings.blackAndWhite.toggle()
                     }
-                    PillButton(title: "Colour mix", system: "paintpalette") { vm.colorMix = true }
-                    PillButton(title: "Reset", system: "arrow.counterclockwise") {
-                        vm.settings.temperature = 0; vm.settings.tint = 0
-                        vm.settings.vibrance = 0; vm.settings.saturation = 0; vm.settings.blackAndWhite = false
-                    }
-                    Spacer()
-                }))
+                    PillButton(title: "Colour mix", system: "paintpalette", active: !vm.settings.hsl.isNeutral) { vm.colorMix = true }
+                }),
+               accessories: ["White balance": AnyView(
+                PillButton(title: vm.wbPicking ? "Tap the photo" : "Pick", system: "eyedropper", active: vm.wbPicking) {
+                    vm.wbPicking.toggle()
+                }
+                .accessibilityIdentifier("pill-wb"))])
         }
+    }
+
+    private var pageEdited: Bool {
+        let s = vm.settings
+        return s.temperature != 0 || s.tint != 0 || s.vibrance != 0 || s.saturation != 0 || s.blackAndWhite
+    }
+
+    private func resetPage() {
+        var s = vm.settings
+        s.temperature = 0; s.tint = 0; s.vibrance = 0; s.saturation = 0; s.blackAndWhite = false
+        vm.settings = s
     }
 }
 
@@ -154,31 +179,22 @@ struct DetailPanel: View {
     @State private var sel = "Texture"
     var body: some View {
         ParamPanel(items: [
-            vm.param("Texture", \.texture),
-            vm.param("Clarity", \.clarity),
-            vm.param("Dehaze", \.dehaze),
-            vm.param("Sharpen", \.sharpness, range: 0...100),
-            vm.param("Masking", \.sharpenMasking, range: 0...100),
-            vm.param("Noise", \.noiseReduction, range: 0...100),
-            vm.param("Colour noise", \.colorNoise, range: 0...100),
-            vm.param("Vignette", \.vignette),
-            vm.param("Midpoint", \.vignetteMidpoint, range: 0...100, neutral: 50),
-            vm.param("Feather", \.vignetteFeather, range: 0...100, neutral: 50),
-            vm.param("Roundness", \.vignetteRoundness, range: 0...100),
-            vm.param("Grain", \.grain, range: 0...100),
-            vm.param("Grain size", \.grainSize, range: 0...100, neutral: 25),
-            vm.param("Roughness", \.grainRoughness, range: 0...100, neutral: 50),
+            vm.param("Texture", \.texture, section: "Effects"),
+            vm.param("Clarity", \.clarity, section: "Effects"),
+            vm.param("Dehaze", \.dehaze, section: "Effects"),
+            vm.param("Sharpen", \.sharpness, range: 0...100, section: "Sharpening"),
+            vm.param("Masking", \.sharpenMasking, range: 0...100, section: "Sharpening"),
+            vm.param("Noise", \.noiseReduction, range: 0...100, section: "Noise reduction"),
+            vm.param("Colour noise", \.colorNoise, range: 0...100, section: "Noise reduction"),
+            vm.param("Vignette", \.vignette, section: "Vignette"),
+            vm.param("Midpoint", \.vignetteMidpoint, range: 0...100, neutral: 50, section: "Vignette"),
+            vm.param("Feather", \.vignetteFeather, range: 0...100, neutral: 50, section: "Vignette"),
+            vm.param("Roundness", \.vignetteRoundness, range: 0...100, section: "Vignette"),
+            vm.param("Grain", \.grain, range: 0...100, section: "Grain"),
+            vm.param("Grain size", \.grainSize, range: 0...100, neutral: 25, section: "Grain"),
+            vm.param("Roughness", \.grainRoughness, range: 0...100, neutral: 50, section: "Grain"),
         ], selected: $sel, header: AnyView(
-            HStack {
-                PillButton(title: "Reset", system: "arrow.counterclockwise") {
-                    var s = vm.settings
-                    s.texture = 0; s.clarity = 0; s.dehaze = 0; s.sharpness = 0; s.sharpenMasking = 0
-                    s.noiseReduction = 0; s.colorNoise = 0; s.vignette = 0; s.vignetteMidpoint = 50
-                    s.vignetteFeather = 50; s.vignetteRoundness = 0; s.grain = 0; s.grainSize = 25; s.grainRoughness = 50
-                    vm.settings = s
-                }
-                Spacer()
-            }))
+            PanelActions(resetEnabled: vm.settings.hasEdits(.detail), reset: { vm.settings.reset(.detail) }) { EmptyView() }))
     }
 }
 
@@ -304,27 +320,111 @@ struct ColorWheel: View {
     }
 }
 
+/// Colour grading. Like Lightroom on a phone: one big wheel at a time (Shadows / Midtones / Highlights) with full-size
+/// Hue, Saturation and Luminance sliders, plus an "All" overview with the three wheels side by side, Blend and Balance.
 struct GradePanel: View {
     @ObservedObject var vm: EditorViewModel
+    @AppStorage("gradeTab") private var tab = "Shadows"
     private let zones: [(String, WritableKeyPath<ColorGrading, GradeZone>)] = [
         ("Shadows", \.shadows), ("Midtones", \.midtones), ("Highlights", \.highlights),
     ]
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
+        GeometryReader { geo in
             VStack(spacing: 6) {
+                tabs
+                if let i = zones.firstIndex(where: { $0.0 == tab }) {
+                    zoneDetail(i, size: geo.size)
+                } else {
+                    overview
+                }
+            }
+        }
+    }
+
+    private func edited(_ z: GradeZone) -> Bool { z.sat != 0 || z.lum != 0 }
+
+    private var tabs: some View {
+        HStack(spacing: 0) {
+            ForEach(["All"] + zones.map(\.0), id: \.self) { t in
+                let i = zones.firstIndex { $0.0 == t }
+                let dot = i.map { edited(vm.settings.grading[keyPath: zones[$0].1]) } ?? !vm.settings.grading.isNeutral
+                Button { tab = t } label: {
+                    HStack(spacing: 4) {
+                        Text(t).font(.system(size: 13, weight: .semibold))
+                        if dot { EditedDot() }
+                    }
+                    .frame(maxWidth: .infinity).frame(height: 32)
+                    .background(tab == t ? Theme.accent.opacity(0.85) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                    .foregroundStyle(tab == t ? Color.white : Color(white: 0.65))
+                    .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("grade-tab-\(t)")
+            }
+        }
+        .padding(2)
+        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 9))
+        .padding(.horizontal, 12).padding(.top, 6)
+    }
+
+    // MARK: one zone, big
+
+    private func zoneDetail(_ i: Int, size: CGSize) -> some View {
+        let kp = zones[i].1
+        let z = vm.settings.grading[keyPath: kp]
+        let wheel = max(140, min(size.height - 32 - 3 * 40 - 34, size.width - 150, 260))
+        return ScrollView(showsIndicators: false) {
+            VStack(spacing: 2) {
+                HStack(alignment: .center, spacing: 14) {
+                    ColorWheel(hue: zb(kp, \.hue), sat: zb(kp, \.sat))
+                        .frame(width: wheel, height: wheel)
+                        .accessibilityIdentifier("grade-wheel")
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(zones[i].0).font(.system(size: 15, weight: .semibold))
+                        Circle()
+                            .fill(z.sat > 0.5 ? Color(hue: z.hue / 360, saturation: min(z.sat / 100 + 0.2, 1), brightness: 1)
+                                              : Color(white: 0.5))
+                            .frame(width: 34, height: 34)
+                            .overlay(Circle().stroke(Color.white.opacity(0.6), lineWidth: 1.5))
+                        PillButton(title: "Reset", system: "arrow.counterclockwise") {
+                            vm.settings.grading[keyPath: kp] = GradeZone()
+                        }
+                        .opacity(z == GradeZone() ? 0.45 : 1)
+                        .disabled(z == GradeZone())
+                        .accessibilityIdentifier("grade-reset-zone")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 4)
+                rows([
+                    ParamItem(id: "Hue", title: "Hue", value: zb(kp, \.hue), range: 0...360, neutral: 0, track: Tracks.hue),
+                    ParamItem(id: "Grade saturation", title: "Saturation", value: zb(kp, \.sat), range: 0...100, neutral: 0,
+                              track: [Color(white: 0.5), Color(hue: z.hue / 360, saturation: 0.9, brightness: 1)]),
+                    ParamItem(id: "Grade luminance", title: "Luminance", value: zb(kp, \.lum), track: [.black, .white]),
+                ])
+            }
+            .padding(.bottom, 6)
+        }
+    }
+
+    // MARK: all three
+
+    private var overview: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 4) {
                 HStack(alignment: .top, spacing: 8) {
                     ForEach(0..<3, id: \.self) { i in wheelColumn(i) }
                 }
-                .padding(.horizontal, 12).padding(.top, 8)
-                HStack(spacing: 14) {
-                    LabeledSlider(title: "Blend", value: gb(\.blending), range: 0...100, neutral: 50, labelWidth: 38)
-                    LabeledSlider(title: "Balance", value: gb(\.balance), range: -100...100, neutral: 0, labelWidth: 50)
-                }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 12).padding(.top, 6)
+                rows([
+                    ParamItem(id: "Blend", title: "Blend", value: gb(\.blending), range: 0...100, neutral: 50),
+                    ParamItem(id: "Balance", title: "Balance", value: gb(\.balance)),
+                ])
                 HStack {
                     Spacer()
                     PillButton(title: "Reset all", system: "arrow.counterclockwise") { vm.settings.grading = ColorGrading() }
+                        .opacity(vm.settings.grading == ColorGrading() ? 0.45 : 1)
+                        .disabled(vm.settings.grading == ColorGrading())
                 }
                 .padding(.horizontal, 14)
             }
@@ -336,29 +436,51 @@ struct GradePanel: View {
         let kp = zones[i].1
         let z = vm.settings.grading[keyPath: kp]
         return VStack(spacing: 4) {
-            HStack {
-                Text(zones[i].0).font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Button { vm.settings.grading[keyPath: kp] = GradeZone() } label: {
-                    Image(systemName: "arrow.counterclockwise").font(.system(size: 11))
+            // tap the name to open that wheel big
+            Button { tab = zones[i].0 } label: {
+                HStack(spacing: 3) {
+                    Text(zones[i].0).font(.system(size: 12, weight: .semibold))
+                    if edited(z) { EditedDot() }
+                    Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 9)).foregroundStyle(.secondary)
                 }
-                .foregroundStyle(z == GradeZone() ? Color(white: 0.35) : Theme.accent)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .contentShape(Rectangle())
             }
-            ColorWheel(hue: Binding(get: { vm.settings.grading[keyPath: kp].hue },
-                                    set: { vm.settings.grading[keyPath: kp].hue = $0 }),
-                       sat: Binding(get: { vm.settings.grading[keyPath: kp].sat },
-                                    set: { vm.settings.grading[keyPath: kp].sat = $0 }))
+            .foregroundStyle(.white)
+            ColorWheel(hue: zb(kp, \.hue), sat: zb(kp, \.sat))
                 .frame(maxWidth: 124)
             HStack(spacing: 4) {
                 Image(systemName: "sun.max").font(.system(size: 10)).foregroundStyle(.secondary)
-                ScrubSlider(value: Binding(get: { vm.settings.grading[keyPath: kp].lum },
-                                           set: { vm.settings.grading[keyPath: kp].lum = $0 }),
-                            height: 26, bubble: false)
+                ScrubSlider(value: zb(kp, \.lum), height: 30, bubble: false)
+                Button { vm.settings.grading[keyPath: kp] = GradeZone() } label: {
+                    Image(systemName: "arrow.counterclockwise").font(.system(size: 12, weight: .semibold))
+                        .frame(width: 30, height: 30).contentShape(Rectangle())
+                }
+                .foregroundStyle(z == GradeZone() ? Color(white: 0.35) : Theme.accent)
+                .disabled(z == GradeZone())
             }
             Text("H \(Int(z.hue))°  S \(Int(z.sat))  L \(Int(z.lum))")
                 .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    // MARK: helpers
+
+    private func rows(_ items: [ParamItem]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(items) { it in
+                SliderRow(item: it, height: 40) {
+                    it.value.wrappedValue = it.neutral ?? 0
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+            }
+        }
+    }
+
+    private func zb(_ kp: WritableKeyPath<ColorGrading, GradeZone>, _ f: WritableKeyPath<GradeZone, Double>) -> Binding<Double> {
+        Binding(get: { vm.settings.grading[keyPath: kp][keyPath: f] },
+                set: { vm.settings.grading[keyPath: kp][keyPath: f] = $0 })
     }
 
     private func gb(_ kp: WritableKeyPath<ColorGrading, Double>) -> Binding<Double> {

@@ -419,6 +419,57 @@ final class EditorViewModel: ObservableObject {
         settings = session.autoSettings(source: source, current: settings)
     }
 
+    /// What Auto changed, so the Auto button can show it is on and a second tap can take it back.
+    struct AutoRecord { var before: EditSettings; var after: EditSettings }
+    @Published private(set) var autoRecord: AutoRecord?
+
+    private static func autoFields(_ s: EditSettings) -> [Double] {
+        [s.exposure, s.contrast, s.highlights, s.shadows, s.whites, s.blacks, s.vibrance, s.clarity]
+    }
+
+    /// On while the values Auto set are untouched; moving any of them yourself turns it off.
+    var autoActive: Bool {
+        guard let r = autoRecord else { return false }
+        return Self.autoFields(settings) == Self.autoFields(r.after)
+    }
+
+    /// Auto button: apply Auto, or (when it is on) put back the values from before it.
+    func toggleAuto() {
+        if autoActive, let r = autoRecord {
+            var s = settings
+            let b = r.before
+            s.exposure = b.exposure; s.contrast = b.contrast; s.highlights = b.highlights; s.shadows = b.shadows
+            s.whites = b.whites; s.blacks = b.blacks; s.vibrance = b.vibrance; s.clarity = b.clarity
+            autoRecord = nil
+            settings = s
+        } else {
+            let before = settings
+            auto()
+            autoRecord = AutoRecord(before: before, after: settings)
+        }
+    }
+
+    // MARK: White balance picker
+
+    /// Color tool: while on, a tap on the photo sets Temp and Tint so that spot becomes neutral grey.
+    @Published var wbPicking = false
+
+    func pickWhiteBalance(at p: Pt) {
+        guard let source else { return }
+        let rgb = source.stats.average(atNormalized: p.x, p.y, radius: 2)
+        let r = Double(max(rgb.x, 1e-5)), g = Double(max(rgb.y, 1e-5)), b = Double(max(rgb.z, 1e-5))
+        // the develop kernel multiplies by (2^(0.6t), 2^(-0.4n), 2^(-0.6t)) with t = temp/100, n = tint/100:
+        // solve for the t and n that make this spot's red, green and blue equal
+        let t = log2(b / r) / 1.2
+        let n = -log2(r * exp2(0.6 * t) / g) / 0.4
+        var s = settings
+        s.temperature = (min(max(t * 100, -100), 100)).rounded()
+        s.tint = (min(max(n * 100, -100), 100)).rounded()
+        settings = s
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if DemoMode.isOn { DemoMode.log("wb picked temp \(Int(s.temperature)) tint \(Int(s.tint))") }
+    }
+
     // MARK: Presets
 
     func apply(preset edits: EditSettings) {
@@ -529,10 +580,14 @@ final class EditorViewModel: ObservableObject {
 
     func beginStroke(_ p: Pt) {
         guard let c = selectedComponent, c.kind == .brush else { return }
-        let stroke = BrushStroke(points: [p], size: brushSize, erase: brushErase)
+        // the new stroke keeps today's Feather; older strokes keep the one they were painted with
+        let stroke = BrushStroke(points: [p], size: brushSize, erase: brushErase, feather: c.feather)
         strokeStart = Date()
         strokeOpen = true
-        updateComponent(c.id) { $0.strokes.append(stroke) }
+        updateComponent(c.id) { comp in
+            for i in comp.strokes.indices where comp.strokes[i].feather == nil { comp.strokes[i].feather = comp.feather }
+            comp.strokes.append(stroke)
+        }
     }
 
     /// The finger that was painting lifted.

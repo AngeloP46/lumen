@@ -779,4 +779,114 @@ final class LumenUITests: XCTestCase {
         XCTAssertFalse(el("reset-Highlights").exists, "One at a time should hide the list again")
         XCTAssertTrue(el("slider-Exposure").exists || el("slider-Highlights").exists, "a single slider remains")
     }
+
+    // MARK: UI refresh (2026-10-10)
+
+    func testAutoButtonShowsItIsOnAndTapsBackOff() {
+        launch(open: 0, tool: "Light")
+        let auto = el("pill-auto")
+        XCTAssertTrue(auto.waitForExistence(timeout: 10), "the Light page should have an Auto button")
+        XCTAssertEqual(valueOf("pill-auto"), "off")
+        let before = valueOf("reset-Exposure")
+        auto.tap()
+        sleep(2)
+        XCTAssertEqual(valueOf("pill-auto"), "on", "Auto should stay lit once applied")
+        shot("auto-on")
+        auto.tap()
+        sleep(2)
+        XCTAssertEqual(valueOf("pill-auto"), "off", "a second tap should take Auto back off")
+        XCTAssertEqual(valueOf("reset-Exposure"), before, "taking Auto back off should restore the previous values")
+    }
+
+    func testHDRIsInTheTopBarNotTheLightPage() {
+        launch(open: 0, tool: "Light")
+        let hdr = el("pill-hdr"), back = el("btn-back")
+        XCTAssertTrue(hdr.waitForExistence(timeout: 10))
+        XCTAssertLessThan(abs(hdr.frame.midY - back.frame.midY), 4, "HDR should sit in the top bar next to Back")
+        XCTAssertTrue(el("btn-edits").exists, "the top bar should have the Edits button")
+    }
+
+    func testEditsSheetSwitchesAToolOffAndBackOn() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])
+        XCTAssertEqual(valueOf("tool-Light"), "on")
+        el("btn-edits").tap()
+        let toggle = el("edits-toggle-Light")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10), "the Edits sheet should list Light with a switch")
+        shot("edits-sheet")
+        toggle.tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("tool-Light"), "off", "switching Light off in the sheet should mark the tool as off")
+        XCTAssertTrue(app.buttons["Done"].exists)
+        app.buttons["Done"].tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("reset-Exposure"), "0.30", "switching a tool off must keep its values")
+        let turnOn = el("section-turn-on")
+        XCTAssertTrue(turnOn.waitForExistence(timeout: 5), "the Light page should say it is switched off")
+        shot("light-switched-off")
+        turnOn.tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("tool-Light"), "on", "Turn on should switch Light back on")
+    }
+
+    func testGradeShowsOneBigWheelPerTab() {
+        launch(open: 0, tool: "Grade")
+        el("grade-tab-Midtones").tap()
+        sleep(1)
+        let wheel = el("grade-wheel")
+        XCTAssertTrue(wheel.waitForExistence(timeout: 5), "a zone tab should show one big wheel")
+        XCTAssertGreaterThan(wheel.frame.width, 139, "the single wheel should be big (\(wheel.frame))")
+        XCTAssertTrue(el("slider-Hue").exists, "the zone tab should have a full-width Hue slider")
+        XCTAssertTrue(el("slider-Grade luminance").exists, "the zone tab should have a Luminance slider")
+        shot("grade-midtones")
+        el("grade-tab-All").tap()
+        sleep(1)
+        XCTAssertFalse(el("grade-wheel").exists, "All shows the three small wheels instead")
+        XCTAssertTrue(el("slider-Blend").exists, "All should keep Blend and Balance")
+        shot("grade-all")
+    }
+
+    func testColourPageOrderAndWhiteBalancePicker() {
+        launch(open: 0, tool: "Color")
+        let sat = el("slider-Saturation"), vib = el("slider-Vibrance"), temp = el("slider-Temp")
+        XCTAssertTrue(sat.waitForExistence(timeout: 10))
+        XCTAssertLessThan(sat.frame.minY, vib.frame.minY, "Saturation comes first")
+        XCTAssertLessThan(vib.frame.minY, temp.frame.minY, "then Vibrance, then Temp")
+        el("pill-wb").tap()
+        sleep(1)
+        XCTAssertTrue(el("wb-layer").waitForExistence(timeout: 5), "the picker should wait for a tap on the photo")
+        el("wb-layer").tap()
+        sleep(2)
+        XCTAssertTrue(events().contains { $0.contains("wb picked") }, "a tap on the photo should set the white balance")
+        shot("wb-picked")
+    }
+
+    func testLuminanceSoftEdgeCanBeDraggedOnTheGraph() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "luminance"])
+        let bar = el("lum-bar")
+        XCTAssertTrue(bar.waitForExistence(timeout: 30), "the luminance bar should show")
+        sleep(1)
+        let before = valueOf("lum-bar")
+        // the light-side soft-edge handle sits at the bottom of the bar, at (end of band + soft edge)
+        let parts = before.split(separator: " ")   // "low 0.00 high 0.35 soft 0.10 0.10"
+        let high = Double(parts[3]) ?? 0.35, soft = Double(parts[6]) ?? 0.1
+        let start = bar.coordinate(withNormalizedOffset: CGVector(dx: high + soft, dy: 0.85))
+        start.press(forDuration: 0.1, thenDragTo: bar.coordinate(withNormalizedOffset: CGVector(dx: min(high + soft + 0.25, 0.98), dy: 0.85)))
+        sleep(1)
+        let after = valueOf("lum-bar").split(separator: " ")
+        let soft2 = Double(after[6]) ?? 0
+        XCTAssertGreaterThan(soft2, soft + 0.1, "dragging the soft-edge handle should widen the light edge (\(before) -> \(after))")
+        XCTAssertEqual(String(after[3]), String(parts[3]), "it must not move the band itself")
+        shot("lum-soft-edge")
+    }
+
+    func testLinearAndRadialMasksHaveMoveAndTurnHandles() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "linear"])
+        XCTAssertTrue(el("mask-pin").waitForExistence(timeout: 30), "linear mask should have a move pin")
+        XCTAssertTrue(el("mask-rotate").exists, "linear mask should have a turn handle")
+        shot("linear-handles")
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "radial"])
+        XCTAssertTrue(el("mask-pin").waitForExistence(timeout: 30), "radial mask should have a move pin")
+        XCTAssertTrue(el("mask-rotate").exists, "radial mask should have a turn handle")
+        shot("radial-handles")
+    }
 }
