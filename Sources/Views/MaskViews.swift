@@ -466,8 +466,6 @@ private struct HandleDot: View {
             .fill(Color.black.opacity(0.35))
             .overlay(Circle().stroke(Color.white, lineWidth: 2))
             .frame(width: 30, height: 30)
-            .frame(width: 44, height: 44)   // finger-sized target (Apple: at least 44 pt)
-            .contentShape(Circle())
     }
 }
 
@@ -481,8 +479,6 @@ private struct PinDot: View {
                 .font(.system(size: 10, weight: .bold)).foregroundStyle(.white))
             .shadow(color: .black.opacity(0.5), radius: 2)
             .frame(width: 30, height: 30)
-            .frame(width: 44, height: 44)
-            .contentShape(Circle())
     }
 }
 
@@ -494,9 +490,7 @@ private struct RotateDot: View {
             .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
             .overlay(Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 11, weight: .bold)).foregroundStyle(.white))
-            .frame(width: 26, height: 26)
-            .frame(width: 44, height: 44)
-            .contentShape(Circle())
+            .frame(width: 30, height: 30)
     }
 }
 

@@ -387,8 +387,7 @@ struct EditorView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("canvas")
             // two fingers pinch and pan together over every tool except Crop (including the mask overlay)
-            // simultaneous: a finger that lands on a mask handle or the crop frame must not stop a two-finger pinch
-            .simultaneousGesture(TwoFingerGesture { phase, p, d in
+            .gesture(TwoFingerGesture { phase, p, d in
                 twoFingers(phase, CGPoint(x: p.x - origin.x, y: p.y - origin.y), d, xform)
             })
             // fallback pinch in case the watcher above never sees the fingers
