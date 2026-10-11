@@ -13,11 +13,11 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "LaMa", withExtension: "mlmodelc")
     }()
-    /// `.all` is the setting the conversion was verified with (its notes: moving it to other compute units can
-    /// silently overflow float16 or break on the GPU; 0.1.137 used .cpuAndGPU and the iPhone filled heals black).
-    private static let healModel: MLModel? = loadHealModel(.all)
-    /// CPU only: slower, full precision. Used when the first answer looks broken.
-    private static let healModelCPU: MLModel? = loadHealModel(.cpuOnly)
+    /// CPU only, full precision. The GPU (0.1.137: black) and the Neural Engine (0.1.139: dark fills on bright,
+    /// saturated colours such as red paint or yellow plates) both run it in float16, which this model overflows.
+    /// The CPU is slower (a few seconds) but gives the same answer as the Mac the engine test runs on.
+    private static let healModel: MLModel? = loadHealModel(.cpuOnly)
+    private static let healModelCPU: MLModel? = nil
     private static func loadHealModel(_ units: MLComputeUnits) -> MLModel? {
         guard let url = healModelURL else { return nil }
         let cfg = MLModelConfiguration()
