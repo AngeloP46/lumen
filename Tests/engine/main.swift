@@ -1227,6 +1227,14 @@ do {
             let kk = LumenKernels.shared
             check(kk?.gfPack != nil && kk?.gfCoef != nil && kk?.gfApply != nil, "edge refinement kernels should load")
             print("edge refinement: 8-bit mask buffer works: \(EditSession.materializedMask(soft) != nil)")
+            if let k = kk, let pk = k.gfPack, let cf = k.gfCoef, let ap = k.gfApply {
+                let p0 = pk.apply(extent: ext, arguments: [source.base, soft, CIVector(x: 0, y: 0, z: 0, w: 0)])
+                let p1 = pk.apply(extent: ext, arguments: [source.base, soft, CIVector(x: 1, y: 0, z: 0, w: 0)])
+                let ab = (p0 != nil && p1 != nil) ? cf.apply(extent: ext, arguments: [p0!, p1!, CIVector(x: 0.0015, y: 0, z: 0, w: 0)]) : nil
+                let q = ab != nil ? ap.apply(extent: ext, arguments: [ab!, source.base]) : nil
+                print("edge refinement steps: pack \(p0 != nil) packIP \(p1 != nil) coef \(ab != nil) apply \(q != nil)")
+                if let ab, let mv = maskValues(ab, width: 1200) { let y = mv.h / 2; print("a along the row near the edge: \(Array(mv.v[(y * mv.w + 590)..<(y * mv.w + 610)]))") }
+            }
             if let before = transition(soft), let ref = session.refined(soft, source: source), let after = transition(ref) {
                 print("edge refinement: soft pixels \(before.0) -> \(after.0), inside \(after.1), outside \(after.2)")
                 check(after.0 * 2 <= before.0, "edge refinement should make a soft mask edge much sharper (\(before.0) -> \(after.0) partly-covered pixels)")
