@@ -54,7 +54,8 @@ final class SmartFillModels: @unchecked Sendable {
     static let positivePrompt = "seamless background, natural continuation of the surroundings, empty scene, high quality photo"
     static let negativePrompt = "person, people, man, woman, face, text, letters, logo, watermark, object, blurry, distorted, artifacts"
 
-    static func shared(unetUnits: MLComputeUnits = .cpuAndNeuralEngine) -> SmartFillModels? {
+    /// CPU + GPU for every model: what the package's publisher runs on iOS (LocalMuse).
+    static func shared(unetUnits: MLComputeUnits = .cpuAndGPU) -> SmartFillModels? {
         lock.lock(); defer { lock.unlock() }
         if let c = cached { return c }
         guard SmartFillFiles.isComplete else { return nil }
@@ -71,7 +72,7 @@ final class SmartFillModels: @unchecked Sendable {
             cfg.computeUnits = units
             return try? MLModel(contentsOf: dir.appendingPathComponent("\(name).mlmodelc"), configuration: cfg)
         }
-        guard let te = load("TextEncoder", .cpuAndNeuralEngine), let u = load("Unet", unetUnits),
+        guard let te = load("TextEncoder", .cpuAndGPU), let u = load("Unet", unetUnits),
               let ve = load("VAEEncoder", .cpuAndGPU), let vd = load("VAEDecoder", .cpuAndGPU),
               let tok = CLIPTokenizer(vocab: dir.appendingPathComponent("vocab.json"), merges: dir.appendingPathComponent("merges.txt"))
         else { return nil }
@@ -389,11 +390,11 @@ extension EditSession {
                 eps[j] = v
             }
             if !finite {
-                // the Neural Engine's float16 gave up: once, start again on the GPU
+                // the GPU's float16 gave up: once, start again on the CPU (full precision)
                 guard !retriedOnGPU else { return nil }
                 retriedOnGPU = true
                 SmartFillModels.unload()
-                guard let g = SmartFillModels.shared(unetUnits: .cpuAndGPU) else { return nil }
+                guard let g = SmartFillModels.shared(unetUnits: .cpuOnly) else { return nil }
                 models = g
                 noise = SeededNoise(seed: seed); x = noise.gaussian(LL); prevX0 = nil; i = 0
                 continue

@@ -190,7 +190,7 @@ struct HealPanel: View {
                 ProgressView(value: vm.smartProgress).frame(width: 110).accessibilityIdentifier("smart-progress")
             } else {
                 Button { vm.smartFill(id) } label: {
-                    Label(again ? "Another" : "Smart fill", systemImage: "sparkles").font(.system(size: 12, weight: .semibold))
+                    Label(again ? "Another" : "Smart fill (beta)", systemImage: "sparkles").font(.system(size: 12, weight: .semibold))
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(vm.healBusy)
@@ -206,7 +206,7 @@ struct HealPanel: View {
             .accessibilityIdentifier("smart-downloading")
         case .idle, .failed:
             Button { askDownload = true } label: {
-                Label("Smart fill", systemImage: "arrow.down.circle").font(.system(size: 12, weight: .semibold))
+                Label("Smart fill (beta)", systemImage: "arrow.down.circle").font(.system(size: 12, weight: .semibold))
             }
             .buttonStyle(.bordered)
             .accessibilityIdentifier("smart-get")
