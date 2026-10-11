@@ -1377,10 +1377,10 @@ do {
             }
         }
     }
-    // Preview sheets for the owner: original | painted | quick heal | smart fill, posted as a JPEG in a notice
-    // annotation (artifacts can't be fetched from the cloud session), title "sheet:<name>"
+    // Preview sheets for the owner: original | painted | quick heal | smart fill (artifacts can't be fetched from
+    // the cloud session, so the workflow puts them on a release)
     func tile(_ session: EditSession, heals: [HealSpot], rect r: (x: Double, y: Double, w: Double, h: Double),
-              stroke: BrushStroke? = nil, px: Int = 200) -> CGImage? {
+              stroke: BrushStroke? = nil, px: Int = 360) -> CGImage? {
         session.heals = heals
         guard let full = session.decode(maxEdge: nil) else { return nil }
         let e = full.extent
@@ -1402,7 +1402,7 @@ do {
         return g.makeImage()
     }
     func postSheet(_ name: String, _ tiles: [CGImage?]) {
-        let px = 200, n = tiles.count
+        let px = 360, n = tiles.count
         guard let g = CGContext(data: nil, width: px * n + 4 * (n - 1), height: px, bitsPerComponent: 8, bytesPerRow: 0,
                                 space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return }
         g.setFillColor(CGColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1)); g.fill(CGRect(x: 0, y: 0, width: g.width, height: px))
@@ -1412,7 +1412,12 @@ do {
         guard let dest = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil) else { return }
         CGImageDestinationAddImage(dest, sheet, [kCGImageDestinationLossyCompressionQuality: 0.7] as CFDictionary)
         CGImageDestinationFinalize(dest)
-        print("::notice title=sheet:\(name)::\((data as Data).base64EncodedString())")
+        // saved next to the renders; the workflow uploads them to the `test-previews` release (viewable on a phone)
+        let dir = outDir.appendingPathComponent("previews")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent(name.replacingOccurrences(of: " ", with: "-") + ".jpg")
+        try? (data as Data).write(to: file)
+        print("::notice::preview sheet \(file.lastPathComponent) saved")
     }
 
     // Smart fill (diffusion inpainting): the tokenizer, and a badge on red paint filled red

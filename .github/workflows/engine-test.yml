@@ -16,6 +16,8 @@ concurrency:
 jobs:
   test:
     runs-on: macos-15
+    permissions:
+      contents: write   # uploads the preview sheets to the `test-previews` release
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +73,15 @@ jobs:
             echo "::endgroup::"
           fi
           exit "$code"
+      - name: Publish preview sheets (test-previews release)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls out/render/previews/*.jpg >/dev/null 2>&1 || exit 0
+          gh release view test-previews >/dev/null 2>&1 || gh release create test-previews \
+            --title "Engine test previews" --notes "Preview sheets from the latest engine test run (original | painted | quick heal | smart fill)." --prerelease
+          gh release upload test-previews out/render/previews/*.jpg --clobber
       - uses: actions/upload-artifact@v4
         if: always()
         with:
