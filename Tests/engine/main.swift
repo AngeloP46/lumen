@@ -1187,6 +1187,17 @@ do {
             }
             let top = band(0, rows), bottom = band(d.height - rows, d.height)
             print("depth \(f.lastPathComponent): \(d.width)x\(d.height) in \(ms) ms, top \(top) bottom \(bottom)")
+            // the sky the scene model found is always the farthest thing (2026-10-12)
+            if source.sceneField?.found.contains(.sky) == true, let sky = source.cachedMask(EditSession.aiSky) {
+                // the field prepareAutoMasks stored must already be the sky-aware one
+                if let sv = maskValues(EditSession.depthImage(d, extent: source.extent), width: 64),
+                   let skv = maskValues(sky, width: 64), sv.v.count == skv.v.count {
+                    var sum: Float = 0, n: Float = 0
+                    for i in sv.v.indices where skv.v[i] > 0.9 { sum += sv.v[i]; n += 1 }
+                    print("::notice::\(f.lastPathComponent): depth inside the sky \(n > 0 ? sum / n : -1) over \(Int(n)) cells")
+                    check(n == 0 || sum / n > 0.93, "\(f.lastPathComponent): the sky should read as far (\(sum / max(n, 1)))")
+                }
+            }
             if f.lastPathComponent.hasPrefix("matterhorn") {
                 check(top > bottom + 0.15, "matterhorn: the sky and peak (top) should read farther than the ground (bottom): top \(top) bottom \(bottom)")
                 // a band reaching from nearest to just past the ground covers the bottom far more than the sky at the top

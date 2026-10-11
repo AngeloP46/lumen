@@ -290,7 +290,8 @@ extension EditSession {
             computed = true
         }
         // the scene model (one run) serves both the Sky mask and every Landscape part
-        if (needSky || !sceneSets.isEmpty || s.masks.contains { $0.components.contains { $0.kind == .landscape } }),
+        // (and the Depth mask: the sky it finds is always the farthest thing)
+        if (needSky || needDepth || !sceneSets.isEmpty || s.masks.contains { $0.components.contains { $0.kind == .landscape } }),
            !source.hasTried(Self.aiScene) {
             source.storeScene(computeScene(source))
             source.storeMask(Self.aiScene, nil)
@@ -298,7 +299,8 @@ extension EditSession {
         }
         // the sky is also worked out for Landscape parts: they are kept off it (Vegetation stops where the sky seen
         // through the leaves starts)
-        if needSky || !sceneSets.isEmpty, !source.hasTried(Self.aiSky) {
+        let depthWantsSky = needDepth && !source.hasTried(Self.aiDepth) && source.sceneField?.found.contains(.sky) == true
+        if needSky || !sceneSets.isEmpty || depthWantsSky, !source.hasTried(Self.aiSky) {
             if let global = source.sceneField, global.found.contains(.sky) {
                 // finer at the sky's edge (four quarters), then the sky seen through trees
                 let scene = skyScene(global, source: source) ?? global
@@ -321,7 +323,12 @@ extension EditSession {
             computed = true
         }
         if needDepth, !source.hasTried(Self.aiDepth) {
-            let field = computeDepth(source)
+            var field = computeDepth(source)
+            // the sky is always the farthest thing: the depth AI sometimes gives patches of it nearer distances, so
+            // "Far" missed bits of sky and "Near" leaked into it (owner's idea list, 2026-10-12)
+            if let f = field, source.sceneField?.found.contains(.sky) == true, let sky = source.cachedMask(Self.aiSky) {
+                field = Self.skyFar(f, sky: sky)
+            }
             source.storeDepth(field)
             source.storeMask(Self.aiDepth, refined(field.map { Self.depthImage($0, extent: source.extent) }, source: source, depth: true))
             computed = true
@@ -769,6 +776,28 @@ extension EditSession {
     }
 
     /// The depth field as a grey image over the photo (white = far), slightly softened.
+    /// `d` with the sky pushed to the far end (soft at the sky's edge), and its histogram counted again.
+    static func skyFar(_ d: DepthField, sky: CIImage) -> DepthField {
+        let e = sky.extent
+        guard e.width > 0, e.height > 0 else { return d }
+        let small = sky.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+            .transformed(by: CGAffineTransform(scaleX: CGFloat(d.width) / e.width, y: CGFloat(d.height) / e.height))
+        var px = [Float](repeating: 0, count: d.width * d.height * 4)
+        LumenGPU.context.render(small, toBitmap: &px, rowBytes: d.width * 16,
+                                bounds: CGRect(x: 0, y: 0, width: d.width, height: d.height), format: .RGBAf, colorSpace: nil)
+        var out = d
+        var hist = [Float](repeating: 0, count: 64)
+        for i in 0..<(d.width * d.height) {
+            let k = min(max(px[i * 4], 0), 1)       // top row first, like the field
+            let v = d.values[i] + (1 - d.values[i]) * k
+            out.values[i] = v
+            hist[min(Int(v * 64), 63)] += 1
+        }
+        let top = max(hist.max() ?? 1, 1)
+        out.histogram = hist.map { $0 / top }
+        return out
+    }
+
     static func depthImage(_ d: DepthField, extent ext: CGRect) -> CIImage {
         // bitmap data is read top row first, like the field
         let data = d.values.withUnsafeBufferPointer { Data(buffer: $0) }
