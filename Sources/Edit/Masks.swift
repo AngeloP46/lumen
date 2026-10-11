@@ -296,7 +296,9 @@ extension EditSession {
             source.storeMask(Self.aiScene, nil)
             computed = true
         }
-        if needSky, !source.hasTried(Self.aiSky) {
+        // the sky is also worked out for Landscape parts: they are kept off it (Vegetation stops where the sky seen
+        // through the leaves starts)
+        if needSky || !sceneSets.isEmpty, !source.hasTried(Self.aiSky) {
             if let global = source.sceneField, global.found.contains(.sky) {
                 // finer at the sky's edge (four quarters), then the sky seen through trees
                 let scene = skyScene(global, source: source) ?? global
@@ -311,7 +313,7 @@ extension EditSession {
             let key = Self.sceneKey(parts)
             guard !source.hasTried(key) else { continue }
             let ps = parts.compactMap(ScenePart.init(rawValue:))
-            source.storeMask(key, source.sceneField.flatMap { sceneMask(ps, $0, source: source) })
+            source.storeMask(key, source.sceneField.flatMap { landscapeMask(ps, $0, source: source) })
             computed = true
         }
         if needPeople, !source.hasTried(Self.aiPeople) {
@@ -648,18 +650,9 @@ extension EditSession {
     /// Only the model's trees are looked at: grass, flowers, buildings and cars never turn into sky.
     func skyThroughTrees(_ sky: CIImage, scene: SceneField, source: ImageSource) -> CIImage {
         guard let k = LumenKernels.shared, let weigh = k.skyWeigh, let leaf = k.leafWeigh, let gaps = k.skyGaps else { return sky }
-        let tree = ScenePart.treeClass
-        let cover = scene.labels.map { $0 == tree ? Float(1) : 0 }
-        guard cover.contains(1) else { return sky }
+        // the trees, a little wider than the model drew them (their edges are where most gaps are), then softened
+        guard let t = labelRegion([ScenePart.treeClass], scene, source: source, grow: 2) else { return sky }
         let ext = source.extent
-        let data = cover.withUnsafeBufferPointer { Data(buffer: $0) }
-        var t = Self.expandRed(CIImage(bitmapData: data, bytesPerRow: scene.width * 4,
-                                       size: CGSize(width: scene.width, height: scene.height), format: .Rf, colorSpace: nil))
-        // a little wider than the model drew them (their edges are where most gaps are), then softened
-        t = t.applyingFilter("CIMorphologyMaximum", parameters: [kCIInputRadiusKey: 2]).cropped(to: t.extent)
-        t = Self.blur(t, 1.0, t.extent)
-        if let m = Self.materialized(t) { t = m }
-        t = Self.fit(t, to: ext)
         // the colour fields change slowly: measured on a copy an eighth the size, blurred widely, stretched back
         let f: CGFloat = 0.125
         let sigma = max(2, 0.05 * source.longEdge * f)
@@ -682,6 +675,41 @@ extension EditSession {
               let fd = field(leaf.apply(extent: ext, arguments: [source.base, t, sn, sd, CIVector(x: 0, y: 0, z: 1, w: 0)])),
               let out = gaps.apply(extent: ext, arguments: [source.base, sky, t, sn, sd, fn, fd, CIVector(x: 0.05, y: 0.15, z: 0, w: 0)])
         else { return sky }
+        return Self.materializedMask(out) ?? out
+    }
+
+    /// Where `scene` has any of `classes`, as a soft mask over the source (`grow` = cells added round it first).
+    func labelRegion(_ classes: Set<Int32>, _ scene: SceneField, source: ImageSource, grow: CGFloat = 0) -> CIImage? {
+        let cover = scene.labels.map { classes.contains($0) ? Float(1) : 0 }
+        guard cover.contains(1) else { return nil }
+        let data = cover.withUnsafeBufferPointer { Data(buffer: $0) }
+        var t = Self.expandRed(CIImage(bitmapData: data, bytesPerRow: scene.width * 4,
+                                       size: CGSize(width: scene.width, height: scene.height), format: .Rf, colorSpace: nil))
+        if grow > 0 { t = t.applyingFilter("CIMorphologyMaximum", parameters: [kCIInputRadiusKey: grow]).cropped(to: t.extent) }
+        t = Self.blur(t, 1.0, t.extent)
+        if let m = Self.materialized(t) { t = m }
+        return Self.fit(t, to: source.extent)
+    }
+
+    /// Landscape parts kept off the sky (owner, 2026-10-12): the finer Sky (four quarters + sky through trees) is
+    /// taken out of every part, so Vegetation stops where the sky seen through the leaves starts and the parts' edges
+    /// meet the sky's exactly. Vegetation also gets back the tree tops the whole-photo run called sky but the finer
+    /// sky gave to the trees. Only a sky found by the scene model is used (the classical finder can mistake walls).
+    func landscapeMask(_ parts: [ScenePart], _ scene: SceneField, source: ImageSource) -> CIImage? {
+        let base = sceneMask(parts, scene, source: source)
+        guard scene.found.contains(.sky), let sky = source.cachedMask(Self.aiSky), let k = LumenKernels.shared else { return base }
+        let ext = source.extent
+        var m = base
+        if parts.contains(.vegetation),
+           let trees = labelRegion([ScenePart.treeClass], scene, source: source, grow: 2),
+           let coarseSky = labelRegion(Set(ScenePart.sky.classes), scene, source: source),
+           let topsUnderSky = k.maskMul.apply(extent: ext, arguments: [trees, coarseSky]) {
+            m = m.map { topsUnderSky.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: $0]).cropped(to: ext) }
+                ?? topsUnderSky
+        }
+        guard let parts = m else { return nil }
+        let notSky = sky.applyingFilter("CIColorInvert").cropped(to: ext)
+        guard let out = k.maskMul.apply(extent: ext, arguments: [parts, notSky]) else { return parts }
         return Self.materializedMask(out) ?? out
     }
 

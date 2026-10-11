@@ -1285,6 +1285,7 @@ if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
     }
     // Sky seen through trees (2026-10-11): before / after sheets, and the gaps never spill onto a white building
     var skyTiles: [(String, CGImage)] = []
+    var vegTiles: [(String, CGImage)] = []
     var skyPhotos = files.filter { ["jpg", "arw"].contains($0.pathExtension.lowercased()) }
     if let t = ProcessInfo.processInfo.environment["LUMEN_TREES_SAMPLE"] { skyPhotos.insert(URL(fileURLWithPath: t), at: 0) }
     for url in skyPhotos {
@@ -1323,11 +1324,38 @@ if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
         if let p = smallRender(photo, width: 300), let b = tinted(gaps), let a = tinted(after) {
             skyTiles += [("\(stem)", p), ("sky (live)", b), ("four quarters", a)]
         }
+        // Landscape parts keep off the sky (2026-10-12): Vegetation must not cover the sky seen through the leaves
+        source.storeMask(EditSession.aiSky, after)
+        if scene.found.contains(.vegetation), let oldVeg = session.sceneMask([.vegetation], scene, source: source),
+           let newVeg = session.landscapeMask([.vegetation], scene, source: source),
+           let mul = k.maskMul.apply(extent: source.extent, arguments: [newVeg, after]),
+           let mulOld = k.maskMul.apply(extent: source.extent, arguments: [oldVeg, after]),
+           let both = maskValues(mul, width: 96), let bothOld = maskValues(mulOld, width: 96) {
+            let overlap = both.v.reduce(0, +) / Float(both.v.count), overlapOld = bothOld.v.reduce(0, +) / Float(bothOld.v.count)
+            print("::notice::\(stem): vegetation over sky \(overlapOld) -> \(overlap)")
+            check(overlap < 0.01, "\(stem): Vegetation should keep off the sky (overlap \(overlap), was \(overlapOld))")
+            let photo = session.develop(EditSettings(), source: source, geometry: true)
+            func tint(_ m: CIImage) -> CGImage? {
+                smallRender(k.overlay.apply(extent: photo.extent, arguments: [photo, m, CIVector(x: 0.2, y: 1, z: 0.3, w: 0.55)]) ?? photo, width: 300)
+            }
+            if let p = smallRender(photo, width: 300), let a = tint(oldVeg), let b = tint(newVeg) {
+                vegTiles += [("\(stem)", p), ("vegetation before", a), ("vegetation now", b)]
+            }
+        }
         if stem == "matterhorn", let mv = maskValues(after) {
             let q = mv.h / 5
             let top = mv.v[0..<(q * mv.w)].reduce(0, +) / Float(q * mv.w)
             let bottom = mv.v[((mv.h - q) * mv.w)...].reduce(0, +) / Float(q * mv.w)
             check(top > 0.5 && bottom < 0.2, "matterhorn (quarters): the sky should cover the top (\(top)) and not the bottom (\(bottom))")
+        }
+    }
+    if !vegTiles.isEmpty, let cg = sheet(vegTiles, cell: 300, cols: 3) {
+        let dir = outDir.appendingPathComponent("previews")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let d = CGImageDestinationCreateWithURL(dir.appendingPathComponent("vegetation-sky.jpg") as CFURL, UTType.jpeg.identifier as CFString, 1, nil) {
+            CGImageDestinationAddImage(d, cg, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+            CGImageDestinationFinalize(d)
+            print("::notice::preview vegetation-sky.jpg saved")
         }
     }
     if !skyTiles.isEmpty, let cg = sheet(skyTiles, cell: 300, cols: 3) {

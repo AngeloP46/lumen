@@ -440,7 +440,9 @@ final class EditorViewModel: ObservableObject {
         guard needs else { return }
         let snapshot = settings
         autoMaskBusy = true
+        let slow = DemoMode.value("-lumenDemoSlowAI") != nil   // CI: time to see the busy notice
         workQueue.async {
+            if slow { Thread.sleep(forTimeInterval: 4) }
             session.prepareAutoMasks(snapshot, source: source)
             let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople, EditSession.aiDepth, EditSession.aiScene].filter { source.hasTried($0) && source.cachedMask($0) == nil })
             Task { @MainActor [weak self] in
@@ -859,6 +861,31 @@ final class EditorViewModel: ObservableObject {
             return "No \(ListFormatter.localizedString(byJoining: names)) found in this photo"
         default: return nil
         }
+    }
+
+    /// What the AI is still working out for `m`, shown on the photo so a tap on an automatic mask type never looks
+    /// ignored (owner, 2026-10-12: Depth took a few seconds with nothing to see). nil when nothing is pending.
+    func aiPending(_ m: Mask?) -> String? {
+        guard autoMaskBusy, let m, let source else { return nil }
+        for c in m.components {
+            switch c.kind {
+            case .subject, .background:
+                if !source.hasTried(EditSession.aiSubject) { return "Finding the subject…" }
+            case .sky:
+                if !source.hasTried(EditSession.aiSky) { return "Finding the sky…" }
+            case .people:
+                if !source.hasTried(EditSession.aiPeople) { return "Finding people…" }
+            case .depth:
+                if EditSession.hasDepthModel, !source.hasTried(EditSession.aiDepth) { return "Measuring depth…" }
+            case .landscape:
+                if EditSession.hasSceneModel,
+                   !source.hasTried(EditSession.aiScene) || (!c.scene.isEmpty && !source.hasTried(EditSession.sceneKey(c.scene))) {
+                    return "Looking at the scene…"
+                }
+            default: break
+            }
+        }
+        return nil
     }
 
     /// A whole mask selects nothing when every part it adds is empty (subtract / intersect parts can't add anything).

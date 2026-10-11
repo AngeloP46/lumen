@@ -39,6 +39,11 @@ final class LumenUITests: XCTestCase {
 
     func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
 
+    func waitGone(_ e: XCUIElement, timeout: TimeInterval) -> Bool {
+        let p = NSPredicate(format: "exists == false")
+        return XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: p, object: e)], timeout: timeout) == .completed
+    }
+
     func valueOf(_ id: String) -> String { (el(id).value as? String) ?? "" }
 
     func zoomLevel() -> Double {
@@ -442,6 +447,17 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(el("heal-note").waitForExistence(timeout: 10), "without the model in this build, the panel should say so")
         XCTAssertFalse(el("heal-busy").exists, "nothing should be left spinning")
         shot("heal-unavailable")
+    }
+
+    /// Tapping an automatic mask type shows at once, on the photo, that the AI is working (CI slows the AI down).
+    func testAutoMaskShowsItIsWorking() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoSlowAI", "1"])
+        if !el("kind-subject").waitForExistence(timeout: 10) { el("mask-add").tap() }
+        XCTAssertTrue(el("kind-subject").waitForExistence(timeout: 10), "the mask types should show")
+        el("kind-subject").tap()
+        XCTAssertTrue(el("mask-busy").waitForExistence(timeout: 2), "the photo should say the subject is being found")
+        shot("mask-busy")
+        XCTAssertTrue(waitGone(el("mask-busy"), timeout: 60), "the notice should go once the mask is ready")
     }
 
     /// A RAW photo opened for the first time starts in HDR (the sample ARW, fresh: no saved edits).

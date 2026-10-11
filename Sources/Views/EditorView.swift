@@ -503,6 +503,21 @@ struct EditorView: View {
                     .accessibilityIdentifier("clip-badge")
                 }
             }
+            .overlay {
+                // an automatic mask is still being worked out: say so on the photo (a tap must never look ignored)
+                if tool == .masks, !chromeHidden, let busy = vm.aiPending(vm.selectedMask) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small).tint(.white)
+                        Text(busy).font(.caption.weight(.semibold))
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .foregroundStyle(.white)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("mask-busy")
+                }
+            }
             .overlay(alignment: .bottom) {
                 // the AI found nothing for the selected mask: say so on the photo too
                 if tool == .masks, !chromeHidden, let m = vm.selectedMask, let why = vm.emptyReason(m) {
