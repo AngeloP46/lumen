@@ -79,6 +79,8 @@ final class EditorViewModel: ObservableObject {
     private var source: ImageSource?
     /// Estimated depth of the open photo (once a Depth mask asked for it).
     var depthField: DepthField? { source?.depthField }
+    /// What the scene model found in the open photo (Landscape mask parts).
+    var sceneField: SceneField? { source?.sceneField }
     private weak var store: LibraryStore?
     private var started = false
     private var histPending = false
@@ -181,6 +183,7 @@ final class EditorViewModel: ObservableObject {
                     let (masks, tried) = previous.snapshotMasks()
                     for key in tried { src.storeMask(key, masks[key]) }
                     src.storeDepth(previous.depthField)
+                    src.storeScene(previous.sceneField)
                 }
                 self.session = s
                 self.source = src
@@ -412,7 +415,7 @@ final class EditorViewModel: ObservableObject {
         autoMaskBusy = true
         workQueue.async {
             session.prepareAutoMasks(snapshot, source: source)
-            let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople, EditSession.aiDepth].filter { source.hasTried($0) && source.cachedMask($0) == nil })
+            let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople, EditSession.aiDepth, EditSession.aiScene].filter { source.hasTried($0) && source.cachedMask($0) == nil })
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.autoMaskBusy = false

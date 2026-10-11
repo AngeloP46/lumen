@@ -1236,21 +1236,48 @@ do {
     }
 }
 
-// Probe: what the scene segmentation model expects and returns (printed as annotations)
+// Scene model (2026-10-11): Lightroom-style Landscape parts and an AI sky
+check(MaskComponent.make(.subject).feather == 0 && MaskComponent.make(.landscape).feather == 0, "AI masks should start with no extra softening")
 if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
-    do {
-        let ml = try MLModel(contentsOf: URL(fileURLWithPath: p))
-        let d = ml.modelDescription
-        for (k, v) in d.inputDescriptionsByName { print("::warning::seg input \(k): \(v)") }
-        for (k, v) in d.outputDescriptionsByName { print("::warning::seg output \(k): \(v)") }
-        let meta = d.metadata[.creatorDefinedKey] as? [String: String] ?? [:]
-        if let js = meta["com.apple.coreml.model.preview.params"]?.data(using: .utf8),
-           let o = try? JSONSerialization.jsonObject(with: js) as? [String: Any], let labels = o["labels"] as? [String] {
-            let named = labels.enumerated().filter { $0.offset >= 90 && $0.element != "--" }.map { "\($0.offset):\($0.element)" }
-            print("::warning::seg labels (\(labels.count)) from 90: \(named.joined(separator: ", "))")
+    check(EditSession.hasSceneModel, "the scene model should load from LUMEN_SEG_MODEL")
+    // the class numbers in ScenePart must name what we think they do
+    if let ml = try? MLModel(contentsOf: URL(fileURLWithPath: p)),
+       let js = (ml.modelDescription.metadata[.creatorDefinedKey] as? [String: String])?["com.apple.coreml.model.preview.params"]?.data(using: .utf8),
+       let o = try? JSONSerialization.jsonObject(with: js) as? [String: Any], let labels = o["labels"] as? [String] {
+        let expect: [ScenePart: [String]] = [.sky: ["sky"], .water: ["river", "sea", "water"], .vegetation: ["tree", "grass", "flower"],
+                                             .mountains: ["mountain", "rock"], .naturalGround: ["sand", "snow", "dirt", "gravel", "playingfield"],
+                                             .artificialGround: ["road", "pavement", "railroad", "platform"],
+                                             .architecture: ["building", "house", "roof", "wall", "bridge", "window", "door"]]
+        for part in ScenePart.allCases {
+            for c in part.classes {
+                let name = Int(c) < labels.count ? labels[Int(c)] : "?"
+                check(expect[part]!.contains { name.hasPrefix($0) }, "scene class \(c) for \(part.rawValue) is '\(name)'")
+            }
         }
-        print("::warning::seg labels: \(String(describing: d.classLabels?.prefix(200)))")
-    } catch { print("::warning::seg model failed to load: \(error)") }
+    } else { check(false, "scene model labels could not be read") }
+    for f in files where f.lastPathComponent.hasPrefix("matterhorn") {
+        guard let session = EditSession(url: f), let source = session.makeSource(maxEdge: 1200, materialize: true) else { continue }
+        var c = MaskComponent.make(.landscape); c.scene = [ScenePart.mountains.rawValue]
+        var s = EditSettings(); s.masks = [Mask(name: "l", components: [c]), Mask.make(.sky)]
+        let t0 = now()
+        session.prepareAutoMasks(s, source: source)
+        let ms = Int((now() - t0) * 1000)
+        let found = source.sceneField?.found ?? []
+        print("::notice::scene matterhorn in \(ms) ms: found \(found.map(\.rawValue).sorted())")
+        check(found.contains(.sky), "matterhorn: the scene model should find the sky (found \(found.map(\.rawValue)))")
+        if let img = session.maskImage(Mask.make(.sky), source: source, gain: 1), let mv = maskValues(img) {
+            let q = mv.h / 5
+            let top = mv.v[0..<(q * mv.w)].reduce(0, +) / Float(q * mv.w)
+            let bottom = mv.v[((mv.h - q) * mv.w)...].reduce(0, +) / Float(q * mv.w)
+            check(top > 0.5 && bottom < 0.2, "matterhorn: the AI sky should cover the top (\(top)) and not the bottom (\(bottom))")
+        } else { check(false, "matterhorn: sky mask render failed") }
+        if found.contains(.mountains), let img = session.maskImage(Mask(name: "l", components: [c]), source: source, gain: 1),
+           let mv = maskValues(img) {
+            check(mv.v.reduce(0, +) / Float(mv.v.count) > 0.05, "matterhorn: the Mountains part should select something")
+        }
+    }
+} else {
+    print("::warning::no LUMEN_SEG_MODEL: scene masks not checked")
 }
 
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")

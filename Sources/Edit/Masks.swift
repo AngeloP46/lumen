@@ -12,6 +12,8 @@ extension EditSession {
     static let aiSky = "sky"
     static let aiPeople = "people"
     static let aiDepth = "depth"
+    static let aiScene = "scene"
+    static func sceneKey(_ parts: [String]) -> String { "scene:" + parts.sorted().joined(separator: "+") }
 
     // MARK: Planes
 
@@ -122,6 +124,8 @@ extension EditSession {
             img = source.cachedMask(Self.aiSky) ?? zero
         case .people:
             img = source.cachedMask(Self.aiPeople) ?? zero
+        case .landscape:
+            img = c.scene.isEmpty ? zero : (source.cachedMask(Self.sceneKey(c.scene)) ?? zero)
         case .luminance:
             img = k.lumMask.apply(extent: ext, arguments: [
                 source.base,
@@ -270,12 +274,14 @@ extension EditSession {
     @discardableResult
     func prepareAutoMasks(_ s: EditSettings, source: ImageSource) -> Bool {
         var needSubject = false, needSky = false, needPeople = false, needDepth = false
+        var sceneSets: Set<[String]> = []
         for m in s.masks {
             for c in m.components {
                 if c.kind == .subject || c.kind == .background { needSubject = true }
                 if c.kind == .sky { needSky = true }
                 if c.kind == .people { needPeople = true }
                 if c.kind == .depth { needDepth = true }
+                if c.kind == .landscape, !c.scene.isEmpty { sceneSets.insert(c.scene.sorted()) }
             }
         }
         var computed = false
@@ -283,8 +289,27 @@ extension EditSession {
             source.storeMask(Self.aiSubject, refined(computeSubject(source), source: source))
             computed = true
         }
+        // the scene model (one run) serves both the Sky mask and every Landscape part
+        if (needSky || !sceneSets.isEmpty || s.masks.contains { $0.components.contains { $0.kind == .landscape } }),
+           !source.hasTried(Self.aiScene) {
+            source.storeScene(computeScene(source))
+            source.storeMask(Self.aiScene, nil)
+            computed = true
+        }
         if needSky, !source.hasTried(Self.aiSky) {
-            source.storeMask(Self.aiSky, refined(computeSky(source), source: source))
+            if let scene = source.sceneField, scene.found.contains(.sky) {
+                source.storeMask(Self.aiSky, sceneMask([.sky], scene, source: source))
+            } else {
+                // no scene model in this build, or it saw no sky: the classical finder has a go
+                source.storeMask(Self.aiSky, refined(computeSky(source), source: source))
+            }
+            computed = true
+        }
+        for parts in sceneSets {
+            let key = Self.sceneKey(parts)
+            guard !source.hasTried(key) else { continue }
+            let ps = parts.compactMap(ScenePart.init(rawValue:))
+            source.storeMask(key, source.sceneField.flatMap { sceneMask(ps, $0, source: source) })
             computed = true
         }
         if needPeople, !source.hasTried(Self.aiPeople) {
@@ -474,6 +499,64 @@ extension EditSession {
                                 colorSpace: nil)
         let out = expandRed(CIImage(cvPixelBuffer: buf, options: [.colorSpace: NSNull()]))
         return out.transformed(by: CGAffineTransform(translationX: e.minX, y: e.minY))
+    }
+
+    // MARK: Scene (Sky and Landscape)
+
+    nonisolated(unsafe) static var sceneModelURL: URL? = {
+        if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] { return URL(fileURLWithPath: p) }
+        return Bundle.main.url(forResource: "DETRResnet50SemanticSegmentationF16", withExtension: "mlmodelc")
+    }()
+    private static let sceneModel: VNCoreMLModel? = {
+        guard let url = sceneModelURL else { return nil }
+        let cfg = MLModelConfiguration()
+        cfg.computeUnits = .all
+        guard let ml = try? MLModel(contentsOf: url, configuration: cfg) else { return nil }
+        return try? VNCoreMLModel(for: ml)
+    }()
+    static var hasSceneModel: Bool { sceneModel != nil }
+
+    /// Labels every part of the photo (sky, water, trees, buildings, road, ...) with Apple's on-device DETR
+    /// segmentation model (448 x 448, the photo stretched to fit).
+    func computeScene(_ source: ImageSource) -> SceneField? {
+        guard let model = Self.sceneModel else { return nil }
+        let ext = source.extent
+        let k = min(1, 1024 / max(ext.width, ext.height))
+        let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
+        guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+        else { return nil }
+        let request = VNCoreMLRequest(model: model)
+        request.imageCropAndScaleOption = .scaleFill
+        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { return nil }
+        guard let obs = request.results?.first as? VNCoreMLFeatureValueObservation,
+              let arr = obs.featureValue.multiArrayValue, arr.shape.count >= 2 else { return nil }
+        let h = arr.shape[arr.shape.count - 2].intValue, w = arr.shape[arr.shape.count - 1].intValue
+        guard w > 1, h > 1, arr.count >= w * h else { return nil }
+        var labels = [Int32](repeating: 0, count: w * h)
+        if arr.dataType == .int32 {
+            let p = arr.dataPointer.bindMemory(to: Int32.self, capacity: w * h)
+            for i in 0..<(w * h) { labels[i] = p[i] }
+        } else {
+            for i in 0..<(w * h) { labels[i] = arr[i].int32Value }
+        }
+        var counts: [Int32: Int] = [:]
+        for l in labels { counts[l, default: 0] += 1 }
+        let minCells = w * h / 300   // a part must cover at least ~0.3 % of the photo to count as found
+        let found = Set(ScenePart.allCases.filter { p in p.classes.reduce(0) { $0 + (counts[$1] ?? 0) } >= minCells })
+        return SceneField(width: w, height: h, labels: labels, found: found)
+    }
+
+    /// One or more Landscape parts as a mask over the photo, edges snapped onto the photo's real edges.
+    func sceneMask(_ parts: [ScenePart], _ scene: SceneField, source: ImageSource) -> CIImage? {
+        let cover = scene.coverage(parts)
+        guard cover.contains(where: { $0 > 0 }) else { return nil }
+        let data = cover.withUnsafeBufferPointer { Data(buffer: $0) }
+        var ci = CIImage(bitmapData: data, bytesPerRow: scene.width * 4, size: CGSize(width: scene.width, height: scene.height),
+                         format: .Rf, colorSpace: nil)
+        ci = Self.expandRed(ci)
+        ci = Self.blur(ci, 0.7, ci.extent)
+        if let m = Self.materialized(ci) { ci = m }
+        return refined(Self.fit(ci, to: source.extent), source: source)
     }
 
     // MARK: Depth

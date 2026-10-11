@@ -82,6 +82,7 @@ final class ImageSource: @unchecked Sendable {
     private var tried: Set<String> = []
     private var raster: [MaskComponent: CIImage] = [:]
     private var depth: DepthField?
+    private var scene: SceneField?
 
     var longEdge: CGFloat { max(size.width, size.height) }
     var extent: CGRect { CGRect(origin: .zero, size: size) }
@@ -112,6 +113,9 @@ final class ImageSource: @unchecked Sendable {
     /// Estimated depth (see Masks.swift computeDepth), kept for picking a depth by tapping and for the range graph.
     var depthField: DepthField? { lock.lock(); defer { lock.unlock() }; return depth }
     func storeDepth(_ d: DepthField?) { lock.lock(); defer { lock.unlock() }; if let d { depth = d } }
+    /// What the scene model saw (Sky and Landscape masks).
+    var sceneField: SceneField? { lock.lock(); defer { lock.unlock() }; return scene }
+    func storeScene(_ s: SceneField?) { lock.lock(); defer { lock.unlock() }; if let s { scene = s } }
 
     func cachedRaster(_ c: MaskComponent) -> CIImage? { lock.lock(); defer { lock.unlock() }; return raster[c] }
     func storeRaster(_ c: MaskComponent, _ img: CIImage) {
@@ -140,6 +144,19 @@ struct DepthField: Sendable {
             sum += values[py * width + px]; n += 1
         } }
         return n > 0 ? sum / n : 0.5
+    }
+}
+
+/// Scene labels for a photo (one model class per cell, top row first) and the Landscape parts found in it.
+struct SceneField: Sendable {
+    var width: Int
+    var height: Int
+    var labels: [Int32]
+    var found: Set<ScenePart>
+
+    func coverage(_ parts: [ScenePart]) -> [Float] {
+        let set = Set(parts.flatMap(\.classes))
+        return labels.map { set.contains($0) ? 1 : 0 }
     }
 }
 

@@ -438,6 +438,29 @@ struct MaskPanel: View {
             LumRangeEditor(low: cb(c, \.lumLow), high: cb(c, \.lumHigh),
                            lowFeather: cb(c, \.lumLowFeather), highFeather: cb(c, \.lumHighFeather),
                            histogram: vm.histogram?.luma)
+        case .landscape:
+            if !EditSession.hasSceneModel {
+                hint("This build has no scene model, so the Landscape mask can't work yet.")
+            } else if vm.autoMaskBusy && vm.sceneField == nil {
+                HStack { ProgressView(); Text("Looking at the scene…").font(.caption).foregroundStyle(.secondary) }
+            } else {
+                hint(c.scene.isEmpty ? "Pick what to select. Parts not found in this photo are dimmed."
+                                     : "Tap more parts to add them, tap again to remove.")
+            }
+            let found = vm.sceneField?.found
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)], alignment: .leading, spacing: 6) {
+                ForEach(ScenePart.allCases) { part in
+                    let on = c.scene.contains(part.rawValue)
+                    Chip(title: part.title, system: part.icon, selected: on) {
+                        vm.updateComponent(c.id) { comp in
+                            if on { comp.scene.removeAll { $0 == part.rawValue } } else { comp.scene.append(part.rawValue) }
+                        }
+                    }
+                    .opacity(found == nil || found!.contains(part) || on ? 1 : 0.4)
+                    .accessibilityIdentifier("scene-\(part.rawValue)")
+                }
+            }
+            LabeledSlider(title: "Soften", value: cb(c, \.feather), range: 0...100, neutral: 0)
         case .depth:
             if !EditSession.hasDepthModel {
                 hint("This build has no depth model, so the Depth mask can't work yet.")

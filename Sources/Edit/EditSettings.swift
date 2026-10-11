@@ -43,7 +43,7 @@ struct ColorGrading: Codable, Equatable, Hashable {
 // MARK: - Masks
 
 enum MaskKind: String, Codable, CaseIterable, Identifiable {
-    case subject, sky, background, people, brush, linear, radial, luminance, color, depth
+    case subject, sky, background, people, landscape, brush, linear, radial, luminance, color, depth
     var id: String { rawValue }
 
     var title: String {
@@ -52,6 +52,7 @@ enum MaskKind: String, Codable, CaseIterable, Identifiable {
         case .sky: "Sky"
         case .background: "Background"
         case .people: "People"
+        case .landscape: "Landscape"
         case .brush: "Brush"
         case .linear: "Linear"
         case .radial: "Radial"
@@ -66,6 +67,7 @@ enum MaskKind: String, Codable, CaseIterable, Identifiable {
         case .sky: "cloud.sun"
         case .background: "mountain.2"
         case .people: "person.2"
+        case .landscape: "tree"
         case .brush: "paintbrush.pointed"
         case .linear: "square.tophalf.filled"
         case .radial: "circle.dashed"
@@ -75,9 +77,49 @@ enum MaskKind: String, Codable, CaseIterable, Identifiable {
         }
     }
     /// Kinds that are found automatically and need no shape editing.
-    var isAutomatic: Bool { self == .subject || self == .sky || self == .background || self == .people }
+    var isAutomatic: Bool { self == .subject || self == .sky || self == .background || self == .people || self == .landscape }
     /// Kinds that need an on-device model run before they can be drawn (depth also has a range to edit).
     var needsAnalysis: Bool { isAutomatic || self == .depth }
+}
+
+/// Lightroom's Landscape mask parts, each a group of the scene-segmentation model's classes (COCO panoptic).
+enum ScenePart: String, Codable, CaseIterable, Identifiable {
+    case sky, water, vegetation, mountains, architecture, naturalGround, artificialGround
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .sky: "Sky"
+        case .water: "Water"
+        case .vegetation: "Vegetation"
+        case .mountains: "Mountains"
+        case .architecture: "Architecture"
+        case .naturalGround: "Natural ground"
+        case .artificialGround: "Artificial ground"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .sky: "cloud.sun"
+        case .water: "water.waves"
+        case .vegetation: "leaf"
+        case .mountains: "mountain.2"
+        case .architecture: "building.2"
+        case .naturalGround: "square.stack.3d.down.forward"
+        case .artificialGround: "road.lanes"
+        }
+    }
+    /// Label indices in DETRResnet50SemanticSegmentationF16 (its metadata lists 201 labels; checked by the engine test).
+    var classes: [Int32] {
+        switch self {
+        case .sky: [187]
+        case .water: [148, 155, 178]                                   // river, sea, water (other)
+        case .vegetation: [184, 193, 119]                              // tree, grass, flower
+        case .mountains: [192, 198]                                    // mountain, rock
+        case .architecture: [197, 128, 151, 171, 175, 176, 177, 199, 95, 181, 180, 112]  // buildings, roofs, walls, bridge, windows, doors
+        case .naturalGround: [154, 159, 194, 125, 145]                 // sand, snow, dirt, gravel, playing field
+        case .artificialGround: [149, 191, 147, 144]                   // road, pavement, railroad, platform
+        }
+    }
 }
 
 enum MaskOp: String, Codable, CaseIterable, Identifiable {
@@ -150,6 +192,7 @@ struct MaskComponent: Codable, Equatable, Identifiable, Hashable {
     var lumLowFeather = 0.1, lumHighFeather = 0.1
     var samples: [ColorSample] = []   // colour range
     var tolerance = 0.18              // colour range
+    var scene: [String] = []          // landscape: which ScenePart raw values it selects
     var amount: Double = 100          // this part's own opacity, % (a half-strength Subtract only takes half away)
 
     static func make(_ kind: MaskKind, op: MaskOp = .add) -> MaskComponent {
@@ -161,6 +204,8 @@ struct MaskComponent: Codable, Equatable, Identifiable, Hashable {
         case .depth: c.lumLow = 0.0; c.lumHigh = 0.35; c.lumLowFeather = 0; c.lumHighFeather = 0.15
         default: break
         }
+        // AI masks start crisp (their edges are refined); Soften is there to blur them on purpose
+        if kind.isAutomatic { c.feather = 0 }
         return c
     }
 }
