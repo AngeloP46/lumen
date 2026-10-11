@@ -266,20 +266,6 @@ struct EditorView: View {
             // grab handle: drag up for more of the controls, down for more of the photo (all the way down closes it)
             ZStack {
                 Capsule().fill(Color.white.opacity(0.3)).frame(width: 44, height: 5)
-                if !landscape && !toolsCollapsed {
-                    // fold the tool bar away for more photo (tap the thin strip to bring it back)
-                    HStack {
-                        Spacer()
-                        Button { withAnimation(.easeOut(duration: 0.18)) { toolsCollapsed = true } } label: {
-                            Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color(white: 0.6))
-                                .frame(width: 44, height: 24).contentShape(Rectangle())
-                        }
-                        .accessibilityIdentifier("tools-collapse")
-                        .accessibilityLabel("Hide tools")
-                    }
-                    .padding(.trailing, 6)
-                }
             }
             .frame(maxWidth: .infinity)
             .frame(height: 24)
@@ -325,6 +311,20 @@ struct EditorView: View {
         }
         .frame(height: plan.height + 24)
         .clipped()   // nothing may ever spill over the tool bar
+        // fold the tool bar away for more photo (tap the thin strip to bring it back). Laid over the grab row rather
+        // than inside it: the grab row's own drag and double-tap would swallow the tap.
+        .overlay(alignment: .topTrailing) {
+            if !landscape && !toolsCollapsed {
+                Button { withAnimation(.easeOut(duration: 0.18)) { toolsCollapsed = true } } label: {
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color(white: 0.6))
+                        .frame(width: 48, height: 24).contentShape(Rectangle())
+                }
+                .padding(.trailing, 4)
+                .accessibilityIdentifier("tools-collapse")
+                .accessibilityLabel("Hide tools")
+            }
+        }
         .background(Theme.panel, in: UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("panel")
@@ -672,6 +672,7 @@ struct EditorView: View {
         guard tool != .crop, xf.image != .zero else { return }
         switch phase {
         case .began:
+            if DemoMode.isOn { DemoMode.log(String(format: "pinch began spread %.0f tool %@", Double(spread), tool?.rawValue ?? "none")) }
             vm.pinching = true
             if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
             twoFinger = (zoom, pan, p, spread)

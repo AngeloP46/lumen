@@ -313,7 +313,7 @@ final class LumenUITests: XCTestCase {
         el("photo").pinch(withScale: 0.45, velocity: -1)
         sleep(1)
         let z = zoomLevel()
-        XCTAssertLessThan(z, 0.85, "in Masks pinching in should make the photo smaller than the screen, got \(z)")
+        XCTAssertLessThan(z, 0.85, "in Masks pinching in should make the photo smaller than the screen, got \(z); events: \(events().suffix(12).joined(separator: " | ")); photo \(valueOf("photo")) frame \(el("photo").frame)")
         XCTAssertGreaterThan(z, 0.25, "but not smaller than the limit, got \(z)")
         shot("masks-zoomed-out")
         el("tool-Light").tap()

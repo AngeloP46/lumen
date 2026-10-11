@@ -611,7 +611,7 @@ struct MaskOverlay: View {
         handle(at: a) { loc in let p = free(loc); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } }
         handle(at: b) { loc in let p = free(loc); vm.updateComponent(c.id) { $0.x1 = p.x; $0.y1 = p.y } }
         // turn: keep the centre and the width, point the lines along the finger
-        RotateDot().position(knob)
+        RotateDot().accessibilityElement(children: .ignore).accessibilityIdentifier("mask-rotate").position(knob)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { v in
                     guard !vm.pinching else { return }
@@ -625,10 +625,8 @@ struct MaskOverlay: View {
                     let pb = free(CGPoint(x: mid.x + half.x, y: mid.y + half.y))
                     vm.updateComponent(c.id) { $0.x0 = pa.x; $0.y0 = pa.y; $0.x1 = pb.x; $0.y1 = pb.y }
                 })
-            .accessibilityElement(children: .ignore)
-            .accessibilityIdentifier("mask-rotate")
         // move: the blue pin carries both lines
-        PinDot().position(mid)
+        PinDot().accessibilityElement(children: .ignore).accessibilityIdentifier("mask-pin").position(mid)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { v in
                     guard !vm.pinching else { return }
@@ -641,8 +639,6 @@ struct MaskOverlay: View {
                         $0.x1 = lim(c.x1 + ddx); $0.y1 = lim(c.y1 + ddy)
                     }
                 })
-            .accessibilityElement(children: .ignore)
-            .accessibilityIdentifier("mask-pin")
     }
 
     @ViewBuilder
@@ -661,14 +657,12 @@ struct MaskOverlay: View {
             .rotationEffect(.degrees(deg))
             .position(centre)
             .allowsHitTesting(false)
-        PinDot().position(centre)
+        PinDot().accessibilityElement(children: .ignore).accessibilityIdentifier("mask-pin").position(centre)
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { v in
                     guard !vm.pinching else { return }; let p = free(v.location); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } })
-            .accessibilityElement(children: .ignore)
-            .accessibilityIdentifier("mask-pin")
         // turn: a knob just outside the top of the ellipse; drag it round the centre
-        RotateDot().position(CGPoint(x: centre.x - v.x * (ry + 34), y: centre.y - v.y * (ry + 34)))
+        RotateDot().accessibilityElement(children: .ignore).accessibilityIdentifier("mask-rotate").position(CGPoint(x: centre.x - v.x * (ry + 34), y: centre.y - v.y * (ry + 34)))
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { g in
                     guard !vm.pinching else { return }
@@ -681,8 +675,6 @@ struct MaskOverlay: View {
                     d -= 90
                     vm.updateComponent(c.id) { $0.angle = (d * 2).rounded() / 2 }
                 })
-            .accessibilityElement(children: .ignore)
-            .accessibilityIdentifier("mask-rotate")
         handle(at: CGPoint(x: centre.x + u.x * rx, y: centre.y + u.y * rx)) { loc in
             let d = (loc.x - centre.x) * u.x + (loc.y - centre.y) * u.y
             vm.updateComponent(c.id) { $0.x1 = max(0.02, min(3, Double(abs(d) / max(pxW, 1)))) }
