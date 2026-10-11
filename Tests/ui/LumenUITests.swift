@@ -419,6 +419,19 @@ final class LumenUITests: XCTestCase {
         }
     }
 
+    /// A mask the AI can't fill says so (panel and photo) and can be removed in one tap. In the simulator the
+    /// Landscape model isn't bundled, which is exactly such a case.
+    func testEmptyAIMaskSaysSoAndCanBeRemoved() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "landscape"])
+        let banner = el("mask-empty")
+        XCTAssertTrue(banner.waitForExistence(timeout: 30), "an AI mask that selects nothing should say so in the panel")
+        XCTAssertTrue(el("mask-empty-photo").exists, "and on the photo")
+        shot("mask-empty")
+        el("mask-empty-remove").tap()
+        XCTAssertTrue(el("kind-subject").waitForExistence(timeout: 10), "Remove mask should take it away (back to the mask list)")
+        XCTAssertFalse(el("mask-empty").exists)
+    }
+
     // MARK: navigation
 
     func testSwipeToNextPhoto() {

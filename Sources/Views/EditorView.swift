@@ -194,7 +194,7 @@ struct EditorView: View {
                                : ToolSpec(compact: 100, roomy: 0, rows: 4, header: 44, sections: 2 * 30)
         case .detail: return ToolSpec(compact: 100, roomy: 0, rows: 14, header: 8, sections: 5 * 30)
         case .masks:
-            if vm.settings.masks.isEmpty || vm.selectedMask == nil { return ToolSpec(compact: 150, roomy: 176) }
+            if vm.settings.masks.isEmpty || vm.selectedMask == nil { return ToolSpec(compact: 166, roomy: 176) }
             // header rows (mask chips + Shape/Adjust tabs) sit above the sliders; Reset rides on the first heading
             return vm.maskTab == .shape ? ToolSpec(compact: 250, roomy: 330)
                                         : ToolSpec(compact: 190, roomy: 0, rows: 14, header: 82, sections: 4 * 30)
@@ -493,6 +493,19 @@ struct EditorView: View {
                     .foregroundStyle(.white)
                     .padding(10)
                     .accessibilityIdentifier("clip-badge")
+                }
+            }
+            .overlay(alignment: .bottom) {
+                // the AI found nothing for the selected mask: say so on the photo too
+                if tool == .masks, !chromeHidden, let m = vm.selectedMask, let why = vm.emptyReason(m) {
+                    Label(why, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 11).padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .foregroundStyle(.white)
+                        .padding(.bottom, 12)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("mask-empty-photo")
                 }
             }
             .overlay(alignment: .bottom) {

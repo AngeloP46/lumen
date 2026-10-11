@@ -109,6 +109,10 @@ enum ScenePart: String, Codable, CaseIterable, Identifiable {
         }
     }
     /// Label indices in DETRResnet50SemanticSegmentationF16 (its metadata lists 201 labels; checked by the engine test).
+    /// Parts offered by the Landscape mask. Sky is its own mask (same AI), so it isn't repeated here; older edits
+    /// that picked it still work.
+    static let landscapeParts: [ScenePart] = [.water, .vegetation, .mountains, .architecture, .naturalGround, .artificialGround]
+
     var classes: [Int32] {
         switch self {
         case .sky: [187]

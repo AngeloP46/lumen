@@ -180,6 +180,7 @@ struct MaskPanel: View {
                 typeGrid
             } else if let m = vm.selectedMask {
                 header(m)
+                if let why = vm.emptyReason(m) { emptyBanner(why, m) }
                 HStack(spacing: 0) {
                     ForEach(MaskTab.allCases) { t in
                         Button { vm.maskTab = t } label: {
@@ -210,31 +211,73 @@ struct MaskPanel: View {
 
     // MARK: header / add
 
+    /// New mask, grouped like Lightroom: the app finds it (Auto), you draw it (Draw), or it picks by colour,
+    /// brightness or distance (Range). Auto fills one row; Draw and Range share the second.
     private var typeGrid: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text("Add a mask").font(.system(size: 13, weight: .semibold))
-                Spacer()
-                if adding { Button("Cancel") { adding = false }.font(.system(size: 13)) }
-            }
-            .padding(.horizontal, 14)
-            // 11 kinds: six a row keeps them to two rows (a third row would be cut off by the panel)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 6), spacing: 8) {
-                ForEach(MaskKind.allCases) { k in
-                    Button { vm.addMask(k); adding = false } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: k.icon).font(.system(size: 20))
-                            Text(k.title).font(.system(size: 11)).lineLimit(1).minimumScaleFactor(0.7)
-                        }
-                        .frame(maxWidth: .infinity).frame(height: 56)
-                        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 10))
-                        .foregroundStyle(.white)
+        GeometryReader { geo in
+            let w = geo.size.width - 24
+            let gap: CGFloat = 5
+            let autoW = (w - gap * 4) / 5
+            let pairGap: CGFloat = 14
+            let smallW = (w - pairGap - gap * 4) / 6
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    groupTitle("Auto")
+                    Spacer()
+                    if adding { Button("Cancel") { adding = false }.font(.system(size: 13)) }
+                }
+                HStack(spacing: gap) {
+                    ForEach([MaskKind.subject, .people, .background, .sky, .landscape]) { kindTile($0, width: autoW) }
+                }
+                HStack(spacing: pairGap) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        groupTitle("Draw")
+                        HStack(spacing: gap) { ForEach([MaskKind.brush, .linear, .radial]) { kindTile($0, width: smallW) } }
                     }
-                    .accessibilityIdentifier("kind-\(k.rawValue)")
+                    VStack(alignment: .leading, spacing: 6) {
+                        groupTitle("Range")
+                        HStack(spacing: gap) { ForEach([MaskKind.color, .luminance, .depth]) { kindTile($0, width: smallW) } }
+                    }
                 }
             }
             .padding(.horizontal, 12)
         }
+        .frame(height: 150)
+    }
+
+    /// Shown when the AI found nothing for this mask, so it never sits there silently doing nothing.
+    private func emptyBanner(_ why: String, _ m: Mask) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.orange)
+            Text(why).font(.system(size: 12, weight: .medium)).lineLimit(2)
+            Spacer(minLength: 4)
+            Button("Remove mask") { vm.deleteMask(m.id) }
+                .font(.system(size: 12, weight: .semibold))
+                .accessibilityIdentifier("mask-empty-remove")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 9))
+        .padding(.horizontal, 12)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mask-empty")
+    }
+
+    private func groupTitle(_ t: String) -> some View {
+        Text(t.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundStyle(Color(white: 0.5))
+            .padding(.leading, 2)
+    }
+
+    private func kindTile(_ k: MaskKind, width: CGFloat) -> some View {
+        Button { vm.addMask(k); adding = false } label: {
+            VStack(spacing: 4) {
+                Image(systemName: k.icon).font(.system(size: 18))
+                Text(k.title).font(.system(size: 11)).lineLimit(1).minimumScaleFactor(0.7)
+            }
+            .frame(width: width, height: 50)
+            .background(Theme.chip, in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(.white)
+        }
+        .accessibilityIdentifier("kind-\(k.rawValue)")
     }
 
     /// Your masks, a + to add one, the overlay eye, and a ⋯ menu for the rest (fewer buttons in one row, so mask
@@ -252,7 +295,9 @@ struct MaskPanel: View {
                     .accessibilityIdentifier("mask-add")
                     .accessibilityLabel("New mask")
                     ForEach(vm.settings.masks) { mk in
-                        Chip(title: mk.name, system: mk.components.first?.kind.icon, selected: mk.id == vm.selectedMaskID) {
+                        let empty = vm.emptyReason(mk) != nil
+                        Chip(title: mk.name, system: empty ? "exclamationmark.triangle" : mk.components.first?.kind.icon,
+                             selected: mk.id == vm.selectedMaskID) {
                             vm.selectMask(mk.id)
                         }
                     }
@@ -349,20 +394,25 @@ struct MaskPanel: View {
     private func shapeControls(_ m: Mask) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if m.components.count > 1 {
-                // the parts of this mask (only shown once there is more than one)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(m.components) { c in
-                            Chip(title: c.kind.title, system: c.op == .add ? c.kind.icon : c.op.symbol,
-                                 selected: c.id == vm.selectedComponent?.id) {
-                                vm.selectedComponentID = c.id
+                // the parts of this mask (only shown once there is more than one); a part the AI found nothing for
+                // shows a warning sign
+                HStack(spacing: 2) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(m.components) { c in
+                                Chip(title: c.kind.title,
+                                     system: vm.emptyReason(c) != nil ? "exclamationmark.triangle" : (c.op == .add ? c.kind.icon : c.op.symbol),
+                                     selected: c.id == vm.selectedComponent?.id) {
+                                    vm.selectedComponentID = c.id
+                                }
                             }
+                            addSubtractMenu
                         }
-                        addSubtractMenu
                     }
+                    invertButtons(m)
                 }
             } else {
-                HStack { addSubtractMenu; Spacer() }
+                HStack { addSubtractMenu; Spacer(); invertButtons(m) }
             }
             if let c = vm.selectedComponent {
                 if m.components.count > 1 {
@@ -383,13 +433,18 @@ struct MaskPanel: View {
             }
             LabeledSlider(title: m.components.count > 1 ? "Mask opacity" : "Opacity", value: mb(m, \.amount),
                           range: 0...100, neutral: 100)
-            HStack(spacing: 6) {
-                if let c = vm.selectedComponent {
-                    Chip(title: "Invert shape", system: "circle.lefthalf.filled", selected: c.invert) { vm.updateComponent(c.id) { $0.invert.toggle() } }
-                }
-                Chip(title: "Invert mask", system: "arrow.left.arrow.right", selected: m.invert) { vm.updateMask(m.id) { $0.invert.toggle() } }
-            }
         }
+    }
+
+    /// Invert this part (only with more than one part) and invert the whole mask: small icons, lit when on.
+    @ViewBuilder
+    private func invertButtons(_ m: Mask) -> some View {
+        if m.components.count > 1, let c = vm.selectedComponent {
+            IconButton(system: "circle.lefthalf.filled", active: c.invert) { vm.updateComponent(c.id) { $0.invert.toggle() } }
+                .accessibilityLabel("Invert part").accessibilityIdentifier("invert-part")
+        }
+        IconButton(system: "arrow.left.arrow.right", active: m.invert) { vm.updateMask(m.id) { $0.invert.toggle() } }
+            .accessibilityLabel("Invert mask").accessibilityIdentifier("invert-mask")
     }
 
     @ViewBuilder
@@ -440,25 +495,45 @@ struct MaskPanel: View {
                            lowFeather: cb(c, \.lumLowFeather), highFeather: cb(c, \.lumHighFeather),
                            histogram: vm.histogram?.luma)
         case .landscape:
+            let field = vm.sceneField
             if !EditSession.hasSceneModel {
                 hint("This build has no scene model, so the Landscape mask can't work yet.")
-            } else if vm.autoMaskBusy && vm.sceneField == nil {
+            } else if vm.autoMaskBusy && field == nil {
                 HStack { ProgressView(); Text("Looking at the scene…").font(.caption).foregroundStyle(.secondary) }
-            } else {
-                hint(c.scene.isEmpty ? "Pick what to select. Parts not found in this photo are dimmed."
-                                     : "Tap more parts to add them, tap again to remove.")
-            }
-            let found = vm.sceneField?.found
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)], alignment: .leading, spacing: 6) {
-                ForEach(ScenePart.allCases) { part in
-                    let on = c.scene.contains(part.rawValue)
-                    Chip(title: part.title, system: part.icon, selected: on) {
-                        vm.updateComponent(c.id) { comp in
-                            if on { comp.scene.removeAll { $0 == part.rawValue } } else { comp.scene.append(part.rawValue) }
+            } else if let field {
+                // only what is in this photo (plus anything already picked, so it can be taken off again)
+                let shown = ScenePart.landscapeParts.filter { field.found.contains($0) || c.scene.contains($0.rawValue) }
+                let absent = ScenePart.landscapeParts.filter { !shown.contains($0) }
+                if shown.isEmpty {
+                    hint("No water, plants, mountains, buildings or ground found in this photo.")
+                } else {
+                    hint(c.scene.isEmpty ? "Found in this photo: pick one or more." : "Tap to add or remove parts.")
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
+                        ForEach(shown) { part in
+                            let on = c.scene.contains(part.rawValue)
+                            Button {
+                                vm.updateComponent(c.id) { comp in
+                                    if on { comp.scene.removeAll { $0 == part.rawValue } } else { comp.scene.append(part.rawValue) }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: part.icon).font(.system(size: 13))
+                                    Text(part.title).font(.system(size: 13, weight: .medium)).lineLimit(1).minimumScaleFactor(0.8)
+                                    Spacer(minLength: 0)
+                                    if on { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)) }
+                                }
+                                .padding(.horizontal, 10).frame(height: 36)
+                                .background(on ? Theme.accent.opacity(0.3) : Theme.chip, in: RoundedRectangle(cornerRadius: 9))
+                                .overlay(RoundedRectangle(cornerRadius: 9).stroke(on ? Theme.accent : Color.clear, lineWidth: 1.4))
+                                .foregroundStyle(.white)
+                            }
+                            .accessibilityIdentifier("scene-\(part.rawValue)")
                         }
                     }
-                    .opacity(found == nil || found!.contains(part) || on ? 1 : 0.4)
-                    .accessibilityIdentifier("scene-\(part.rawValue)")
+                }
+                if !absent.isEmpty && !shown.isEmpty {
+                    Text("Not in this photo: " + ListFormatter.localizedString(byJoining: absent.map { $0.title.lowercased() }))
+                        .font(.system(size: 11)).foregroundStyle(Color(white: 0.45))
                 }
             }
             LabeledSlider(title: "Soften", value: cb(c, \.feather), range: 0...100, neutral: 0)

@@ -615,6 +615,38 @@ final class EditorViewModel: ObservableObject {
 
     // MARK: Masks
 
+    /// Why an AI mask part selects nothing on this photo (nil = it found something, is still looking, or isn't AI).
+    func emptyReason(_ c: MaskComponent) -> String? {
+        guard !autoMaskBusy else { return nil }
+        let missing = autoMaskMissing
+        switch c.kind {
+        case .subject: return missing.contains(EditSession.aiSubject) ? "No subject found in this photo" : nil
+        case .sky: return missing.contains(EditSession.aiSky) ? "No sky found in this photo" : nil
+        case .people: return missing.contains(EditSession.aiPeople) ? "No people found in this photo" : nil
+        case .depth:
+            if !EditSession.hasDepthModel { return "Depth isn't available in this build" }
+            return missing.contains(EditSession.aiDepth) ? "Couldn't measure depth in this photo" : nil
+        case .landscape:
+            if !EditSession.hasSceneModel { return "Landscape isn't available in this build" }
+            guard let field = sceneField else {
+                return missing.contains(EditSession.aiScene) ? "Couldn't read the scene in this photo" : nil
+            }
+            let parts = c.scene.compactMap(ScenePart.init(rawValue:))
+            guard !parts.isEmpty, parts.allSatisfy({ !field.found.contains($0) }) else { return nil }
+            let names = parts.map { $0.title.lowercased() }
+            return "No \(ListFormatter.localizedString(byJoining: names)) found in this photo"
+        default: return nil
+        }
+    }
+
+    /// A whole mask selects nothing when every part it adds is empty (subtract / intersect parts can't add anything).
+    func emptyReason(_ m: Mask) -> String? {
+        let adds = m.components.filter { $0.op == .add }
+        let reasons = adds.map(emptyReason)
+        guard !adds.isEmpty, reasons.allSatisfy({ $0 != nil }) else { return nil }
+        return reasons.first ?? nil
+    }
+
     func addMask(_ kind: MaskKind) {
         var m = Mask.make(kind)
         m.name = uniqueName(kind.title)
