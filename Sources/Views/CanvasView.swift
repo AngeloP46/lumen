@@ -45,14 +45,21 @@ struct ViewXform: Equatable {
 /// Holds the image the Metal view should draw. Updated on the main thread; drawing is cheap because the graph is lazy.
 final class CanvasModel {
     var image: CIImage?
-    weak var view: MTKView?
+    /// Every Metal view showing this photo. Turning the phone rebuilds the layout and can leave more than one view
+    /// (and not always the one on screen) attached; keeping just the last one meant edits were rendered but never
+    /// drawn after a rotation (owner's bug 2026-10-11). Now every view that is on screen redraws.
+    private let views = NSHashTable<MTKView>.weakObjects()
+    var view: MTKView? {
+        get { views.allObjects.last { $0.window != nil } ?? views.allObjects.last }
+        set { if let v = newValue { views.add(v) } }
+    }
     /// Called on the main thread with the screen's (current, potential) EDR headroom when either changes by more than
     /// 5% (HDR mode only).
     var onHeadroom: ((CGFloat, CGFloat) -> Void)?
 
     func update(_ img: CIImage?) {
         image = img
-        view?.setNeedsDisplay()
+        for v in views.allObjects where v.window != nil { v.setNeedsDisplay() }
     }
 }
 
@@ -199,7 +206,7 @@ struct CanvasView: UIViewRepresentable {
         // The model must always point at the view on screen. Turning the phone rebuilds the layout: a view made and
         // thrown away along the way could leave the model with no view (it is weak), so edits rendered into nothing
         // until something else redrew the screen (owner's bug report 2026-10-11).
-        if model.view !== v { model.view = v; v.setNeedsDisplay() }
+        model.view = v
         context.coordinator.xform = xform
         if context.coordinator.hdrOn != hdr {
             context.coordinator.hdrOn = hdr
