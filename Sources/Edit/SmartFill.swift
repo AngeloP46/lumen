@@ -319,9 +319,13 @@ extension EditSession {
             let holeCount = hole.reduce(0) { $0 + ($1 > 127 ? 1 : 0) }
             let maskSum = mask64.reduce(0, +)
             var rt = ""
-            for (label, f) in [("x0.18215", Float(0.18215)), ("x1", Float(1)), ("/0.18215", Float(1 / 0.18215))] {
+            let dir = SmartFillFiles.directory.appendingPathComponent("VAEDecoder.mlmodelc")
+            func dec(_ u: MLComputeUnits) -> MLModel? { let c = MLModelConfiguration(); c.computeUnits = u; return try? MLModel(contentsOf: dir, configuration: c) }
+            let decoders: [(String, MLModel?)] = [("cpu", dec(.cpuOnly)), ("ne", dec(.cpuAndNeuralEngine)), ("gpu", models.vaeDecoder)]
+            for (label, f) in [("cpu /s", Float(1 / 0.18215)), ("ne /s", Float(1 / 0.18215)), ("gpu /s", Float(1 / 0.18215)), ("cpu x1", Float(1))] {
+                guard let m = decoders.first(where: { label.hasPrefix($0.0) })?.1 else { rt += "[\(label) no model] "; continue }
                 if let z = MLArrays.half(maskedLatent.map { $0 * f }, shape: [1, 4, L8, L8]),
-                   let o = try? models.vaeDecoder.prediction(from: MLDictionaryFeatureProvider(dictionary: ["z": z])),
+                   let o = try? m.prediction(from: MLDictionaryFeatureProvider(dictionary: ["z": z])),
                    let im = o.featureValue(for: "image")?.multiArrayValue {
                     let fl = MLArrays.floats(im)
                     let p = 40 * N + 40
