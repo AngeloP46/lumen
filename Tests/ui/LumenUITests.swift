@@ -405,6 +405,20 @@ final class LumenUITests: XCTestCase {
         XCTAssertLessThan(reset.frame.height, 34, "the list Reset should be small (\(reset.frame))")
     }
 
+    /// Every mask kind (11 since Landscape and Depth) fits in the add-mask grid without being cut off.
+    func testEveryMaskKindFitsInTheGrid() {
+        launch(open: 0, tool: "Masks")
+        let panel = el("panel")
+        XCTAssertTrue(panel.waitForExistence(timeout: 20))
+        sleep(1)
+        shot("mask-kinds")
+        for k in ["subject", "sky", "background", "people", "landscape", "brush", "linear", "radial", "luminance", "color", "depth"] {
+            let b = el("kind-\(k)")
+            XCTAssertTrue(b.exists, "mask kind \(k) should be in the grid")
+            XCTAssertLessThanOrEqual(b.frame.maxY, panel.frame.maxY + 1, "mask kind \(k) (\(b.frame)) must not be cut off by the panel (\(panel.frame))")
+        }
+    }
+
     // MARK: navigation
 
     func testSwipeToNextPhoto() {
