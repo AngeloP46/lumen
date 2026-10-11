@@ -188,7 +188,7 @@ struct MaskPanel: View {
                     ScrollView { shapeControls(m).padding(.horizontal, 14).padding(.bottom, 8) }
                 } else {
                     ParamPanel(items: localItems(m), selected: $sel, header: AnyView(
-                        PanelActions(resetTitle: "Reset adjustments", resetEnabled: !m.adjust.isNeutral,
+                        PanelActions(resetEnabled: !m.adjust.isNeutral,
                                      reset: { vm.updateMask(m.id) { $0.adjust = LocalAdjust() } }) { EmptyView() }))
                 }
             } else {

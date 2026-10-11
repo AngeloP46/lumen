@@ -27,6 +27,8 @@ private struct ToolSpec {
     var roomy: CGFloat
     var rows = 0
     var header: CGFloat = 0
+    /// Extra height of the section headings inside a full list (not needed to show a scrolling list).
+    var sections: CGFloat = 0
 }
 
 /// The panel as it will be drawn this frame.
@@ -189,13 +191,13 @@ struct EditorView: View {
         case .color:
             // the colour mixer has a row of swatches above its three sliders
             return vm.colorMix ? ToolSpec(compact: 150, roomy: 0, rows: 3, header: 44 + 46)
-                               : ToolSpec(compact: 100, roomy: 0, rows: 4, header: 44 + 2 * 30)
-        case .detail: return ToolSpec(compact: 100, roomy: 0, rows: 14, header: 44 + 5 * 30)
+                               : ToolSpec(compact: 100, roomy: 0, rows: 4, header: 44, sections: 2 * 30)
+        case .detail: return ToolSpec(compact: 100, roomy: 0, rows: 14, header: 44, sections: 5 * 30)
         case .masks:
             if vm.settings.masks.isEmpty || vm.selectedMask == nil { return ToolSpec(compact: 150, roomy: 176) }
             // header rows (mask chips + Shape/Adjust tabs) sit above the sliders; the list also has a Reset row
             return vm.maskTab == .shape ? ToolSpec(compact: 250, roomy: 330)
-                                        : ToolSpec(compact: 190, roomy: 0, rows: 14, header: 82 + 44 + 4 * 30)
+                                        : ToolSpec(compact: 190, roomy: 0, rows: 14, header: 82 + 44, sections: 4 * 30)
         }
     }
 
@@ -228,13 +230,15 @@ struct EditorView: View {
         } else if sp.rows > 0 {
             let cap = avail * 0.6
             let usable = sliderStyle == "list" ? cap : min(free, cap)
-            let fit = Int((usable - sp.header - pad) / 40)
-            if sliderStyle == "strip" || fit < min(4, sp.rows) {
+            let head = sp.header + sp.sections
+            let fit = Int((usable - head - pad) / 40)
+            if sliderStyle == "strip" || usable < listMin(sp, pad) {
                 auto = sp.compact
+            } else if fit >= sp.rows {
+                let rowH = min(max((usable - head - pad) / CGFloat(sp.rows), 40), 48)
+                auto = head + CGFloat(sp.rows) * rowH + pad
             } else {
-                let n = min(sp.rows, fit)
-                let rowH: CGFloat = n == sp.rows ? min(max((usable - sp.header - pad) / CGFloat(sp.rows), 40), 48) : 40
-                auto = sp.header + CGFloat(n) * rowH + pad
+                auto = usable   // a scrolling list that uses the room the photo leaves
             }
         } else {
             auto = free > sp.compact + 30 ? min(sp.roomy, max(free, sp.compact)) : sp.compact
@@ -244,16 +248,25 @@ struct EditorView: View {
         let minH: CGFloat = sp.rows > 0 ? sp.compact : min(sp.compact, 120)
         let maxH = max(avail * 0.78, minH)
         let base = panelUser[key] ?? auto
-        let h = min(max(panelLive ?? base, minH), maxH)
+        var h = min(max(panelLive ?? base, minH), maxH)
 
         var layout = SliderLayout.strip
         var rowH: CGFloat = 40
-        if sp.rows > 0, sliderStyle != "strip", h >= sp.header + CGFloat(min(4, sp.rows)) * 40 + pad {
+        if sp.rows > 0, sliderStyle != "strip", h >= listMin(sp, pad) {
             layout = .list
-            let all = sp.header + CGFloat(sp.rows) * 40 + pad
-            rowH = h >= all ? min(max((h - sp.header - pad) / CGFloat(sp.rows), 40), 54) : 40
+            let head = sp.header + sp.sections
+            let all = head + CGFloat(sp.rows) * 40 + pad
+            rowH = h >= all ? min(max((h - head - pad) / CGFloat(sp.rows), 40), 54) : 40
         }
+        // One slider at a time needs only its own row: the panel hugs it and the photo gets the rest of the screen.
+        // While the finger is on the grab handle the panel follows it, so it can still be pulled up into the list.
+        if sp.rows > 0, layout == .strip, panelLive == nil { h = sp.compact }
         return PanelPlan(height: h, layout: layout, rowHeight: rowH, minHeight: minH, maxHeight: maxH, key: key)
+    }
+
+    /// The smallest height that shows a useful list: the header, one section heading and four rows (it scrolls).
+    private func listMin(_ sp: ToolSpec, _ pad: CGFloat) -> CGFloat {
+        sp.header + (sp.sections > 0 ? 30 : 0) + CGFloat(min(4, sp.rows)) * 40 + pad
     }
 
     /// Landscape: the side column's panel uses all of the column's height; sliders as a list.
@@ -289,7 +302,8 @@ struct EditorView: View {
                         } else {
                             panelUser[plan.key] = min(max(raw, plan.minHeight), plan.maxHeight)
                         }
-                        panelLive = nil
+                        // a release short of the list settles back onto the single slider row, smoothly
+                        withAnimation(.easeOut(duration: 0.18)) { panelLive = nil }
                         panelDragStart = nil
                     }
             )

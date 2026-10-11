@@ -374,6 +374,26 @@ final class LumenUITests: XCTestCase {
         shot("panel-down")
     }
 
+    /// One slider at a time: the panel hugs its single row (no empty space under it), a small pull up settles back,
+    /// and Reset is a small round icon so the slider names keep the room.
+    func testStripPanelHugsItsRowAndResetIsSmall() {
+        launch(open: 1, tool: "Masks", extra: ["-lumenDemoMask", "linear", "-lumenDemoMaskTab", "adjust", "-lumenDemoSlider", "strip"])
+        let panel = el("panel")
+        XCTAssertTrue(panel.waitForExistence(timeout: 30))
+        sleep(2)
+        shot("strip-hug")
+        let h0 = panel.frame.height
+        XCTAssertLessThanOrEqual(h0, 190 + 24 + 30, "the one-at-a-time panel should hug its row (\(panel.frame))")
+        let reset = el("pill-Reset")
+        XCTAssertTrue(reset.exists, "the mask Adjust page should have a Reset button")
+        XCTAssertLessThanOrEqual(reset.frame.width, 44, "in the one-at-a-time row Reset should be a small icon (\(reset.frame))")
+        let handle = el("panel-handle")
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 0, dy: -90)))
+        sleep(1)
+        XCTAssertLessThan(abs(panel.frame.height - h0), 4, "a pull that stops short of the list should settle back (\(h0) -> \(panel.frame.height))")
+    }
+
     // MARK: navigation
 
     func testSwipeToNextPhoto() {

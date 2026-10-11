@@ -17,14 +17,31 @@ struct PanelActions<Leading: View>: View {
     var resetEnabled = true
     let reset: () -> Void
     @ViewBuilder let leading: () -> Leading
+    @Environment(\.sliderLayout) private var layout
 
     var body: some View {
         HStack(spacing: 6) {
-            leading()
-            Spacer(minLength: 6)
-            PillButton(title: resetTitle, system: "arrow.counterclockwise", action: reset)
+            if layout == .strip {
+                // one-at-a-time row: Reset is a small round icon first, so the slider names keep the room
+                Button(action: reset) {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .background(Theme.chip, in: Circle())
+                        .foregroundStyle(.white)
+                }
                 .opacity(resetEnabled ? 1 : 0.45)
                 .disabled(!resetEnabled)
+                .accessibilityLabel(resetTitle)
+                .accessibilityIdentifier("pill-\(resetTitle)")
+                leading()
+            } else {
+                leading()
+                Spacer(minLength: 6)
+                PillButton(title: resetTitle, system: "arrow.counterclockwise", action: reset)
+                    .opacity(resetEnabled ? 1 : 0.45)
+                    .disabled(!resetEnabled)
+            }
         }
     }
 }
