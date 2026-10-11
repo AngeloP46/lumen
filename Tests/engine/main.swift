@@ -44,6 +44,8 @@ func check(_ ok: Bool, _ message: @autoclosure () -> String) {
         let m = message()
         failures.append(m)
         print("FAIL:", m)
+        // also as a GitHub annotation, readable through the API without downloading logs
+        print("::error::" + m.replacingOccurrences(of: "\n", with: " ").prefix(900))
     }
 }
 func finishChecks() -> Never {
