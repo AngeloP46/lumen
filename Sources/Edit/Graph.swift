@@ -198,7 +198,23 @@ struct Homography: Equatable {
         // centred corner positions: Vertical widens the top (narrows the bottom), Horizontal heightens the left side
         let c: [(Double, Double)] = [(-0.5 * (1 + kv), -0.5 * (1 + kh)), (0.5 * (1 + kv), -0.5 * (1 - kh)),
                                      (0.5 * (1 - kv), 0.5 * (1 - kh)), (-0.5 * (1 - kv), 0.5 * (1 + kh))]
-        return c.map { Pt(x: 0.5 + $0.0 * sx + ox, y: 0.5 + $0.1 * sy + oy) }
+        func quad(_ k: Double) -> [Pt] { c.map { Pt(x: 0.5 + $0.0 * sx * k + ox, y: 0.5 + $0.1 * sy * k + oy) } }
+        guard s.tFill else { return quad(1) }
+        // Fill frame: the smallest extra zoom (about the centre) at which the photo covers the whole frame,
+        // i.e. every frame corner lands inside the transformed photo
+        func covers(_ k: Double) -> Bool {
+            let inv = squareTo(quad(k)).inverse
+            return [Pt(x: 0, y: 0), Pt(x: 1, y: 0), Pt(x: 1, y: 1), Pt(x: 0, y: 1)].allSatisfy {
+                let q = inv.apply($0)
+                return q.x >= -1e-4 && q.x <= 1 + 1e-4 && q.y >= -1e-4 && q.y <= 1 + 1e-4
+            }
+        }
+        if covers(1) { return quad(1) }
+        var lo = 1.0, hi = 1.5
+        while !covers(hi) && hi < 8 { lo = hi; hi *= 1.5 }
+        guard covers(hi) else { return quad(1) }
+        for _ in 0..<30 { let mid = (lo + hi) / 2; if covers(mid) { hi = mid } else { lo = mid } }
+        return quad(hi)
     }
 
     /// The unit square's corners (0,0), (1,0), (1,1), (0,1) -> q[0...3] (Heckbert).

@@ -1081,6 +1081,26 @@ do {
         let flat = bars.composited(over: CIImage(color: .gray)).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
         if let z = session.levelAngle(of: flat) { check(abs(z) < 0.6, "a level photo should need no turn (got \(z)°)") }
 
+        // Fill frame: after a strong transform no empty (black) corner may show; with it off, corners are empty
+        let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 600, height: 400))
+        func cornerAlpha(_ s: EditSettings) -> Float {
+            let out = session.geometry(white, s)
+            let e = out.extent
+            var worst: Float = 1
+            for (x, y) in [(e.minX + 2, e.minY + 2), (e.maxX - 3, e.minY + 2), (e.minX + 2, e.maxY - 3), (e.maxX - 3, e.maxY - 3)] {
+                var v = [Float](repeating: 0, count: 4)
+                LumenGPU.context.render(out, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: x, y: y, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                worst = min(worst, v[3])
+            }
+            return worst
+        }
+        for (tv, th, ta, ts) in [(60.0, 0.0, 0.0, 100.0), (0, -50, 0, 100), (30, 30, -40, 90), (0, 0, 0, 70)] {
+            var f = EditSettings(); f.tVertical = tv; f.tHorizontal = th; f.tAspect = ta; f.tScale = ts
+            check(cornerAlpha(f) > 0.95, "Fill frame should leave no empty corners (vertical \(tv), horizontal \(th), aspect \(ta), scale \(ts): corner \(cornerAlpha(f)))")
+            f.tFill = false
+            check(cornerAlpha(f) < 0.5, "with Fill frame off the empty corners show (vertical \(tv), horizontal \(th), aspect \(ta), scale \(ts))")
+        }
+
         // global grading wheel tints the picture; old files without it still load
         var g = EditSettings(); g.grading.global = GradeZone(hue: 30, sat: 60, lum: 0)
         if let a = smallRender(session.develop(g, source: source, geometry: true)),
@@ -1091,10 +1111,10 @@ do {
         let oldJSON = #"{"shadows":{"hue":0,"sat":0,"lum":0},"midtones":{"hue":0,"sat":0,"lum":0},"highlights":{"hue":0,"sat":0,"lum":0},"blending":50,"balance":0}"#
         check((try? JSONDecoder().decode(ColorGrading.self, from: Data(oldJSON.utf8))) != nil, "grading saved before the Global wheel must still load")
         if let full = try? JSONEncoder().encode(EditSettings()), var dict = try? JSONSerialization.jsonObject(with: full) as? [String: Any] {
-            for k in ["flipH", "flipV", "tVertical", "tHorizontal", "tAspect", "tScale", "tOffX", "tOffY", "disabled"] { dict.removeValue(forKey: k) }
+            for k in ["flipH", "flipV", "tVertical", "tHorizontal", "tAspect", "tScale", "tOffX", "tOffY", "tFill", "disabled"] { dict.removeValue(forKey: k) }
             let older = try? JSONSerialization.data(withJSONObject: dict)
             let back = older.flatMap { try? JSONDecoder().decode(EditSettings.self, from: $0) }
-            check(back != nil && back?.tScale == 100, "edits saved before flip/transform must still load (tScale \(String(describing: back?.tScale)))")
+            check(back != nil && back?.tScale == 100 && back?.tFill == true, "edits saved before flip/transform must still load (tScale \(String(describing: back?.tScale)))")
         }
 
         // preset strength: 0 = before, 1 = after, 0.5 halfway; masks and crop stay

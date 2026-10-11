@@ -123,7 +123,7 @@ struct CropPanel: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 0) {
                 HStack {
-                    Text("Perspective, stretch and position. The frame stays the same size.")
+                    Text("Perspective, stretch and position.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     Spacer()
                     PillButton(title: "Reset", system: "arrow.counterclockwise") {
@@ -136,6 +136,14 @@ struct CropPanel: View {
                     .accessibilityIdentifier("transform-reset")
                 }
                 .padding(.horizontal, 14).padding(.vertical, 4)
+                Toggle(isOn: Binding(get: { vm.settings.tFill }, set: { vm.settings.tFill = $0 })) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Fill frame").font(.system(size: 13))
+                        Text("Zooms in just enough to hide the black edges").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 2)
+                .accessibilityIdentifier("transform-fill")
                 row("Vertical", \.tVertical)
                 row("Horizontal", \.tHorizontal)
                 row("Aspect", \.tAspect)

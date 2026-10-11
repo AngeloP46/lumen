@@ -176,6 +176,7 @@ struct Mask: Codable, Equatable, Identifiable, Hashable {
 
 protocol DefaultValue { associatedtype Value: Codable & Equatable; static var value: Value { get } }
 enum DefaultFalse: DefaultValue { static let value = false }
+enum DefaultTrue: DefaultValue { static let value = true }
 enum DefaultHDRStops: DefaultValue { static let value = 2.0 }
 enum DefaultNoSections: DefaultValue { static let value: [String] = [] }
 enum DefaultZero: DefaultValue { static let value = 0.0 }
@@ -261,6 +262,8 @@ struct EditSettings: Codable, Equatable {
     @Defaulted<DefaultHundred> var tScale: Double     // 50...150 %
     @Defaulted<DefaultZero> var tOffX: Double         // -100...100: + moves right
     @Defaulted<DefaultZero> var tOffY: Double         // -100...100: + moves up
+    /// Fill frame (Lightroom's Constrain Crop): zoom the transformed photo just enough that no empty corners show.
+    @Defaulted<DefaultTrue> var tFill: Bool
 
     // Sections switched off in the Edits sheet (their values are kept, they just don't apply)
     @Defaulted<DefaultNoSections> var disabled: [String]
@@ -355,7 +358,7 @@ extension EditSettings {
             cropL = o.cropL; cropT = o.cropT; cropR = o.cropR; cropB = o.cropB
             flipH = o.flipH; flipV = o.flipV
             tVertical = o.tVertical; tHorizontal = o.tHorizontal; tAspect = o.tAspect
-            tScale = o.tScale; tOffX = o.tOffX; tOffY = o.tOffY
+            tScale = o.tScale; tOffX = o.tOffX; tOffY = o.tOffY; tFill = o.tFill
         }
     }
 
