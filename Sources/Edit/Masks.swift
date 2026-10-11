@@ -297,7 +297,9 @@ extension EditSession {
             computed = true
         }
         if needSky, !source.hasTried(Self.aiSky) {
-            if let scene = source.sceneField, scene.found.contains(.sky) {
+            if let global = source.sceneField, global.found.contains(.sky) {
+                // finer at the sky's edge (four quarters), then the sky seen through trees
+                let scene = skyScene(global, source: source) ?? global
                 source.storeMask(Self.aiSky, sceneMask([.sky], scene, source: source).map { skyThroughTrees($0, scene: scene, source: source) })
             } else {
                 // no scene model in this build, or it saw no sky: the classical finder has a go
@@ -523,22 +525,9 @@ extension EditSession {
         let ext = source.extent
         let k = min(1, 1024 / max(ext.width, ext.height))
         let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
-        guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
-        else { return nil }
-        let request = VNCoreMLRequest(model: model)
-        request.imageCropAndScaleOption = .scaleFill
-        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { return nil }
-        guard let obs = request.results?.first as? VNCoreMLFeatureValueObservation,
-              let arr = obs.featureValue.multiArrayValue, arr.shape.count >= 2 else { return nil }
-        let h = arr.shape[arr.shape.count - 2].intValue, w = arr.shape[arr.shape.count - 1].intValue
-        guard w > 1, h > 1, arr.count >= w * h else { return nil }
-        var labels = [Int32](repeating: 0, count: w * h)
-        if arr.dataType == .int32 {
-            let p = arr.dataPointer.bindMemory(to: Int32.self, capacity: w * h)
-            for i in 0..<(w * h) { labels[i] = p[i] }
-        } else {
-            for i in 0..<(w * h) { labels[i] = arr[i].int32Value }
-        }
+        guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace),
+              let run = Self.runScene(model, cg) else { return nil }
+        let (w, h, labels) = run
         var counts: [Int32: Int] = [:]
         for l in labels { counts[l, default: 0] += 1 }
         let minCells = w * h / 300   // a part must cover at least ~0.3 % of the photo to count as found
@@ -557,6 +546,100 @@ extension EditSession {
         ci = Self.blur(ci, 0.7, ci.extent)
         if let m = Self.materialized(ci) { ci = m }
         return refined(Self.fit(ci, to: source.extent), source: source)
+    }
+
+    /// One run of the scene model: its labels (row 0 = the top of `cg`, which is stretched to the model's square).
+    private static func runScene(_ model: VNCoreMLModel, _ cg: CGImage) -> (Int, Int, [Int32])? {
+        let request = VNCoreMLRequest(model: model)
+        request.imageCropAndScaleOption = .scaleFill
+        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { return nil }
+        guard let obs = request.results?.first as? VNCoreMLFeatureValueObservation,
+              let arr = obs.featureValue.multiArrayValue, arr.shape.count >= 2 else { return nil }
+        let h = arr.shape[arr.shape.count - 2].intValue, w = arr.shape[arr.shape.count - 1].intValue
+        guard w > 1, h > 1, arr.count >= w * h else { return nil }
+        var labels = [Int32](repeating: 0, count: w * h)
+        if arr.dataType == .int32 {
+            let p = arr.dataPointer.bindMemory(to: Int32.self, capacity: w * h)
+            for i in 0..<(w * h) { labels[i] = p[i] }
+        } else {
+            for i in 0..<(w * h) { labels[i] = arr[i].int32Value }
+        }
+        return (w, h, labels)
+    }
+
+    /// A finer scene for the Sky mask (2026-10-11, the owner's Photomator comparison): the model sees the whole photo
+    /// squeezed to 448 px, so the sky's edge is coarse. It runs again on four overlapping quarters (each 60 % of the
+    /// width and height, about 1.7x the detail), stitched on a grid twice as fine, each point taken from the quarter
+    /// it is most central in. A quarter sees less of the picture and can mistake a white wall for sky, so the
+    /// quarters only decide near the sky's edge as the whole-photo run saw it: well inside that sky stays sky,
+    /// far outside it never becomes sky. nil when the model is missing.
+    func skyScene(_ scene: SceneField, source: ImageSource) -> SceneField? {
+        guard let model = Self.sceneModel, scene.width > 1, scene.height > 1 else { return nil }
+        let ext = source.extent
+        let k = min(1, 1600 / max(ext.width, ext.height))
+        let img = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
+        guard let cg = ctx.createCGImage(img, from: img.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace) else { return nil }
+        struct Tile { var x, y, w, h: Double; var cols, rows: Int; var labels: [Int32] }
+        var tiles: [Tile] = []
+        let cw = Double(cg.width), chh = Double(cg.height)
+        for ty in [0.0, 0.4] {
+            for tx in [0.0, 0.4] {
+                let r = CGRect(x: tx * cw, y: ty * chh, width: 0.6 * cw, height: 0.6 * chh).integral
+                    .intersection(CGRect(x: 0, y: 0, width: cw, height: chh))
+                guard r.width > 8, r.height > 8, let part = cg.cropping(to: r),
+                      let run = Self.runScene(model, part) else { return nil }
+                tiles.append(Tile(x: r.minX / cw, y: r.minY / chh, w: r.width / cw, h: r.height / chh,
+                                  cols: run.0, rows: run.1, labels: run.2))
+            }
+        }
+        let W = scene.width * 2, H = scene.height * 2, n = W * H
+        let sky = ScenePart.sky.classes[0]
+        // the quarters stitched: every point from the quarter it is most central in
+        var fine = [Int32](repeating: 0, count: n)
+        for j in 0..<H {
+            let v = (Double(j) + 0.5) / Double(H)
+            for i in 0..<W {
+                let u = (Double(i) + 0.5) / Double(W)
+                var best = -1.0
+                for t in tiles {
+                    let a = (u - t.x) / t.w, b = (v - t.y) / t.h
+                    guard a >= 0, a < 1, b >= 0, b < 1 else { continue }
+                    let edge = min(a, 1 - a, b, 1 - b)
+                    if edge > best {
+                        best = edge
+                        fine[j * W + i] = t.labels[min(Int(b * Double(t.rows)), t.rows - 1) * t.cols + min(Int(a * Double(t.cols)), t.cols - 1)]
+                    }
+                }
+            }
+        }
+        // the whole-photo run on the same grid, and its sky grown (8 %) and shrunk (3 %): counts in a square window
+        var coarse = [Int32](repeating: 0, count: n)
+        for j in 0..<H { for i in 0..<W { coarse[j * W + i] = scene.labels[(j * scene.height / H) * scene.width + i * scene.width / W] } }
+        var integral = [Int32](repeating: 0, count: (W + 1) * (H + 1))
+        for j in 0..<H {
+            var row: Int32 = 0
+            for i in 0..<W {
+                row += coarse[j * W + i] == sky ? 1 : 0
+                integral[(j + 1) * (W + 1) + i + 1] = integral[j * (W + 1) + i + 1] + row
+            }
+        }
+        func count(_ i: Int, _ j: Int, _ r: Int) -> (Int32, Int32) {
+            let x0 = max(i - r, 0), x1 = min(i + r, W - 1), y0 = max(j - r, 0), y1 = min(j + r, H - 1)
+            let c = integral[(y1 + 1) * (W + 1) + x1 + 1] - integral[y0 * (W + 1) + x1 + 1]
+                - integral[(y1 + 1) * (W + 1) + x0] + integral[y0 * (W + 1) + x0]
+            return (c, Int32((x1 - x0 + 1) * (y1 - y0 + 1)))
+        }
+        let grow = max(2, Int(0.08 * Double(max(W, H)))), shrink = max(1, Int(0.03 * Double(max(W, H))))
+        var out = fine
+        for j in 0..<H {
+            for i in 0..<W {
+                let idx = j * W + i
+                let inside = count(i, j, shrink)
+                if inside.0 == inside.1 { out[idx] = sky; continue }            // well inside the sky
+                if fine[idx] == sky && count(i, j, grow).0 == 0 { out[idx] = coarse[idx] }   // far from it: not sky
+            }
+        }
+        return SceneField(width: W, height: H, labels: out, found: scene.found)
     }
 
     /// Sky seen through trees (2026-10-11, the owner's Photomator comparison): the scene model works on a 448 px copy,

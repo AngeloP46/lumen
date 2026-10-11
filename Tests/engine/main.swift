@@ -1293,14 +1293,21 @@ if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
               let before = session.sceneMask([.sky], scene, source: source), let k = LumenKernels.shared else { continue }
         let stem = url.deletingPathExtension().lastPathComponent
         let t0 = now()
-        let after = session.skyThroughTrees(before, scene: scene, source: source)
+        let gaps = session.skyThroughTrees(before, scene: scene, source: source)
         let ms = Int((now() - t0) * 1000)
+        // the four quarters: finer at the sky's edge
+        let t1 = now()
+        let fineScene = session.skyScene(scene, source: source)
+        check(fineScene != nil, "\(stem): the quarter runs of the scene model gave nothing")
+        let fineSky = fineScene.flatMap { session.sceneMask([.sky], $0, source: source) }
+        let after = fineSky.map { session.skyThroughTrees($0, scene: fineScene!, source: source) } ?? gaps
+        print("::notice::sky quarters \(stem): \(Int((now() - t1) * 1000)) ms")
         guard let mb = maskValues(before, width: 96), let ma = maskValues(after, width: 96) else { continue }
         let meanB = mb.v.reduce(0, +) / Float(mb.v.count), meanA = ma.v.reduce(0, +) / Float(ma.v.count)
         let trees = scene.labels.filter { $0 == ScenePart.treeClass }.count
         print("::notice::sky through trees \(stem): \(ms) ms, sky \(meanB) -> \(meanA), tree labels \(trees)")
-        check(meanA > meanB - 0.02, "\(stem): sky through trees should not lose sky (\(meanB) -> \(meanA))")
-        if trees == 0 { check(abs(meanA - meanB) < 0.005, "\(stem): with no trees the sky mask should not change (\(meanB) -> \(meanA))") }
+        check(meanA > meanB - 0.06, "\(stem): the finer sky should not lose much sky (\(meanB) -> \(meanA))")
+        check(meanA < meanB + 0.12, "\(stem): the finer sky should not grow wildly (\(meanB) -> \(meanA))")
         if stem == "building" {
             // the white facade (right half, upper middle) is architecture: it must stay out of the sky
             var sum: Float = 0, n: Float = 0
@@ -1313,8 +1320,14 @@ if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
         func tinted(_ m: CIImage) -> CGImage? {
             smallRender(k.overlay.apply(extent: photo.extent, arguments: [photo, m, CIVector(x: 1, y: 0.1, z: 0.12, w: 0.55)]) ?? photo, width: 300)
         }
-        if let p = smallRender(photo, width: 300), let b = tinted(before), let a = tinted(after) {
-            skyTiles += [("\(stem)", p), ("sky before", b), ("sky through trees", a)]
+        if let p = smallRender(photo, width: 300), let b = tinted(gaps), let a = tinted(after) {
+            skyTiles += [("\(stem)", p), ("sky (live)", b), ("four quarters", a)]
+        }
+        if stem == "matterhorn", let mv = maskValues(after) {
+            let q = mv.h / 5
+            let top = mv.v[0..<(q * mv.w)].reduce(0, +) / Float(q * mv.w)
+            let bottom = mv.v[((mv.h - q) * mv.w)...].reduce(0, +) / Float(q * mv.w)
+            check(top > 0.5 && bottom < 0.2, "matterhorn (quarters): the sky should cover the top (\(top)) and not the bottom (\(bottom))")
         }
     }
     if !skyTiles.isEmpty, let cg = sheet(skyTiles, cell: 300, cols: 3) {
