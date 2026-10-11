@@ -1306,7 +1306,7 @@ if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
         let meanB = mb.v.reduce(0, +) / Float(mb.v.count), meanA = ma.v.reduce(0, +) / Float(ma.v.count)
         let trees = scene.labels.filter { $0 == ScenePart.treeClass }.count
         print("::notice::sky through trees \(stem): \(ms) ms, sky \(meanB) -> \(meanA), tree labels \(trees)")
-        check(meanA > meanB - 0.06, "\(stem): the finer sky should not lose much sky (\(meanB) -> \(meanA))")
+        check(meanA > meanB - 0.03, "\(stem): the finer sky should not lose sky (\(meanB) -> \(meanA))")
         check(meanA < meanB + 0.12, "\(stem): the finer sky should not grow wildly (\(meanB) -> \(meanA))")
         if stem == "building" {
             // the white facade (right half, upper middle) is architecture: it must stay out of the sky

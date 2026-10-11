@@ -568,11 +568,12 @@ extension EditSession {
     }
 
     /// A finer scene for the Sky mask (2026-10-11, the owner's Photomator comparison): the model sees the whole photo
-    /// squeezed to 448 px, so the sky's edge is coarse. It runs again on four overlapping quarters (each 60 % of the
-    /// width and height, about 1.7x the detail), stitched on a grid twice as fine, each point taken from the quarter
-    /// it is most central in. A quarter sees less of the picture and can mistake a white wall for sky, so the
-    /// quarters only decide near the sky's edge as the whole-photo run saw it: well inside that sky stays sky,
-    /// far outside it never becomes sky. nil when the model is missing.
+    /// squeezed to 448 px, so sky between and beside trees gets lost. It runs again on four overlapping quarters (each
+    /// 60 % of the width and height, about 1.7x the detail), stitched on a grid twice as fine, each point taken from
+    /// the quarter it is most central in. The quarters can only ADD sky, and only near the sky the whole-photo run
+    /// found: a quarter sees less of the picture and lost real sky among branches in a test photo (the cat), or could
+    /// take a white wall for sky. Elsewhere the quarters' finer labels are kept (sharper trees for the next step).
+    /// nil when the model is missing.
     func skyScene(_ scene: SceneField, source: ImageSource) -> SceneField? {
         guard let model = Self.sceneModel, scene.width > 1, scene.height > 1 else { return nil }
         let ext = source.extent
@@ -612,7 +613,7 @@ extension EditSession {
                 }
             }
         }
-        // the whole-photo run on the same grid, and its sky grown (8 %) and shrunk (3 %): counts in a square window
+        // the whole-photo run on the same grid, and its sky grown by 8 %: counts in a square window
         var coarse = [Int32](repeating: 0, count: n)
         for j in 0..<H { for i in 0..<W { coarse[j * W + i] = scene.labels[(j * scene.height / H) * scene.width + i * scene.width / W] } }
         var integral = [Int32](repeating: 0, count: (W + 1) * (H + 1))
@@ -629,13 +630,12 @@ extension EditSession {
                 - integral[(y1 + 1) * (W + 1) + x0] + integral[y0 * (W + 1) + x0]
             return (c, Int32((x1 - x0 + 1) * (y1 - y0 + 1)))
         }
-        let grow = max(2, Int(0.08 * Double(max(W, H)))), shrink = max(1, Int(0.03 * Double(max(W, H))))
+        let grow = max(2, Int(0.08 * Double(max(W, H))))
         var out = fine
         for j in 0..<H {
             for i in 0..<W {
                 let idx = j * W + i
-                let inside = count(i, j, shrink)
-                if inside.0 == inside.1 { out[idx] = sky; continue }            // well inside the sky
+                if coarse[idx] == sky { out[idx] = sky; continue }                  // the whole-photo sky stays
                 if fine[idx] == sky && count(i, j, grow).0 == 0 { out[idx] = coarse[idx] }   // far from it: not sky
             }
         }
