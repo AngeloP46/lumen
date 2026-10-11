@@ -383,22 +383,20 @@ struct EditorView: View {
         .overlay(alignment: .topLeading) {
             if showHistogram && !chromeHidden {
                 VStack(alignment: .leading, spacing: 3) {
-                    // tap the histogram for the clipping warning (also in More → View)
-                    Button { vm.clipWarning.toggle() } label: {
-                        HistogramView(data: vm.histogram).frame(width: vm.settings.hdr ? 124 : 90, height: 40)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(vm.clipWarning ? Theme.accent : Color.clear, lineWidth: 1.5))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("histogram")
-                    .accessibilityValue(vm.clipWarning ? "clipping on" : "clipping off")
+                    // not a button: it sits over the photo, where a press and hold must still show the original.
+                    // The clipping warning is in More → View.
+                    HistogramView(data: vm.histogram).frame(width: vm.settings.hdr ? 124 : 90, height: 40)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(vm.clipWarning ? Theme.accent : Color.clear, lineWidth: 1.5))
+                        .accessibilityIdentifier("histogram")
+                        .accessibilityValue(vm.clipWarning ? "clipping on" : "clipping off")
                     // RAW or not: a JPEG has no hidden highlight detail for Highlights or HDR to bring back
                     Text(vm.fileKind).font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.white.opacity(0.75))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Color.black.opacity(0.35), in: Capsule())
-                        .allowsHitTesting(false)
                         .accessibilityIdentifier("file-kind")
                 }
                 .padding(.leading, 10).padding(.top, 50)
+                .allowsHitTesting(false)
             }
         }
     }

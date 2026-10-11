@@ -1018,9 +1018,12 @@ final class LumenUITests: XCTestCase {
 
     func testClippingWarningAndBeforeAfterSplit() {
         launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])
-        el("histogram").tap()
+        el("btn-menu").tap()
+        app.buttons["View"].tap()
+        XCTAssertTrue(app.buttons["Clipping warning"].waitForExistence(timeout: 5))
+        app.buttons["Clipping warning"].tap()
         sleep(1)
-        XCTAssertEqual(valueOf("histogram"), "clipping on", "tapping the histogram turns the clipping warning on")
+        XCTAssertEqual(valueOf("histogram"), "clipping on", "More > View > Clipping warning turns it on")
         XCTAssertTrue(el("clip-badge").exists, "a badge says the clipping warning is on")
         shot("clipping-on")
         el("clip-badge").tap()
@@ -1097,11 +1100,14 @@ final class LumenUITests: XCTestCase {
         let s = el("slider-Exposure")
         XCTAssertTrue(s.waitForExistence(timeout: 10), "mask Exposure slider in landscape")
         let before = events().filter { $0.contains("drew image") }.count
+        let v0 = valueOf("reset-Exposure")
         s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
         sleep(2)
+        let v1 = valueOf("reset-Exposure")
         let after = events().filter { $0.contains("drew image") }.count
-        XCTAssertGreaterThan(after, before, "moving a mask slider after turning the phone must redraw the photo (\(before) -> \(after))")
+        XCTAssertNotEqual(v0, v1, "the drag should change the mask's Exposure (\(v0) -> \(v1)); slider \(s.frame)")
+        XCTAssertGreaterThan(after, before, "moving a mask slider after turning the phone must redraw the photo (\(before) -> \(after), value \(v0) -> \(v1)); last: \(events().suffix(4))")
         XCUIDevice.shared.orientation = .portrait
         sleep(2)
         let back = events().filter { $0.contains("drew image") }.count

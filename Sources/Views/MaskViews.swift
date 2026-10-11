@@ -209,12 +209,13 @@ struct MaskPanel: View {
                 if adding { Button("Cancel") { adding = false }.font(.system(size: 13)) }
             }
             .padding(.horizontal, 14)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+            // 9 kinds: five a row keeps them to two rows
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 8) {
                 ForEach(MaskKind.allCases) { k in
                     Button { vm.addMask(k); adding = false } label: {
                         VStack(spacing: 4) {
                             Image(systemName: k.icon).font(.system(size: 20))
-                            Text(k.title).font(.system(size: 11))
+                            Text(k.title).font(.system(size: 11)).lineLimit(1).minimumScaleFactor(0.75)
                         }
                         .frame(maxWidth: .infinity).frame(height: 56)
                         .background(Theme.chip, in: RoundedRectangle(cornerRadius: 10))
