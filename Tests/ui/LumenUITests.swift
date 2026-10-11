@@ -1033,7 +1033,7 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         let h = el("split-handle")
         XCTAssertTrue(h.waitForExistence(timeout: 5), "the split line should show")
-        h.press(forDuration: 0.1, thenDragTo: el("photo").coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+        h.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.1, thenDragTo: el("photo").coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
         sleep(1)
         XCTAssertGreaterThan(Double(valueOf("split-handle")) ?? 0, 0.6, "dragging moves the split line")
         shot("before-after")
