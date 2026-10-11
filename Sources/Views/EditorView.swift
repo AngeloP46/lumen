@@ -431,7 +431,7 @@ struct EditorView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("canvas")
             // two fingers pinch and pan together over every tool except Crop (including the mask overlay)
-            .gesture(TwoFingerGesture { phase, p, d in
+            .background(TwoFingerInstaller(enabled: !showEdits && !showExportChoices && vm.exported == nil) { phase, p, d in
                 twoFingers(phase, CGPoint(x: p.x - origin.x, y: p.y - origin.y), d, xform)
             })
             // fallback pinch in case the watcher above never sees the fingers

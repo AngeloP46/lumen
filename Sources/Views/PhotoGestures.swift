@@ -16,6 +16,8 @@ final class TwoFingerWatcher: UIGestureRecognizer {
 
     private var down: [UITouch] = []
     private var tracking = false
+    /// Only fingers that land inside this view count (the watcher sits on the window, which sees every touch).
+    weak var area: UIView?
 
     override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
@@ -23,7 +25,11 @@ final class TwoFingerWatcher: UIGestureRecognizer {
     override func shouldBeRequiredToFail(by otherGestureRecognizer: UIGestureRecognizer) -> Bool { false }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        for t in touches where !down.contains(t) { down.append(t) }
+        for t in touches where !down.contains(t) {
+            if let a = area, !a.bounds.contains(t.location(in: a)) { continue }
+            down.append(t)
+        }
+        if down.isEmpty { state = .failed; return }
         restart()
     }
 
@@ -78,3 +84,50 @@ struct TwoFingerGesture: UIGestureRecognizerRepresentable {
 
     func handleUIGestureRecognizerAction(_ recognizer: TwoFingerWatcher, context: Context) {}
 }
+
+/// Puts a `TwoFingerWatcher` on the window, watching only fingers that land on this view's area.
+///
+/// Attached as a SwiftUI gesture, the watcher lost to any child gesture: a finger landing on a mask handle, the rotate
+/// knob or the brush meant the pinch never reached it. On the window it sees every touch before SwiftUI sorts them
+/// out, and as it never claims anything it still cannot block any other gesture.
+struct TwoFingerInstaller: UIViewRepresentable {
+    var enabled = true
+    var onPinch: (TwoFingerWatcher.Phase, CGPoint, CGFloat) -> Void
+
+    func makeUIView(context: Context) -> InstallerView {
+        let v = InstallerView()
+        v.isUserInteractionEnabled = false
+        v.backgroundColor = .clear
+        v.watcher.onPinch = onPinch
+        v.watcher.isEnabled = enabled
+        return v
+    }
+
+    func updateUIView(_ v: InstallerView, context: Context) {
+        v.watcher.onPinch = onPinch
+        v.watcher.isEnabled = enabled
+    }
+
+    static func dismantleUIView(_ v: InstallerView, coordinator: ()) { v.detach() }
+
+    final class InstallerView: UIView {
+        let watcher: TwoFingerWatcher = {
+            let g = TwoFingerWatcher(target: nil, action: nil)
+            g.cancelsTouchesInView = false
+            g.delaysTouchesBegan = false
+            g.delaysTouchesEnded = false
+            return g
+        }()
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            detach()
+            guard let w = window else { return }
+            watcher.area = self
+            w.addGestureRecognizer(watcher)
+        }
+
+        func detach() { watcher.view?.removeGestureRecognizer(watcher) }
+    }
+}
+
