@@ -214,6 +214,9 @@ final class LibraryStore: ObservableObject {
         return value
     }
 
+    /// CI only: as if the photo had never been opened.
+    func forgetEdits(_ item: LibraryItem) { try? FileManager.default.removeItem(at: editURL(item)) }
+
     func save(_ s: EditSettings, for item: LibraryItem) {
         if let data = try? JSONEncoder().encode(s) { try? data.write(to: editURL(item), options: .atomic) }
     }

@@ -117,7 +117,10 @@ struct LibraryView: View {
                     store.importFiles([bad])
                 }
                 if DemoMode.value("-lumenDemoFresh") != nil {
-                    for it in store.items { store.save(EditSettings(), for: it) }
+                    // -lumenDemoRawHDR: no saved edits at all, like a photo never opened
+                    for it in store.items {
+                        if DemoMode.value("-lumenDemoRawHDR") != nil { store.forgetEdits(it) } else { store.save(EditSettings(), for: it) }
+                    }
                     store.clipboard = nil
                 }
                 if let n = DemoMode.value("-lumenDemoOpen"), let i = Int(n), store.items.indices.contains(i) {
