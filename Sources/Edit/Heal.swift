@@ -13,14 +13,17 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "LaMa", withExtension: "mlmodelc")
     }()
-    private static let healModel: MLModel? = {
+    /// `.all` is the setting the conversion was verified with (its notes: moving it to other compute units can
+    /// silently overflow float16 or break on the GPU; 0.1.137 used .cpuAndGPU and the iPhone filled heals black).
+    private static let healModel: MLModel? = loadHealModel(.all)
+    /// CPU only: slower, full precision. Used when the first answer looks broken.
+    private static let healModelCPU: MLModel? = loadHealModel(.cpuOnly)
+    private static func loadHealModel(_ units: MLComputeUnits) -> MLModel? {
         guard let url = healModelURL else { return nil }
         let cfg = MLModelConfiguration()
-        // GPU (and CPU): the conversion's notes warn its attention layers can overflow in the Neural Engine's
-        // float16, so it is not given the Neural Engine
-        cfg.computeUnits = .cpuAndGPU
+        cfg.computeUnits = units
         return try? MLModel(contentsOf: url, configuration: cfg)
-    }()
+    }
     static var hasHealModel: Bool { healModel != nil }
 
     static let healSide = 800   // the model's fixed input size
@@ -100,16 +103,29 @@ extension EditSession {
         }
         guard let hole = strokeMask(grow: 6, soften: 0), let blend = strokeMask(grow: 10, soften: 4) else { return nil }
 
-        // 5. the model
-        guard let imageC = model.modelDescription.inputDescriptionsByName["image"]?.imageConstraint,
-              let maskC = model.modelDescription.inputDescriptionsByName["mask"]?.imageConstraint,
-              let imageV = try? MLFeatureValue(cgImage: cgImage, constraint: imageC, options: nil),
-              let maskV = try? MLFeatureValue(cgImage: hole, constraint: maskC, options: nil),
-              let features = try? MLDictionaryFeatureProvider(dictionary: ["image": imageV, "mask": maskV]),
-              let result = try? model.prediction(from: features),
-              let buffer = result.featureValue(for: "output")?.imageBufferValue
-        else { return nil }
-        let out = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: srgb])
+        // 5. the model; an answer that is black (or far darker than its surroundings) inside the hole is a numeric
+        //    failure, not a fill: try once more on the CPU, and never keep a broken patch
+        func run(_ m: MLModel) -> CIImage? {
+            guard let imageC = m.modelDescription.inputDescriptionsByName["image"]?.imageConstraint,
+                  let maskC = m.modelDescription.inputDescriptionsByName["mask"]?.imageConstraint,
+                  let imageV = try? MLFeatureValue(cgImage: cgImage, constraint: imageC, options: nil),
+                  let maskV = try? MLFeatureValue(cgImage: hole, constraint: maskC, options: nil),
+                  let features = try? MLDictionaryFeatureProvider(dictionary: ["image": imageV, "mask": maskV]),
+                  let result = try? m.prediction(from: features),
+                  let buffer = result.featureValue(for: "output")?.imageBufferValue
+            else { return nil }
+            return CIImage(cvPixelBuffer: buffer, options: [.colorSpace: srgb])
+        }
+        let ring = Self.meanInside(CIImage(cgImage: cgImage), mask: blend, invert: true)
+        func plausible(_ o: CIImage) -> Bool {
+            let inHole = Self.meanInside(o, mask: hole, invert: false)
+            return inHole.isFinite && !(ring > 0.06 && inHole < ring * 0.3)
+        }
+        var answer = run(model)
+        if answer == nil || !plausible(answer!), let cpu = Self.healModelCPU {
+            answer = run(cpu)
+        }
+        guard let out = answer, plausible(out) else { return nil }
 
         // 6. keep it: the rebuilt square and where to blend it in
         let id = UUID()
@@ -120,6 +136,22 @@ extension EditSession {
         } catch { return nil }
         return HealSpot(id: id, strokes: strokes, x: Double(region.minX / W), y: Double(region.minY / H),
                         w: Double(side / W), h: Double(side / H), scale: scale)
+    }
+
+    /// Mean brightness of `img` where `mask` is white (or, with `invert`, where it is black).
+    static func meanInside(_ img: CIImage, mask: CGImage, invert: Bool) -> Float {
+        let n = CGFloat(healSide)
+        var m = expandRed(CIImage(cgImage: mask, options: [.colorSpace: NSNull()]))
+        if invert { m = m.applyingFilter("CIColorInvert") }
+        let r = CGRect(x: 0, y: 0, width: n, height: n)
+        let weighted = img.cropped(to: r).applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: m])
+        var a = [Float](repeating: 0, count: 4), b = [Float](repeating: 0, count: 4)
+        let ea = weighted.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: r)])
+        let eb = m.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: r)])
+        LumenGPU.context.render(ea, toBitmap: &a, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        LumenGPU.context.render(eb, toBitmap: &b, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        guard b[0] > 1e-4 else { return 0 }
+        return (a[0] + a[1] + a[2]) / 3 / b[0]
     }
 
     static func writeGrayPNG(_ img: CGImage, to url: URL) throws {
