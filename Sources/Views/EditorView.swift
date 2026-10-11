@@ -46,6 +46,11 @@ struct EditorView: View {
     @StateObject private var vm: EditorViewModel
     @AppStorage("showHistogram") private var showHistogram = true
     @AppStorage("sliderStyle") private var sliderStyle = "auto"   // auto | strip | list
+    /// Portrait: the tool bar can be folded down to a thin strip (owner's request 2026-10-11: tools are switched now and
+    /// then, not every second, so the full bar is not worth its height all the time).
+    @AppStorage("toolBarCollapsed") private var toolsCollapsed = false
+    /// Wide screen (phone on its side): photo on the left at full height, controls in a column on the right.
+    @State private var landscape = false
     @State private var tool: Tool? = Tool(rawValue: DemoMode.value("-lumenDemoTool") ?? "") ?? .light
     @State private var chromeHidden = false
     @State private var showExportChoices = false
@@ -73,6 +78,9 @@ struct EditorView: View {
 
     private let item: LibraryItem
     private let toolbarHeight: CGFloat = 52
+    private let collapsedBarHeight: CGFloat = 30
+    private let landscapeBarHeight: CGFloat = 44
+    private var portraitBarHeight: CGFloat { toolsCollapsed ? collapsedBarHeight : toolbarHeight }
     private let maxZoom: CGFloat = 8
 
     init(item: LibraryItem) {
@@ -82,21 +90,46 @@ struct EditorView: View {
 
     var body: some View {
         GeometryReader { root in
-            let plan = panelPlan(in: root.size)
-            VStack(spacing: 0) {
-                canvas
-                if !chromeHidden {
-                    VStack(spacing: 0) {
-                        if let tool {
-                            panelContainer(tool, plan: plan)
+            let wide = root.size.width > root.size.height * 1.1
+            Group {
+                if wide {
+                    // phone on its side: the photo keeps the full height, the controls live in a column on the right
+                    let sideW = min(400, max(300, root.size.width * 0.4))
+                    HStack(spacing: 0) {
+                        canvas
+                        if !chromeHidden {
+                            VStack(spacing: 0) {
+                                if let tool {
+                                    panelContainer(tool, plan: sidePlan(height: root.size.height - landscapeBarHeight - 24))
+                                } else {
+                                    Spacer(minLength: 0)
+                                }
+                                toolBar(compact: true)
+                            }
+                            .frame(width: sideW)
+                            .background(Theme.bar.ignoresSafeArea(edges: [.bottom, .trailing]))
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
-                        toolBar
                     }
-                    .background(Theme.bar.ignoresSafeArea(edges: .bottom))
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    let plan = panelPlan(in: root.size)
+                    VStack(spacing: 0) {
+                        canvas
+                        if !chromeHidden {
+                            VStack(spacing: 0) {
+                                if let tool {
+                                    panelContainer(tool, plan: plan)
+                                }
+                                if toolsCollapsed { collapsedToolBar } else { toolBar(compact: false) }
+                            }
+                            .background(Theme.bar.ignoresSafeArea(edges: .bottom))
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
                 }
             }
             .background(Color.black.ignoresSafeArea())
+            .onChange(of: wide, initial: true) { _, w in landscape = w }
         }
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
@@ -178,7 +211,7 @@ struct EditorView: View {
         guard let tool else { return PanelPlan(height: 0, layout: .strip) }
         let sp = spec(tool)
         let aspect = vm.imageSize.height > 0 ? vm.imageSize.width / vm.imageSize.height : 1.5
-        let avail = size.height - toolbarHeight
+        let avail = size.height - portraitBarHeight
         let photoH = size.width / max(aspect, 0.2)
         let free = max(avail - photoH - 6, 0)
         let pad: CGFloat = 12
@@ -219,11 +252,34 @@ struct EditorView: View {
         return PanelPlan(height: h, layout: layout, rowHeight: rowH, minHeight: minH, maxHeight: maxH, key: key)
     }
 
+    /// Landscape: the side column's panel uses all of the column's height; sliders as a list.
+    private func sidePlan(height: CGFloat) -> PanelPlan {
+        guard let tool else { return PanelPlan(height: 0, layout: .strip) }
+        let sp = spec(tool)
+        let h = max(height, 120)
+        let layout: SliderLayout = (sp.rows > 0 && sliderStyle != "strip") ? .list : .strip
+        return PanelPlan(height: h, layout: layout, rowHeight: 40, minHeight: h, maxHeight: h, key: "landscape")
+    }
+
     private func panelContainer(_ t: Tool, plan: PanelPlan) -> some View {
         VStack(spacing: 0) {
             // grab handle: drag up for more of the controls, down for more of the photo (all the way down closes it)
             ZStack {
                 Capsule().fill(Color.white.opacity(0.3)).frame(width: 44, height: 5)
+                if !landscape && !toolsCollapsed {
+                    // fold the tool bar away for more photo (tap the thin strip to bring it back)
+                    HStack {
+                        Spacer()
+                        Button { withAnimation(.easeOut(duration: 0.18)) { toolsCollapsed = true } } label: {
+                            Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color(white: 0.6))
+                                .frame(width: 44, height: 24).contentShape(Rectangle())
+                        }
+                        .accessibilityIdentifier("tools-collapse")
+                        .accessibilityLabel("Hide tools")
+                    }
+                    .padding(.trailing, 6)
+                }
             }
             .frame(maxWidth: .infinity)
             .frame(height: 24)
@@ -315,7 +371,7 @@ struct EditorView: View {
     /// The photo sits directly on top of the panel (spare height above it, under the floating buttons and the
     /// histogram) and grows upwards into that space when zoomed. Masks and Crop keep it centred, so handles and the crop
     /// frame have room all round.
-    private var alignBottom: Bool { !chromeHidden && tool != .masks && tool != .crop }
+    private var alignBottom: Bool { !chromeHidden && !landscape && tool != .masks && tool != .crop }
 
     private var canvas: some View {
         photoArea
@@ -687,8 +743,24 @@ struct EditorView: View {
 
     // MARK: Tools
 
-    /// Eight tools, all visible at once.
-    private var toolBar: some View {
+    /// The folded tool bar: the current tool's name; tap to bring the tools back.
+    private var collapsedToolBar: some View {
+        Button { withAnimation(.easeOut(duration: 0.18)) { toolsCollapsed = false } } label: {
+            HStack(spacing: 6) {
+                if let tool { Image(systemName: tool.icon).font(.system(size: 13)) }
+                Text(tool?.rawValue ?? "Tools").font(.system(size: 12, weight: .semibold))
+                Image(systemName: "chevron.up").font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(Color(white: 0.75))
+            .frame(maxWidth: .infinity).frame(height: collapsedBarHeight)
+            .contentShape(Rectangle())
+        }
+        .accessibilityIdentifier("tools-expand")
+        .accessibilityLabel("Show tools")
+    }
+
+    /// Eight tools, all visible at once. `compact` (landscape side column): icons only, a slimmer bar.
+    private func toolBar(compact: Bool) -> some View {
         HStack(spacing: 0) {
             ForEach(Tool.allCases) { t in
                 Button { withAnimation(.easeOut(duration: 0.15)) { tool = (tool == t) ? nil : t } } label: {
@@ -701,15 +773,16 @@ struct EditorView: View {
                             .overlay(alignment: .topTrailing) {
                                 if off { Image(systemName: "eye.slash").font(.system(size: 9, weight: .bold)).offset(x: 8, y: -4) }
                             }
-                        Text(t.rawValue).font(.system(size: 9.5, weight: .medium))
+                        if !compact { Text(t.rawValue).font(.system(size: 9.5, weight: .medium)) }
                         // the same "changed" dot as on the sliders: this tool has edits
                         Circle().fill(edited && !off ? Theme.accent : Color.clear).frame(width: 4, height: 4)
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: toolbarHeight)
+                    .frame(height: compact ? landscapeBarHeight : toolbarHeight)
                     .foregroundStyle(tool == t ? Theme.accent : Color(white: 0.6))
                 }
                 .accessibilityIdentifier("tool-\(t.rawValue)")
+                .accessibilityLabel(t.rawValue)
                 .accessibilityValue(t.section.map { vm.settings.isOn($0) ? "on" : "off" } ?? "")
             }
         }

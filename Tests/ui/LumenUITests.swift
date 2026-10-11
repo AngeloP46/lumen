@@ -911,4 +911,34 @@ final class LumenUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(d1.bottom, d1.height - 2, "and still reach the panel (\(d1))")
         shot("zoomed-fills-height")
     }
+
+    func testToolBarFoldsAwayAndComesBack() {
+        launch(open: 0, tool: "Light")
+        let panelBefore = el("panel").frame
+        XCTAssertTrue(el("tools-collapse").waitForExistence(timeout: 10), "the panel should have a fold-away button for the tools")
+        el("tools-collapse").tap()
+        sleep(1)
+        XCTAssertFalse(el("tool-Light").exists, "folded: the tool buttons are hidden")
+        XCTAssertTrue(el("tools-expand").exists, "folded: a thin strip brings them back")
+        XCTAssertGreaterThan(el("panel").frame.maxY, panelBefore.maxY + 10, "folded: the panel and photo get the space")
+        shot("tools-folded")
+        el("tools-expand").tap()
+        sleep(1)
+        XCTAssertTrue(el("tool-Light").waitForExistence(timeout: 5), "tapping the strip brings the tools back")
+    }
+
+    func testLandscapePutsControlsBesideThePhoto() {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait; sleep(1) }
+        launch(open: 0, tool: "Light")
+        sleep(2)
+        let screen = app.windows.firstMatch.frame
+        let panel = el("panel").frame, photo = el("photo").frame
+        XCTAssertGreaterThan(screen.width, screen.height, "the simulator should be on its side (\(screen))")
+        XCTAssertGreaterThan(panel.minX, screen.width * 0.45, "in landscape the controls sit in a column on the right (\(panel))")
+        XCTAssertGreaterThan(photo.height, screen.height * 0.8, "the photo keeps (nearly) the full height (\(photo) of \(screen))")
+        XCTAssertTrue(el("slider-Exposure").exists, "the sliders are listed in the side column")
+        XCTAssertTrue(el("tool-Color").exists, "the tools sit under the side column")
+        shot("landscape")
+    }
 }
