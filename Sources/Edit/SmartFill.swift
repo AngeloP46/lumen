@@ -304,14 +304,16 @@ extension EditSession {
               let moments = mOut.featureValue(for: "latent")?.multiArrayValue else { return nil }
         let mom = MLArrays.floats(moments)                       // [8, 64, 64]: mean then log variance
         let LL = 4 * L8 * L8
-        let maskedLatent = (0..<LL).map { mom[$0] * 0.18215 }
+        // This conversion's encoder already applies SD's 0.18215 latent scale (scaling again drained the colour:
+        // red paint came back grey); the decoder still wants unscaled latents (z = latent / 0.18215).
+        let maskedLatent = Array(mom[0..<LL])
         var debug = ""
         if ProcessInfo.processInfo.environment["LUMEN_SMARTFILL_DEBUG"] != nil {
             // round trip: decode the masked image's latent and read a pixel away from the hole (should be the photo)
             let holeCount = hole.reduce(0) { $0 + ($1 > 127 ? 1 : 0) }
             let maskSum = mask64.reduce(0, +)
             var rt = "-"
-            if let z = MLArrays.half(maskedLatent.map { $0 / 0.18215 }, shape: [1, 4, L8, L8]),
+            if let z = MLArrays.half(maskedLatent.map { $0 / 0.18215 }, shape: [1, 4, L8, L8]),   // as the final decode does
                let o = try? models.vaeDecoder.prediction(from: MLDictionaryFeatureProvider(dictionary: ["z": z])),
                let im = o.featureValue(for: "image")?.multiArrayValue {
                 let f = MLArrays.floats(im)

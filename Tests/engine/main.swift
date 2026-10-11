@@ -1377,6 +1377,44 @@ do {
             }
         }
     }
+    // Preview sheets for the owner: original | painted | quick heal | smart fill, posted as a JPEG in a notice
+    // annotation (artifacts can't be fetched from the cloud session), title "sheet:<name>"
+    func tile(_ session: EditSession, heals: [HealSpot], rect r: (x: Double, y: Double, w: Double, h: Double),
+              stroke: BrushStroke? = nil, px: Int = 200) -> CGImage? {
+        session.heals = heals
+        guard let full = session.decode(maxEdge: nil) else { return nil }
+        let e = full.extent
+        let cr = CGRect(x: r.x * e.width, y: (1 - r.y - r.h) * e.height, width: r.w * e.width, height: r.h * e.height)
+        let k = CGFloat(px) / cr.width
+        let img = full.cropped(to: cr).transformed(by: CGAffineTransform(translationX: -cr.minX, y: -cr.minY))
+            .transformed(by: CGAffineTransform(scaleX: k, y: k))
+        guard let cg = LumenGPU.context.createCGImage(img, from: CGRect(x: 0, y: 0, width: px, height: px), format: .RGBA8,
+                                                      colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!) else { return nil }
+        guard let stroke, let g = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0,
+                                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return cg }
+        g.draw(cg, in: CGRect(x: 0, y: 0, width: px, height: px))
+        let L = max(e.width, e.height)
+        func pt(_ p: Pt) -> CGPoint { CGPoint(x: (CGFloat(p.x) * e.width - cr.minX) * k, y: CGFloat(px) - (CGFloat(p.y) * e.height - (e.height - cr.maxY)) * k) }
+        g.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.6)); g.setLineCap(.round); g.setLineJoin(.round)
+        g.setLineWidth(CGFloat(stroke.size) * L * k)
+        if let f = stroke.points.first { g.move(to: pt(f)); g.addLine(to: pt(f)); for p in stroke.points.dropFirst() { g.addLine(to: pt(p)) }; g.strokePath() }
+        return g.makeImage()
+    }
+    func postSheet(_ name: String, _ tiles: [CGImage?]) {
+        let px = 200, n = tiles.count
+        guard let g = CGContext(data: nil, width: px * n + 4 * (n - 1), height: px, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return }
+        g.setFillColor(CGColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1)); g.fill(CGRect(x: 0, y: 0, width: g.width, height: px))
+        for (i, t) in tiles.enumerated() { if let t { g.draw(t, in: CGRect(x: i * (px + 4), y: 0, width: px, height: px)) } }
+        guard let sheet = g.makeImage() else { return }
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(dest, sheet, [kCGImageDestinationLossyCompressionQuality: 0.7] as CFDictionary)
+        CGImageDestinationFinalize(dest)
+        print("::notice title=sheet:\(name)::\((data as Data).base64EncodedString())")
+    }
+
     // Smart fill (diffusion inpainting): the tokenizer, and a badge on red paint filled red
     if ProcessInfo.processInfo.environment["LUMEN_SMARTFILL_DIR"] != nil {
         check(SmartFillFiles.isComplete, "the smart fill files should all be there")
@@ -1402,6 +1440,10 @@ do {
                 let spot = session.makeSmartHeal(strokes: [stroke], earlier: [], seed: 7, steps: 8) { s, _ in lastStep = s }
                 print("::notice::smart fill in \(Int((now() - t0) * 1000)) ms, steps done \(lastStep): \(EditSession.healDiagnostics)")
                 if let spot {
+                    let quick = session.makeHeal(strokes: [stroke], earlier: [])
+                    let r = (x: spot.x, y: spot.y, w: spot.w, h: spot.h)
+                    postSheet("red badge", [tile(session, heals: [], rect: r), tile(session, heals: [], rect: r, stroke: stroke),
+                                            quick.map { tile(session, heals: [$0], rect: r) } ?? nil, tile(session, heals: [spot], rect: r)])
                     session.heals = [spot]
                     var v = [Float](repeating: 0, count: 4)
                     if let img = session.decode(maxEdge: nil) {
@@ -1412,6 +1454,20 @@ do {
                     session.heals = []
                 } else { check(false, "smart fill returned nothing (\(EditSession.healDiagnostics))") }
             }
+        }
+        // a real photo: something in the foreground of the mountain shot
+        if let f = files.first(where: { $0.lastPathComponent.hasPrefix("matterhorn") }), let session = EditSession(url: f) {
+            let stroke = BrushStroke(points: [Pt(x: 0.45, y: 0.8), Pt(x: 0.5, y: 0.82)], size: 0.05, erase: false, feather: nil)
+            let quick = session.makeHeal(strokes: [stroke], earlier: [])
+            let smart = session.makeSmartHeal(strokes: [stroke], earlier: [], seed: 3, steps: 8)
+            print("::notice::smart fill matterhorn: \(EditSession.healDiagnostics)")
+            if let s = smart ?? quick {
+                let r = (x: s.x, y: s.y, w: s.w, h: s.h)
+                postSheet("mountain", [tile(session, heals: [], rect: r), tile(session, heals: [], rect: r, stroke: stroke),
+                                       quick.map { tile(session, heals: [$0], rect: r) } ?? nil,
+                                       smart.map { tile(session, heals: [$0], rect: r) } ?? nil])
+            }
+            session.heals = []
         }
         SmartFillModels.unload()
     } else { print("::warning::no LUMEN_SMARTFILL_DIR: smart fill not checked") }
