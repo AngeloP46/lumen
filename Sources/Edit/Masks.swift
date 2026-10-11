@@ -290,13 +290,75 @@ extension EditSession {
         let small = Self.normalized(image.transformed(by: CGAffineTransform(scaleX: k, y: k)))
         guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
         else { return nil }
+        // 1. A real horizon (sea, skyline, field edge): Apple's on-device horizon detection
         let request = VNDetectHorizonRequest()
-        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { return nil }
-        guard let obs = request.results?.first else { return nil }
-        // Vision: the horizon's angle, anticlockwise positive; turning the photo clockwise by it levels it
-        let deg = Double(obs.angle) * 180 / .pi
-        guard abs(deg) <= 45 else { return nil }
-        return (deg * 10).rounded() / 10
+        if (try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])) != nil,
+           let obs = request.results?.first {
+            // Vision: the horizon's angle, anticlockwise positive; turning the photo clockwise by it levels it
+            let deg = Double(obs.angle) * 180 / .pi
+            if abs(deg) <= 20 { return (deg * 10).rounded() / 10 }
+        }
+        // 2. No horizon (buildings, cars, interiors): level the photo's straight edges instead
+        return Self.edgeLevelAngle(cg)
+    }
+
+    /// Finds the small turn (up to 20°) that makes the photo's strongest straight edges horizontal or vertical,
+    /// like Lightroom's Level. Edges are measured with a Sobel filter; their directions, folded so verticals and
+    /// horizontals agree, are voted into a histogram weighted by edge strength; the clear peak is the tilt.
+    static func edgeLevelAngle(_ cg: CGImage) -> Double? {
+        let w = min(cg.width, 640), h = max(1, cg.height * w / max(cg.width, 1))
+        guard w > 16, h > 16,
+              let gctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                   space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        else { return nil }
+        gctx.interpolationQuality = .medium
+        gctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = gctx.data else { return nil }
+        let px = data.bindMemory(to: UInt8.self, capacity: w * h)
+        func v(_ x: Int, _ y: Int) -> Float { Float(px[y * w + x]) }
+
+        // gradients (rows as stored: y down)
+        var mags: [Float] = [], dirs: [Float] = []
+        mags.reserveCapacity(w * h / 4); dirs.reserveCapacity(w * h / 4)
+        for y in 1..<(h - 1) {
+            for x in 1..<(w - 1) {
+                let gx = (v(x + 1, y - 1) + 2 * v(x + 1, y) + v(x + 1, y + 1)) - (v(x - 1, y - 1) + 2 * v(x - 1, y) + v(x - 1, y + 1))
+                let gy = (v(x - 1, y + 1) + 2 * v(x, y + 1) + v(x + 1, y + 1)) - (v(x - 1, y - 1) + 2 * v(x, y - 1) + v(x + 1, y - 1))
+                let m = (gx * gx + gy * gy).squareRoot()
+                if m > 60 { mags.append(m); dirs.append(atan2(gy, gx)) }
+            }
+        }
+        guard mags.count > 200 else { return nil }
+        // only the strongest edges vote
+        let cut = mags.sorted()[mags.count * 3 / 4]
+        let bins = 160                      // 0.25° each over -20...20°
+        var hist = [Float](repeating: 0, count: bins)
+        var total: Float = 0
+        for i in mags.indices where mags[i] >= cut {
+            var a = dirs[i] * 180 / .pi                    // -180...180
+            a = a - 90 * (a / 90).rounded()                // fold to -45...45: 0 = level edge
+            guard abs(a) < 20 else { continue }
+            let b = Int((a + 20) / 40 * Float(bins))
+            hist[min(max(b, 0), bins - 1)] += mags[i]
+            total += mags[i]
+        }
+        guard total > 0 else { return nil }
+        // smooth over ±1°, then the peak must clearly stand out from an even spread
+        var smooth = [Float](repeating: 0, count: bins)
+        for i in 0..<bins {
+            var s: Float = 0
+            for k in -4...4 { let j = i + k; if j >= 0 && j < bins { s += hist[j] * Float(5 - abs(k)) } }
+            smooth[i] = s
+        }
+        guard let peak = smooth.indices.max(by: { smooth[$0] < smooth[$1] }) else { return nil }
+        let mean = smooth.reduce(0, +) / Float(bins)
+        guard smooth[peak] > mean * 2.2 else { return nil }
+        let tilt = (Double(peak) + 0.5) / Double(bins) * 40 - 20     // degrees, image rows going down
+        // rows run downwards, so an edge tilted anticlockwise on screen reads as a negative angle here; the
+        // clockwise turn that levels it (Straighten) is therefore -tilt
+        let straighten = -tilt
+        guard abs(straighten) >= 0.2 else { return 0 }
+        return (straighten * 10).rounded() / 10
     }
 
     /// Apple's on-device person segmentation (Vision): every person in the photo, hair and clothes included.

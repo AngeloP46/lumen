@@ -1049,16 +1049,33 @@ do {
                 .concatenating(CGAffineTransform(rotationAngle: 8 * .pi / 180))
                 .concatenating(CGAffineTransform(translationX: W / 2, y: H / 2)))
         let scene = ground.composited(over: sky).cropped(to: sky.extent)
-        if let a = session.levelAngle(of: scene) {
-            check(abs(abs(a) - 8) < 2, "auto-level should find the 8° tilt (got \(a)°)")
+        func levelCheck(_ name: String, _ img: CIImage, tilt: Double) {
+            guard let a = session.levelAngle(of: img) else { check(false, "auto-level found nothing in the \(name) scene"); return }
+            check(abs(abs(a) - tilt) < 1.5, "auto-level should find the \(tilt)° tilt of the \(name) scene (got \(a)°)")
             var s = EditSettings(); s.straighten = a
-            let levelled = session.geometry(scene, s)
-            if let b = session.levelAngle(of: levelled) {
-                check(abs(b) < 1.5, "straightening by the auto-level angle should leave the horizon level (still \(b)°, applied \(a)°)")
-            }
-        } else {
-            print("note: Vision found no horizon in the synthetic scene (auto-level not checked)")
+            let levelled = session.geometry(img, s)
+            let b = session.levelAngle(of: levelled) ?? 0
+            check(abs(b) < 1.2, "straightening the \(name) scene by the auto-level angle should level it (still \(b)°, applied \(a)°)")
         }
+        levelCheck("horizon", scene, tilt: 8)
+        // no horizon: a 'building' of vertical and horizontal bars, turned 6° clockwise
+        var bars = CIImage(color: CIColor(red: 0.85, green: 0.85, blue: 0.8)).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
+        for i in 0..<9 {
+            let x = CGFloat(i) * 110 + 30
+            bars = CIImage(color: CIColor(red: 0.2, green: 0.22, blue: 0.25)).cropped(to: CGRect(x: x, y: -200, width: 26, height: H + 400)).composited(over: bars)
+        }
+        for j in 0..<4 {
+            let y = CGFloat(j) * 160 + 40
+            bars = CIImage(color: CIColor(red: 0.3, green: 0.3, blue: 0.32)).cropped(to: CGRect(x: -200, y: y, width: W + 400, height: 14)).composited(over: bars)
+        }
+        let building = bars.transformed(by: CGAffineTransform(translationX: -W / 2, y: -H / 2)
+            .concatenating(CGAffineTransform(rotationAngle: -6 * .pi / 180))
+            .concatenating(CGAffineTransform(translationX: W / 2, y: H / 2)))
+            .composited(over: CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
+        levelCheck("building", building, tilt: 6)
+        // a level photo stays (nearly) level
+        let flat = bars.composited(over: CIImage(color: .gray)).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
+        if let z = session.levelAngle(of: flat) { check(abs(z) < 0.6, "a level photo should need no turn (got \(z)°)") }
 
         // global grading wheel tints the picture; old files without it still load
         var g = EditSettings(); g.grading.global = GradeZone(hue: 30, sat: 60, lum: 0)
