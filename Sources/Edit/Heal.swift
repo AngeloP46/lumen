@@ -106,10 +106,16 @@ extension EditSession {
         // 5. the model; an answer that is black (or far darker than its surroundings) inside the hole is a numeric
         //    failure, not a fill: try once more on the CPU, and never keep a broken patch
         func run(_ m: MLModel) -> CIImage? {
+            // The pixels go in exactly as they are (sRGB-encoded bytes, mask 0/255). MLFeatureValue(cgImage:)
+            // colour-matched them first, so the model saw (and painted) a much darker picture (0.1.139 and before).
             guard let imageC = m.modelDescription.inputDescriptionsByName["image"]?.imageConstraint,
                   let maskC = m.modelDescription.inputDescriptionsByName["mask"]?.imageConstraint,
-                  let imageV = try? MLFeatureValue(cgImage: cgImage, constraint: imageC, options: nil),
-                  let maskV = try? MLFeatureValue(cgImage: hole, constraint: maskC, options: nil),
+                  let imagePB = Self.pixelBuffer(CIImage(cgImage: cgImage, options: [.colorSpace: NSNull()]),
+                                                 format: imageC.pixelFormatType, side: Self.healSide),
+                  let maskPB = Self.pixelBuffer(Self.expandRed(CIImage(cgImage: hole, options: [.colorSpace: NSNull()])),
+                                                format: maskC.pixelFormatType, side: Self.healSide),
+                  case let imageV = MLFeatureValue(pixelBuffer: imagePB),
+                  case let maskV = MLFeatureValue(pixelBuffer: maskPB),
                   let features = try? MLDictionaryFeatureProvider(dictionary: ["image": imageV, "mask": maskV]),
                   let result = try? m.prediction(from: features),
                   let buffer = result.featureValue(for: "output")?.imageBufferValue
@@ -136,6 +142,18 @@ extension EditSession {
         } catch { return nil }
         return HealSpot(id: id, strokes: strokes, x: Double(region.minX / W), y: Double(region.minY / H),
                         w: Double(side / W), h: Double(side / H), scale: scale)
+    }
+
+    /// Renders `img` into a new pixel buffer byte for byte (no colour conversion).
+    static func pixelBuffer(_ img: CIImage, format: OSType, side: Int) -> CVPixelBuffer? {
+        var pb: CVPixelBuffer?
+        let attrs: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
+                                      kCVPixelBufferCGImageCompatibilityKey: true,
+                                      kCVPixelBufferCGBitmapContextCompatibilityKey: true]
+        guard CVPixelBufferCreate(nil, side, side, format, attrs as CFDictionary, &pb) == kCVReturnSuccess, let buf = pb
+        else { return nil }
+        LumenGPU.context.render(img, to: buf, bounds: CGRect(x: 0, y: 0, width: side, height: side), colorSpace: nil)
+        return buf
     }
 
     /// Mean brightness of `img` where `mask` is white (or, with `invert`, where it is black).
