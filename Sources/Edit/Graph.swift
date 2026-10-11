@@ -72,6 +72,22 @@ extension EditSession {
     /// `applyCrop: false` keeps the whole straightened picture, which is what the crop editor shows.
     func geometry(_ input: CIImage, _ s: EditSettings, applyCrop: Bool = true) -> CIImage {
         var img = input
+        // Transform (perspective, aspect, scale, offset): the photo's corners move, the frame stays the same size
+        if let q = Homography.corners(s) {
+            let e = img.extent
+            func pt(_ p: Pt) -> CIVector { CIVector(x: e.minX + CGFloat(p.x) * e.width, y: e.minY + CGFloat(1 - p.y) * e.height) }
+            img = img.applyingFilter("CIPerspectiveTransform", parameters: [
+                "inputTopLeft": pt(q[0]), "inputTopRight": pt(q[1]),
+                "inputBottomRight": pt(q[2]), "inputBottomLeft": pt(q[3]),
+            ]).cropped(to: e)
+        }
+        // Flip (mirror) about the centre
+        if s.flipH || s.flipV {
+            let e = img.extent
+            img = img.transformed(by: CGAffineTransform(translationX: -e.midX, y: -e.midY)
+                .concatenating(CGAffineTransform(scaleX: s.flipH ? -1 : 1, y: s.flipV ? -1 : 1))
+                .concatenating(CGAffineTransform(translationX: e.midX, y: e.midY)))
+        }
         let turns = ((s.quarterTurns % 4) + 4) % 4
         if turns != 0 {
             img = Self.rotateAboutCenter(img, by: -CGFloat(turns) * .pi / 2)
@@ -165,10 +181,66 @@ extension EditSession {
 /// The photo as stored (the source: masks, brush strokes and colour picks live here) versus the photo as shown after
 /// 90° turns, straighten and crop (the output). Same maths as `EditSession.geometry`, so mask handles drawn through
 /// it sit exactly on the rendered mask. Normalised coordinates are 0...1 with y down on both sides.
+/// A projective map between two quadrilaterals, in normalised photo coordinates (0...1, y down).
+struct Homography: Equatable {
+    var m: [Double]   // row-major 3 x 3
+
+    /// Where the photo's corners go for a transform (TL, TR, BR, BL), or nil when there is no transform.
+    static func corners(_ s: EditSettings) -> [Pt]? {
+        guard s.hasTransform else { return nil }
+        let kv = s.tVertical / 100 * 0.25, kh = s.tHorizontal / 100 * 0.25
+        let a = s.tAspect / 100
+        let sx = (a > 0 ? 1 + a * 0.5 : 1) * s.tScale / 100
+        let sy = (a < 0 ? 1 - a * 0.5 : 1) * s.tScale / 100
+        let ox = s.tOffX / 100 * 0.5, oy = -s.tOffY / 100 * 0.5
+        // centred corner positions: Vertical widens the top (narrows the bottom), Horizontal heightens the left side
+        let c: [(Double, Double)] = [(-0.5 * (1 + kv), -0.5 * (1 + kh)), (0.5 * (1 + kv), -0.5 * (1 - kh)),
+                                     (0.5 * (1 - kv), 0.5 * (1 - kh)), (-0.5 * (1 - kv), 0.5 * (1 + kh))]
+        return c.map { Pt(x: 0.5 + $0.0 * sx + ox, y: 0.5 + $0.1 * sy + oy) }
+    }
+
+    /// The unit square's corners (0,0), (1,0), (1,1), (0,1) -> q[0...3] (Heckbert).
+    static func squareTo(_ q: [Pt]) -> Homography {
+        let x0 = q[0].x, y0 = q[0].y, x1 = q[1].x, y1 = q[1].y, x2 = q[2].x, y2 = q[2].y, x3 = q[3].x, y3 = q[3].y
+        let sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3
+        var g = 0.0, h = 0.0
+        if abs(sx) > 1e-12 || abs(sy) > 1e-12 {
+            let dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2
+            let den = dx1 * dy2 - dx2 * dy1
+            g = (sx * dy2 - dx2 * sy) / den
+            h = (dx1 * sy - sx * dy1) / den
+        }
+        return Homography(m: [x1 - x0 + g * x1, x3 - x0 + h * x3, x0,
+                              y1 - y0 + g * y1, y3 - y0 + h * y3, y0,
+                              g, h, 1])
+    }
+
+    func apply(_ p: Pt) -> Pt {
+        let w = m[6] * p.x + m[7] * p.y + m[8]
+        guard abs(w) > 1e-12 else { return p }
+        return Pt(x: (m[0] * p.x + m[1] * p.y + m[2]) / w, y: (m[3] * p.x + m[4] * p.y + m[5]) / w)
+    }
+
+    var inverse: Homography {
+        let a = m[0], b = m[1], c = m[2], d = m[3], e = m[4], f = m[5], g = m[6], h = m[7], i = m[8]
+        let A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g
+        let det = a * A + b * B + c * C
+        guard abs(det) > 1e-15 else { return self }
+        let k = 1 / det
+        return Homography(m: [A * k, -(b * i - c * h) * k, (b * f - c * e) * k,
+                              B * k, (a * i - c * g) * k, -(a * f - c * d) * k,
+                              C * k, -(a * h - b * g) * k, (a * e - b * d) * k])
+    }
+}
+
 struct SourceGeometry: Equatable {
     var source: CGSize
     var turns = 0
     var straighten = 0.0
+    /// Transform (photo -> photo, normalised) and flips, applied before the turns
+    var warp: Homography?
+    var flipH = false
+    var flipV = false
     /// crop fractions of the straightened picture: x = left, y = top, width = right - left, height = bottom - top
     var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
 
@@ -176,6 +248,9 @@ struct SourceGeometry: Equatable {
         self.source = source
         turns = ((s.quarterTurns % 4) + 4) % 4
         straighten = s.straighten
+        warp = Homography.corners(s).map { Homography.squareTo($0) }
+        flipH = s.flipH
+        flipV = s.flipV
         if applyCrop {
             // the same limits EditSession.geometry applies
             let l = min(max(s.cropL, 0), 0.95), t = min(max(s.cropT, 0), 0.95)
@@ -198,6 +273,8 @@ struct SourceGeometry: Equatable {
     var output: CGSize { CGSize(width: inscribed.width * crop.width, height: inscribed.height * crop.height) }
     /// How far the source is turned on screen, clockwise, in degrees.
     var clockwise: Double { Double(turns) * 90 + straighten }
+    /// A single flip mirrors angles (a radial turned clockwise in the source shows turned anticlockwise).
+    var mirrored: Bool { flipH != flipV }
 
     /// Source pixels (Core Image, y up, origin bottom left) -> output pixels (same convention).
     private var forward: CGAffineTransform {
@@ -209,9 +286,25 @@ struct SourceGeometry: Equatable {
             .concatenating(CGAffineTransform(translationX: -ox, y: -oy))
     }
 
-    func toOutput(_ p: Pt) -> Pt {
+    /// Source -> the photo after transform and flip (still source-sized, normalised).
+    private func pre(_ p: Pt) -> Pt {
+        var q = warp?.apply(p) ?? p
+        if flipH { q.x = 1 - q.x }
+        if flipV { q.y = 1 - q.y }
+        return q
+    }
+
+    private func unpre(_ p: Pt) -> Pt {
+        var q = p
+        if flipH { q.x = 1 - q.x }
+        if flipV { q.y = 1 - q.y }
+        return warp?.inverse.apply(q) ?? q
+    }
+
+    func toOutput(_ src: Pt) -> Pt {
         let o = output
-        guard o.width > 0, o.height > 0 else { return p }
+        guard o.width > 0, o.height > 0 else { return src }
+        let p = pre(src)
         let q = CGPoint(x: CGFloat(p.x) * source.width, y: (1 - CGFloat(p.y)) * source.height).applying(forward)
         return Pt(x: Double(q.x / o.width), y: Double(1 - q.y / o.height))
     }
@@ -220,6 +313,6 @@ struct SourceGeometry: Equatable {
         let o = output
         guard o.width > 0, o.height > 0, source.width > 0, source.height > 0 else { return p }
         let q = CGPoint(x: CGFloat(p.x) * o.width, y: (1 - CGFloat(p.y)) * o.height).applying(forward.inverted())
-        return Pt(x: Double(q.x / source.width), y: Double(1 - q.y / source.height))
+        return unpre(Pt(x: Double(q.x / source.width), y: Double(1 - q.y / source.height)))
     }
 }

@@ -55,6 +55,7 @@ struct EditorView: View {
     @State private var chromeHidden = false
     @State private var showExportChoices = false
     @State private var showEdits = false
+    @State private var showPasteSome = false
     @State private var wbMark: CGPoint?
 
     // panel height the user chose by dragging the handle (per tool); nil = automatic
@@ -166,6 +167,9 @@ struct EditorView: View {
         }
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .sheet(isPresented: $showEdits) { EditsSheet(vm: vm) }
+        .sheet(isPresented: $showPasteSome) {
+            if let c = store.clipboard { PasteSomeSheet(clip: c) { vm.paste($0, from: c) } }
+        }
         .onChange(of: vm.wbPicking) { _, on in if !on { wbMark = nil } }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },
                                              set: { if !$0 { vm.message = nil } })) {
@@ -177,8 +181,8 @@ struct EditorView: View {
 
     private func spec(_ t: Tool) -> ToolSpec {
         switch t {
-        case .presets: return ToolSpec(compact: 112, roomy: 112)
-        case .crop: return ToolSpec(compact: 168, roomy: 184)
+        case .presets: return ToolSpec(compact: vm.presetStrengthAvailable ? 152 : 112, roomy: vm.presetStrengthAvailable ? 152 : 112)
+        case .crop: return ToolSpec(compact: 200, roomy: 240)
         case .grade: return ToolSpec(compact: 250, roomy: 262)
         case .curve: return ToolSpec(compact: 280, roomy: 340)   // the curve fills its panel: bigger is easier
         case .light: return ToolSpec(compact: 100, roomy: 0, rows: 6, header: 44)
@@ -379,16 +383,22 @@ struct EditorView: View {
         .overlay(alignment: .topLeading) {
             if showHistogram && !chromeHidden {
                 VStack(alignment: .leading, spacing: 3) {
-                    HistogramView(data: vm.histogram).frame(width: vm.settings.hdr ? 124 : 90, height: 40)
-                        .accessibilityIdentifier("histogram")
+                    // tap the histogram for the clipping warning (also in More → View)
+                    Button { vm.clipWarning.toggle() } label: {
+                        HistogramView(data: vm.histogram).frame(width: vm.settings.hdr ? 124 : 90, height: 40)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(vm.clipWarning ? Theme.accent : Color.clear, lineWidth: 1.5))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("histogram")
+                    .accessibilityValue(vm.clipWarning ? "clipping on" : "clipping off")
                     // RAW or not: a JPEG has no hidden highlight detail for Highlights or HDR to bring back
                     Text(vm.fileKind).font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.white.opacity(0.75))
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Color.black.opacity(0.35), in: Capsule())
+                        .allowsHitTesting(false)
                         .accessibilityIdentifier("file-kind")
                 }
                 .padding(.leading, 10).padding(.top, 50)
-                .allowsHitTesting(false)
             }
         }
     }
@@ -411,6 +421,7 @@ struct EditorView: View {
                             .opacity(vm.showOriginal ? 0 : 1)
                     }
                     if tool == .color && vm.wbPicking && !vm.colorMix { wbLayer(xform) }
+                    if vm.splitCompare && !vm.showOriginal && tool != .crop { splitLayer(xform) }
                 }
                 if vm.isLoading || vm.isExporting { ProgressView().tint(.white) }
                 if vm.detailLoading && zoom > 1.4 {
@@ -431,7 +442,7 @@ struct EditorView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("canvas")
             // two fingers pinch and pan together over every tool except Crop (including the mask overlay)
-            .background(TwoFingerInstaller(enabled: !showEdits && !showExportChoices && vm.exported == nil) { phase, p, d in
+            .background(TwoFingerInstaller(enabled: !showEdits && !showPasteSome && !showExportChoices && vm.exported == nil) { phase, p, d in
                 twoFingers(phase, CGPoint(x: p.x - origin.x, y: p.y - origin.y), d, xform)
             })
             // fallback pinch in case the watcher above never sees the fingers
@@ -455,6 +466,23 @@ struct EditorView: View {
                         .allowsHitTesting(false)
                 }
             }
+            .overlay(alignment: .bottomTrailing) {
+                if vm.clipWarning && !chromeHidden {
+                    Button { vm.clipWarning = false } label: {
+                        HStack(spacing: 4) {
+                            Circle().fill(Color.red).frame(width: 7, height: 7)
+                            Circle().fill(Color.blue).frame(width: 7, height: 7)
+                            Text("Clipping").font(.caption2.bold())
+                            Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                        }
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .accessibilityIdentifier("clip-badge")
+                }
+            }
             .overlay(alignment: .bottom) {
                 if vm.showOriginal {
                     Text("ORIGINAL").accessibilityIdentifier("original-label").font(.caption2.bold()).padding(.horizontal, 10).padding(.vertical, 5)
@@ -463,6 +491,48 @@ struct EditorView: View {
                 }
             }
         }
+    }
+
+    /// Before / after: a line across the photo, original on the left; drag it, or tap × to finish.
+    private func splitLayer(_ xform: ViewXform) -> some View {
+        let r = xform.rect
+        let x = r.minX + r.width * vm.splitPos
+        let top = max(r.minY, 0), bottom = min(r.maxY, xform.canvas.height)
+        return ZStack {
+            Rectangle().fill(Color.white).frame(width: 2, height: max(bottom - top, 0))
+                .position(x: x, y: (top + bottom) / 2)
+                .shadow(color: .black.opacity(0.6), radius: 2)
+                .allowsHitTesting(false)
+            HStack(spacing: 0) {
+                Text("BEFORE").padding(.trailing, 10)
+                Text("AFTER").padding(.leading, 10)
+            }
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.white)
+            .shadow(color: .black, radius: 2)
+            .position(x: x, y: max(top + 16, 16))
+            .allowsHitTesting(false)
+            // the handle: drag sideways to move the line
+            Circle().fill(Color.white).frame(width: 30, height: 30)
+                .overlay(Image(systemName: "arrow.left.and.right").font(.system(size: 12, weight: .bold)).foregroundStyle(.black))
+                .shadow(color: .black.opacity(0.5), radius: 2)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("split-handle")
+                .accessibilityValue(String(format: "%.2f", Double(vm.splitPos)))
+                .position(x: x, y: (top + bottom) / 2)
+                .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                    guard r.width > 0 else { return }
+                    vm.splitPos = min(max((g.location.x - r.minX) / r.width, 0.02), 0.98)
+                })
+            Button { vm.splitCompare = false } label: {
+                Image(systemName: "xmark").font(.system(size: 11, weight: .bold))
+                    .frame(width: 26, height: 26).background(.ultraThinMaterial, in: Circle())
+            }
+            .foregroundStyle(.white)
+            .accessibilityIdentifier("split-close")
+            .position(x: x, y: max(min(bottom - 22, xform.canvas.height - 22), top + 40))
+        }
+        .frame(width: xform.canvas.width, height: xform.canvas.height)
     }
 
     /// Color tool, white balance picker on: a tap on the photo makes that spot neutral.
@@ -515,6 +585,9 @@ struct EditorView: View {
                 Button { if let c = store.clipboard { vm.settings = c } } label: {
                     Label("Paste edits", systemImage: "doc.on.clipboard")
                 }.disabled(store.clipboard == nil)
+                Button { showPasteSome = true } label: {
+                    Label("Paste some edits…", systemImage: "checklist")
+                }.disabled(store.clipboard == nil)
                 Button(role: .destructive) { vm.reset() } label: { Label("Reset all edits", systemImage: "arrow.counterclockwise") }
                 Divider()
                 Button { go(-1) } label: { Label("Previous photo", systemImage: "chevron.left") }.disabled(neighbour(-1) == nil)
@@ -534,6 +607,12 @@ struct EditorView: View {
                 Menu {
                     Button { showHistogram.toggle() } label: {
                         Label("Histogram", systemImage: showHistogram ? "checkmark" : "chart.bar")
+                    }
+                    Button { vm.clipWarning.toggle() } label: {
+                        Label("Clipping warning", systemImage: vm.clipWarning ? "checkmark" : "exclamationmark.triangle")
+                    }
+                    Button { vm.splitPos = 0.5; vm.splitCompare.toggle() } label: {
+                        Label("Before / after split", systemImage: vm.splitCompare ? "checkmark" : "rectangle.split.2x1")
                     }
                     Button { sliderStyle = "auto" } label: {
                         Label("Sliders: automatic", systemImage: sliderStyle == "auto" ? "checkmark" : "slider.horizontal.3")

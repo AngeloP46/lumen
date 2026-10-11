@@ -135,6 +135,10 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
             let h = placed.extent.height
             // Core Image's origin is bottom-left; position by the photo's top-left corner in view space.
             placed = placed.transformed(by: CGAffineTransform(translationX: r.minX * sf, y: size.height - (r.minY * sf + h)))
+            if DemoMode.isOn {
+                DemoMode.log(String(format: "drew image %.0fx%.0f at y %.0f-%.0f", ext.width, ext.height,
+                                    r.minY, r.minY + h / max(sf, 0.001)))
+            }
             out = placed.composited(over: out)
         }
         LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)

@@ -207,16 +207,26 @@ struct PresetsPanel: View {
     @State private var newName = ""
 
     var body: some View {
-        GeometryReader { geo in
-            if geo.size.height > 200 {
-                ScrollView(showsIndicators: false) {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 10)], spacing: 10) { tiles }
-                        .padding(.horizontal, 12).padding(.vertical, 8)
+        VStack(spacing: 0) {
+            // Strength: how much of the last preset to apply (shows until you edit something else)
+            if vm.presetStrengthAvailable {
+                SliderRow(item: ParamItem(id: "Strength", title: "Strength",
+                                          value: Binding(get: { vm.presetAmount }, set: { vm.setPresetAmount($0) }),
+                                          range: 0...100, neutral: 100), height: 40) {
+                    vm.setPresetAmount(100)
                 }
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) { tiles }
-                        .padding(.horizontal, 12).padding(.top, 8)
+            }
+            GeometryReader { geo in
+                if geo.size.height > 160 {
+                    ScrollView(showsIndicators: false) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 74), spacing: 10)], spacing: 10) { tiles }
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                    }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) { tiles }
+                            .padding(.horizontal, 12).padding(.top, 8)
+                    }
                 }
             }
         }
@@ -328,12 +338,14 @@ struct GradePanel: View {
     private let zones: [(String, WritableKeyPath<ColorGrading, GradeZone>)] = [
         ("Shadows", \.shadows), ("Midtones", \.midtones), ("Highlights", \.highlights),
     ]
+    /// The three zone wheels plus Global (tints every tone): each has its own big-wheel tab.
+    private var allZones: [(String, WritableKeyPath<ColorGrading, GradeZone>)] { zones + [("Global", \.global)] }
 
     var body: some View {
         GeometryReader { geo in
             VStack(spacing: 6) {
                 tabs
-                if let i = zones.firstIndex(where: { $0.0 == tab }) {
+                if let i = allZones.firstIndex(where: { $0.0 == tab }) {
                     zoneDetail(i, size: geo.size)
                 } else {
                     overview
@@ -346,12 +358,12 @@ struct GradePanel: View {
 
     private var tabs: some View {
         HStack(spacing: 0) {
-            ForEach(["All"] + zones.map(\.0), id: \.self) { t in
-                let i = zones.firstIndex { $0.0 == t }
-                let dot = i.map { edited(vm.settings.grading[keyPath: zones[$0].1]) } ?? !vm.settings.grading.isNeutral
+            ForEach(["All"] + allZones.map(\.0), id: \.self) { t in
+                let i = allZones.firstIndex { $0.0 == t }
+                let dot = i.map { edited(vm.settings.grading[keyPath: allZones[$0].1]) } ?? !vm.settings.grading.isNeutral
                 Button { tab = t } label: {
                     HStack(spacing: 4) {
-                        Text(t).font(.system(size: 13, weight: .semibold))
+                        Text(t).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.75)
                         if dot { EditedDot() }
                     }
                     .frame(maxWidth: .infinity).frame(height: 32)
@@ -370,7 +382,7 @@ struct GradePanel: View {
     // MARK: one zone, big
 
     private func zoneDetail(_ i: Int, size: CGSize) -> some View {
-        let kp = zones[i].1
+        let kp = allZones[i].1
         let z = vm.settings.grading[keyPath: kp]
         let wheel = max(140, min(size.height - 32 - 3 * 40 - 34, size.width - 150, 260))
         return ScrollView(showsIndicators: false) {
@@ -381,7 +393,7 @@ struct GradePanel: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityIdentifier("grade-wheel")
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(zones[i].0).font(.system(size: 15, weight: .semibold))
+                        Text(allZones[i].0).font(.system(size: 15, weight: .semibold))
                         Circle()
                             .fill(z.sat > 0.5 ? Color(hue: z.hue / 360, saturation: min(z.sat / 100 + 0.2, 1), brightness: 1)
                                               : Color(white: 0.5))

@@ -4,49 +4,176 @@ import SwiftUI
 
 struct CropPanel: View {
     @ObservedObject var vm: EditorViewModel
+    @AppStorage("cropTab") private var tab = "Crop"
+    @AppStorage("cropGrid") private var grid = "thirds"
+    @State private var askCustom = false
+    @State private var customW = ""
+    @State private var customH = ""
 
     private let ratios: [(String, Double)] = [
-        ("1:1", 1), ("5:4", 1.25), ("4:3", 4.0 / 3), ("3:2", 1.5), ("16:9", 16.0 / 9), ("2:1", 2),
+        ("1:1", 1), ("5:4", 1.25), ("4:3", 4.0 / 3), ("7:5", 1.4), ("3:2", 1.5), ("16:9", 16.0 / 9), ("2:1", 2), ("3:1", 3),
     ]
 
     var body: some View {
         VStack(spacing: 6) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    Chip(title: "Free", selected: vm.settings.cropAspect == 0) { vm.setCropAspect(0) }
-                    Chip(title: "Original", selected: matches(vm.originalAspect)) { vm.setCropAspect(vm.originalAspect) }
-                    ForEach(ratios, id: \.0) { name, r in
-                        Chip(title: name, selected: matches(r)) { vm.selectCropRatio(r) }
+            HStack(spacing: 0) {
+                ForEach(["Crop", "Transform"], id: \.self) { t in
+                    Button { tab = t } label: {
+                        HStack(spacing: 4) {
+                            Text(t).font(.system(size: 13, weight: .semibold))
+                            if t == "Transform" && (vm.settings.hasTransform) { EditedDot() }
+                        }
+                        .frame(maxWidth: .infinity).frame(height: 30)
+                        .background(tab == t ? Theme.accent.opacity(0.85) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                        .foregroundStyle(tab == t ? Color.white : Color(white: 0.65))
+                        .contentShape(Rectangle())
                     }
+                    .accessibilityIdentifier("crop-tab-\(t)")
                 }
-                .padding(.horizontal, 12)
             }
-            HStack(spacing: 4) {
-                IconButton(system: "rotate.left") { rotate(-1) }.accessibilityIdentifier("crop-rotate-left")
-                IconButton(system: "rotate.right") { rotate(1) }.accessibilityIdentifier("crop-rotate-right")
-                IconButton(system: "arrow.left.and.right.righttriangle.left.righttriangle.right",
-                           disabled: vm.settings.cropAspect == 0) { vm.flipCropOrientation() }
-                Spacer()
-                Button {
-                    vm.resetCropFrame()
-                    vm.settings.straighten = 0
-                    vm.settings.quarterTurns = 0
-                } label: {
-                    Label("Reset", systemImage: "arrow.counterclockwise")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 11).padding(.vertical, 8)
-                        .background(Theme.chip, in: Capsule())
-                        .foregroundStyle(.white)
-                }
-                .accessibilityIdentifier("crop-reset")
-            }
-            .padding(.horizontal, 10)
-            LabeledSlider(title: "Straighten",
-                          value: Binding(get: { vm.settings.straighten }, set: { vm.settings.straighten = $0 }),
-                          range: -45...45, decimals: 1, neutral: 0, axID: "Straighten")
-                .padding(.horizontal, 14)
+            .padding(2)
+            .background(Theme.chip, in: RoundedRectangle(cornerRadius: 9))
+            .padding(.horizontal, 12)
+            if tab == "Transform" { transform } else { crop }
         }
         .padding(.top, 4)
+        .alert("Custom ratio", isPresented: $askCustom) {
+            TextField("Width", text: $customW).keyboardType(.decimalPad)
+            TextField("Height", text: $customH).keyboardType(.decimalPad)
+            Button("Set") {
+                if let w = Double(customW.replacingOccurrences(of: ",", with: ".")),
+                   let h = Double(customH.replacingOccurrences(of: ",", with: ".")), w > 0, h > 0 {
+                    vm.setCropAspect(min(max(w / h, 0.1), 10))
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("For example 4 and 5 for 4:5.") }
+    }
+
+    // MARK: Crop tab
+
+    private var crop: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        Chip(title: "Free", selected: vm.settings.cropAspect == 0) { vm.setCropAspect(0) }
+                        Chip(title: "Original", selected: matches(vm.originalAspect)) { vm.setCropAspect(vm.originalAspect) }
+                        ForEach(ratios, id: \.0) { name, r in
+                            Chip(title: name, selected: matches(r)) { vm.selectCropRatio(r) }
+                        }
+                        Chip(title: "Custom", system: "plus") { customW = ""; customH = ""; askCustom = true }
+                            .accessibilityIdentifier("crop-custom")
+                    }
+                    .padding(.horizontal, 12)
+                }
+                HStack(spacing: 2) {
+                    IconButton(system: "rotate.left") { rotate(-1) }.accessibilityIdentifier("crop-rotate-left")
+                    IconButton(system: "rotate.right") { rotate(1) }.accessibilityIdentifier("crop-rotate-right")
+                    IconButton(system: "arrow.left.and.right.righttriangle.left.righttriangle.right", active: isFlipped(horizontal: true)) {
+                        flip(horizontal: true)
+                    }
+                    .accessibilityIdentifier("crop-flip-h")
+                    IconButton(system: "arrow.up.and.down.righttriangle.up.righttriangle.down", active: isFlipped(horizontal: false)) {
+                        flip(horizontal: false)
+                    }
+                    .accessibilityIdentifier("crop-flip-v")
+                    IconButton(system: "rectangle.portrait.rotate", disabled: vm.settings.cropAspect == 0) { vm.flipCropOrientation() }
+                        .accessibilityIdentifier("crop-orientation")
+                    Menu {
+                        ForEach([("thirds", "Thirds"), ("golden", "Golden ratio"), ("diagonal", "Diagonals"),
+                                 ("grid", "Fine grid"), ("none", "No grid")], id: \.0) { key, name in
+                            Button { grid = key } label: { Label(name, systemImage: grid == key ? "checkmark" : "grid") }
+                        }
+                    } label: {
+                        Image(systemName: "squareshape.split.3x3").font(.system(size: 17))
+                            .frame(width: 38, height: 38).foregroundStyle(.white)
+                    }
+                    .accessibilityIdentifier("crop-grid")
+                    Spacer(minLength: 2)
+                    PillButton(title: "Reset", system: "arrow.counterclockwise") { vm.settings.reset(.crop) }
+                        .accessibilityIdentifier("crop-reset")
+                }
+                .padding(.horizontal, 10)
+                HStack(spacing: 6) {
+                    LabeledSlider(title: "Straighten",
+                                  value: Binding(get: { vm.settings.straighten }, set: { vm.settings.straighten = $0 }),
+                                  range: -45...45, decimals: 1, neutral: 0, axID: "Straighten")
+                    // one tap: Apple's on-phone horizon detection levels the photo
+                    Button { vm.autoLevel() } label: {
+                        HStack(spacing: 4) {
+                            if vm.levelling { ProgressView().controlSize(.mini) } else { Image(systemName: "level") }
+                            Text("Auto")
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        .background(Theme.chip, in: Capsule())
+                        .foregroundStyle(.white)
+                    }
+                    .accessibilityIdentifier("crop-auto-level")
+                }
+                .padding(.horizontal, 14)
+            }
+        }
+    }
+
+    // MARK: Transform tab
+
+    private var transform: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Perspective, stretch and position. The frame stays the same size.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Spacer()
+                    PillButton(title: "Reset", system: "arrow.counterclockwise") {
+                        var s = vm.settings
+                        s.tVertical = 0; s.tHorizontal = 0; s.tAspect = 0; s.tScale = 100; s.tOffX = 0; s.tOffY = 0
+                        vm.settings = s
+                    }
+                    .opacity(vm.settings.hasTransform ? 1 : 0.45)
+                    .disabled(!vm.settings.hasTransform)
+                    .accessibilityIdentifier("transform-reset")
+                }
+                .padding(.horizontal, 14).padding(.vertical, 4)
+                row("Vertical", \.tVertical)
+                row("Horizontal", \.tHorizontal)
+                row("Aspect", \.tAspect)
+                row("Scale", \.tScale, range: 50...150, neutral: 100)
+                row("X offset", \.tOffX)
+                row("Y offset", \.tOffY)
+            }
+        }
+    }
+
+    private func row(_ title: String, _ kp: WritableKeyPath<EditSettings, Double>,
+                     range: ClosedRange<Double> = -100...100, neutral: Double = 0) -> some View {
+        LabeledSlider(title: title, value: Binding(get: { vm.settings[keyPath: kp] }, set: { vm.settings[keyPath: kp] = $0 }),
+                      range: range, neutral: neutral)
+            .padding(.horizontal, 14)
+    }
+
+    // MARK: Flip (as seen on screen)
+
+    /// The flips are stored before the 90° turns, so with the photo on its side a left-right flip on screen is an
+    /// up-down flip of the stored photo.
+    private func isFlipped(horizontal: Bool) -> Bool {
+        let sideways = ((vm.settings.quarterTurns % 2) + 2) % 2 == 1
+        return (horizontal != sideways) ? vm.settings.flipH : vm.settings.flipV
+    }
+
+    /// Mirrors the photo on screen and the crop frame with it, so the same part stays framed.
+    private func flip(horizontal: Bool) {
+        var s = vm.settings
+        let sideways = ((s.quarterTurns % 2) + 2) % 2 == 1
+        if horizontal != sideways { s.flipH.toggle() } else { s.flipV.toggle() }
+        if horizontal {
+            (s.cropL, s.cropR) = (1 - s.cropR, 1 - s.cropL)
+        } else {
+            (s.cropT, s.cropB) = (1 - s.cropB, 1 - s.cropT)
+        }
+        s.straighten = -s.straighten
+        vm.settings = s
     }
 
     private func matches(_ r: Double) -> Bool {
@@ -94,6 +221,7 @@ struct CropOverlay: View {
         static let top = Edges(rawValue: 4), bottom = Edges(rawValue: 8)
     }
 
+    @AppStorage("cropGrid") private var grid = "thirds"
     @State private var mode: Edges?
     @State private var moving = false
     @State private var start = (l: 0.0, t: 0.0, r: 1.0, b: 1.0)
@@ -119,12 +247,23 @@ struct CropOverlay: View {
             .fill(Color.black.opacity(0.58), style: FillStyle(eoFill: true))
             .allowsHitTesting(false)
 
-            // thirds
+            // composition grid (chosen in the crop panel)
             Path { p in
-                for i in 1..<3 {
-                    let x = f.minX + f.width * CGFloat(i) / 3, y = f.minY + f.height * CGFloat(i) / 3
-                    p.move(to: CGPoint(x: x, y: f.minY)); p.addLine(to: CGPoint(x: x, y: f.maxY))
-                    p.move(to: CGPoint(x: f.minX, y: y)); p.addLine(to: CGPoint(x: f.maxX, y: y))
+                func lines(_ fr: [CGFloat]) {
+                    for k in fr {
+                        let x = f.minX + f.width * k, y = f.minY + f.height * k
+                        p.move(to: CGPoint(x: x, y: f.minY)); p.addLine(to: CGPoint(x: x, y: f.maxY))
+                        p.move(to: CGPoint(x: f.minX, y: y)); p.addLine(to: CGPoint(x: f.maxX, y: y))
+                    }
+                }
+                switch grid {
+                case "none": break
+                case "golden": lines([0.382, 0.618])
+                case "grid": lines((1..<9).map { CGFloat($0) / 9 })
+                case "diagonal":
+                    p.move(to: CGPoint(x: f.minX, y: f.minY)); p.addLine(to: CGPoint(x: f.maxX, y: f.maxY))
+                    p.move(to: CGPoint(x: f.maxX, y: f.minY)); p.addLine(to: CGPoint(x: f.minX, y: f.maxY))
+                default: lines([1.0 / 3, 2.0 / 3])
                 }
             }
             .stroke(Color.white.opacity(0.35), lineWidth: 0.7)

@@ -23,6 +23,7 @@ enum ColorCube {
         let tS = zoneTint(grading.shadows)
         let tM = zoneTint(grading.midtones)
         let tH = zoneTint(grading.highlights)
+        let tG = zoneTint(grading.global)
         let mid = Float(0.5 - grading.balance / 100 * 0.25)
         let width = Float(0.15 + grading.blending / 100 * 0.5)
 
@@ -75,9 +76,9 @@ enum ColorCube {
                                 let wS: Float = 1 - smooth(mid - width, mid + width * 0.25, lab.0)
                                 let wH: Float = smooth(mid - width * 0.25, mid + width, lab.0)
                                 let wM: Float = max(0, 1 - wS - wH)
-                                a += wS * tS.a + wM * tM.a + wH * tH.a
-                                bb += wS * tS.b + wM * tM.b + wH * tH.b
-                                lab.0 += wS * tS.l + wM * tM.l + wH * tH.l
+                                a += wS * tS.a + wM * tM.a + wH * tH.a + tG.a
+                                bb += wS * tS.b + wM * tM.b + wH * tH.b + tG.b
+                                lab.0 += wS * tS.l + wM * tM.l + wH * tH.l + tG.l
                             }
                             let lin = Ok.fromLab(lab.0, a, bb)
                             r = Ok.encode(lin.0)

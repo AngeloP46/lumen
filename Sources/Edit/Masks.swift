@@ -9,6 +9,7 @@ import Vision
 extension EditSession {
     static let aiSubject = "subject"
     static let aiSky = "sky"
+    static let aiPeople = "people"
 
     // MARK: Planes
 
@@ -106,6 +107,8 @@ extension EditSession {
             }
         case .sky:
             img = source.cachedMask(Self.aiSky) ?? zero
+        case .people:
+            img = source.cachedMask(Self.aiPeople) ?? zero
         case .luminance:
             img = k.lumMask.apply(extent: ext, arguments: [
                 source.base,
@@ -247,11 +250,12 @@ extension EditSession {
     /// Computes any automatic masks `s` needs and caches them on `source`. Call off the main thread.
     @discardableResult
     func prepareAutoMasks(_ s: EditSettings, source: ImageSource) -> Bool {
-        var needSubject = false, needSky = false
+        var needSubject = false, needSky = false, needPeople = false
         for m in s.masks {
             for c in m.components {
                 if c.kind == .subject || c.kind == .background { needSubject = true }
                 if c.kind == .sky { needSky = true }
+                if c.kind == .people { needPeople = true }
             }
         }
         var computed = false
@@ -263,7 +267,62 @@ extension EditSession {
             source.storeMask(Self.aiSky, computeSky(source))
             computed = true
         }
+        if needPeople, !source.hasTried(Self.aiPeople) {
+            source.storeMask(Self.aiPeople, computePeople(source))
+            computed = true
+        }
         return computed
+    }
+
+    /// Auto-level: Apple's on-device horizon detection (Vision) on the photo as turned on screen. Returns the
+    /// Straighten value (degrees, clockwise) that levels it, or nil when no horizon was found.
+    func levelAngle(_ source: ImageSource, quarterTurns: Int) -> Double? {
+        var img = source.base
+        let turns = ((quarterTurns % 4) + 4) % 4
+        if turns != 0 { img = Self.normalized(Self.rotateAboutCenter(img, by: -CGFloat(turns) * .pi / 2)) }
+        return levelAngle(of: img)
+    }
+
+    /// The Straighten value (degrees, clockwise) that levels `image`'s horizon, or nil.
+    func levelAngle(of image: CIImage) -> Double? {
+        let ext = image.extent
+        let k = min(1, 1024 / max(ext.width, ext.height))
+        let small = Self.normalized(image.transformed(by: CGAffineTransform(scaleX: k, y: k)))
+        guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+        else { return nil }
+        let request = VNDetectHorizonRequest()
+        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { return nil }
+        guard let obs = request.results?.first else { return nil }
+        // Vision: the horizon's angle, anticlockwise positive; turning the photo clockwise by it levels it
+        let deg = Double(obs.angle) * 180 / .pi
+        guard abs(deg) <= 45 else { return nil }
+        return (deg * 10).rounded() / 10
+    }
+
+    /// Apple's on-device person segmentation (Vision): every person in the photo, hair and clothes included.
+    /// nil when nobody was found.
+    func computePeople(_ source: ImageSource) -> CIImage? {
+        let ext = source.extent
+        let k = min(1, 1024 / max(ext.width, ext.height))
+        let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
+        guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+        else { return nil }
+        let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .accurate
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        do { try handler.perform([request]) } catch { return nil }
+        guard let buffer = request.results?.first?.pixelBuffer else { return nil }
+        var ci = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
+        // nobody there: the mask is (almost) all black
+        let probe = ci.applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: CIVector(cgRect: ci.extent)])
+        var px = [Float](repeating: 0, count: 4)
+        LumenGPU.context.render(probe, toBitmap: &px, rowBytes: 16, bounds: probe.extent,
+                                format: .RGBAf, colorSpace: nil)
+        guard px[0] > 0.2 else { return nil }
+        ci = Self.blur(ci, 1.0, ci.extent)
+        if let m = Self.materialized(ci) { ci = m }
+        return Self.fit(ci, to: ext)
     }
 
     /// Apple's on-device foreground segmentation (Vision, iOS 17+).

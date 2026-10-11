@@ -403,13 +403,15 @@ struct MaskPanel: View {
                 Label("Clear strokes", systemImage: "xmark.circle").font(.caption)
             }
             .buttonStyle(.bordered)
-        case .subject, .background, .sky:
+        case .subject, .background, .sky, .people:
             if vm.autoMaskBusy {
                 HStack { ProgressView(); Text("Finding it…").font(.caption).foregroundStyle(.secondary) }
             } else if c.kind == .background && vm.autoMaskMissing.contains(EditSession.aiSubject) {
                 hint("No subject found in this photo, so the background is all of it. Subtract shapes to keep parts out.")
+            } else if c.kind == .people && vm.autoMaskMissing.contains(EditSession.aiPeople) {
+                hint("Couldn't find anyone in this photo. Try Subject, or a Brush mask instead.")
             } else if (c.kind == .sky && vm.autoMaskMissing.contains(EditSession.aiSky))
-                        || (c.kind != .sky && vm.autoMaskMissing.contains(EditSession.aiSubject)) {
+                        || (c.kind != .sky && c.kind != .people && vm.autoMaskMissing.contains(EditSession.aiSubject)) {
                 hint("Couldn't find a \(c.kind == .sky ? "sky" : "subject") in this photo. Try a Brush, Linear or Luminance mask instead.")
             } else {
                 hint(c.kind == .sky ? "The sky was selected automatically. Add or subtract shapes to fix it."
@@ -645,7 +647,7 @@ struct MaskOverlay: View {
     private func radialHandles(_ c: MaskComponent) -> some View {
         let centre = screen(c.x0, c.y0)
         // the ellipse's own angle plus however far the photo is turned on screen
-        let deg = c.angle + geo.clockwise
+        let deg = (geo.mirrored ? -c.angle : c.angle) + geo.clockwise
         let a = deg * .pi / 180
         let u = CGPoint(x: cos(a), y: sin(a)), v = CGPoint(x: -sin(a), y: cos(a))
         // radii are fractions of the source photo's width / height
@@ -673,6 +675,7 @@ struct MaskOverlay: View {
                     d = (d + 90).truncatingRemainder(dividingBy: 180)
                     if d < 0 { d += 180 }
                     d -= 90
+                    if geo.mirrored { d = -d }
                     vm.updateComponent(c.id) { $0.angle = (d * 2).rounded() / 2 }
                 })
         handle(at: CGPoint(x: centre.x + u.x * rx, y: centre.y + u.y * rx)) { loc in

@@ -945,9 +945,20 @@ do {
     if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f) {
         let W: CGFloat = 600, H: CGFloat = 400
         let black = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
-        for (turns, angle) in [(0, 0.0), (1, 7.0), (3, -12.0), (2, 4.0)] {
+        // (turns, straighten, flipH, flipV, vertical, horizontal, aspect, scale, offX, offY)
+        let cases: [(Int, Double, Bool, Bool, Double, Double, Double, Double, Double, Double)] = [
+            (0, 0, false, false, 0, 0, 0, 100, 0, 0), (1, 7, false, false, 0, 0, 0, 100, 0, 0),
+            (3, -12, false, false, 0, 0, 0, 100, 0, 0), (2, 4, false, false, 0, 0, 0, 100, 0, 0),
+            (0, 0, true, false, 0, 0, 0, 100, 0, 0), (1, 5, false, true, 0, 0, 0, 100, 0, 0),
+            (0, 0, false, false, 40, 0, 0, 100, 0, 0), (0, 3, false, false, 0, -35, 0, 100, 0, 0),
+            (0, 0, false, false, 0, 0, 50, 100, 0, 0), (0, 0, false, false, 0, 0, -40, 120, 10, -15),
+            (1, -6, true, false, 25, 20, 30, 90, -10, 5),
+        ]
+        for (turns, angle, fh, fv, tv, th, ta, ts, tx, ty) in cases {
             var s = EditSettings()
             s.quarterTurns = turns; s.straighten = angle
+            s.flipH = fh; s.flipV = fv; s.tVertical = tv; s.tHorizontal = th; s.tAspect = ta; s.tScale = ts
+            s.tOffX = tx; s.tOffY = ty
             s.cropL = 0.1; s.cropT = 0.15; s.cropR = 0.8; s.cropB = 0.9
             let geo = SourceGeometry(source: CGSize(width: W, height: H), settings: s)
             let real = session.geometry(black, s).extent.size
@@ -965,7 +976,7 @@ do {
                 let avg = out.cropped(to: box).applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: box)])
                 var px = [Float](repeating: 0, count: 4)
                 LumenGPU.context.render(avg, toBitmap: &px, rowBytes: 16, bounds: avg.extent, format: .RGBAf, colorSpace: nil)
-                check(px[0] > 0.6, "SourceGeometry puts source point (\(p.x), \(p.y)) where the rendered photo has it (turns \(turns), straighten \(angle): brightness \(px[0]))")
+                check(px[0] > 0.6, "SourceGeometry puts source point (\(p.x), \(p.y)) where the rendered photo has it (turns \(turns), straighten \(angle), flip \(fh)/\(fv), transform \(tv) \(th) \(ta) \(ts) \(tx) \(ty): brightness \(px[0]))")
                 let back = geo.toSource(o)
                 worst = max(worst, abs(back.x - p.x), abs(back.y - p.y))
             }
@@ -1021,6 +1032,71 @@ do {
             check(r[n / 4] > 0.85, "paint away from the eraser should stay (quarter \(r[n / 4]))")
         } else { check(false, "brush erase: mask render failed") }
     } else { check(false, "UI refresh checks: no photo could be opened") }
+}
+
+// Pro pack (2026-10-11): auto-level, global grading wheel, preset strength, paste some edits, clipping kernel
+do {
+    if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f),
+       let source = session.makeSource(maxEdge: 900, materialize: true) {
+        // a synthetic horizon tilted 8° anticlockwise: auto-level must find it, and straightening by it must level it
+        let W: CGFloat = 900, H: CGFloat = 600
+        let sky = CIImage(color: CIColor(red: 0.55, green: 0.7, blue: 0.95)).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
+        let ground = CIImage(color: CIColor(red: 0.15, green: 0.12, blue: 0.08))
+            .cropped(to: CGRect(x: -W, y: -H * 2, width: W * 3, height: H * 2.5))
+            .transformed(by: CGAffineTransform(translationX: -W / 2, y: -H / 2)
+                .concatenating(CGAffineTransform(rotationAngle: 8 * .pi / 180))
+                .concatenating(CGAffineTransform(translationX: W / 2, y: H / 2)))
+        let scene = ground.composited(over: sky).cropped(to: sky.extent)
+        if let a = session.levelAngle(of: scene) {
+            check(abs(abs(a) - 8) < 2, "auto-level should find the 8° tilt (got \(a)°)")
+            var s = EditSettings(); s.straighten = a
+            let levelled = session.geometry(scene, s)
+            if let b = session.levelAngle(of: levelled) {
+                check(abs(b) < 1.5, "straightening by the auto-level angle should leave the horizon level (still \(b)°, applied \(a)°)")
+            }
+        } else {
+            print("note: Vision found no horizon in the synthetic scene (auto-level not checked)")
+        }
+
+        // global grading wheel tints the picture; old files without it still load
+        var g = EditSettings(); g.grading.global = GradeZone(hue: 30, sat: 60, lum: 0)
+        if let a = smallRender(session.develop(g, source: source, geometry: true)),
+           let b = smallRender(session.develop(EditSettings(), source: source, geometry: true)), let d = compareImages(a, b) {
+            check(d.all > 1.5, "the Global grading wheel should change the picture (difference \(d.all))")
+        }
+        check(!g.grading.isNeutral, "a Global tint counts as grading")
+        let oldJSON = #"{"shadows":{"hue":0,"sat":0,"lum":0},"midtones":{"hue":0,"sat":0,"lum":0},"highlights":{"hue":0,"sat":0,"lum":0},"blending":50,"balance":0}"#
+        check((try? JSONDecoder().decode(ColorGrading.self, from: Data(oldJSON.utf8))) != nil, "grading saved before the Global wheel must still load")
+        if let full = try? JSONEncoder().encode(EditSettings()), var dict = try? JSONSerialization.jsonObject(with: full) as? [String: Any] {
+            for k in ["flipH", "flipV", "tVertical", "tHorizontal", "tAspect", "tScale", "tOffX", "tOffY", "disabled"] { dict.removeValue(forKey: k) }
+            let older = try? JSONSerialization.data(withJSONObject: dict)
+            let back = older.flatMap { try? JSONDecoder().decode(EditSettings.self, from: $0) }
+            check(back != nil && back?.tScale == 100, "edits saved before flip/transform must still load (tScale \(String(describing: back?.tScale)))")
+        }
+
+        // preset strength: 0 = before, 1 = after, 0.5 halfway; masks and crop stay
+        var before = EditSettings(); before.cropL = 0.1
+        var after = EditSettings(); after.exposure = 1; after.contrast = 40; after.blackAndWhite = true
+        let half = EditSettings.blend(before, after, 0.5)
+        check(abs(half.exposure - 0.5) < 1e-9 && abs(half.contrast - 20) < 1e-9, "preset strength 50% should halve the preset's moves")
+        check(half.cropL == 0.1, "preset strength keeps the crop")
+        check(EditSettings.blend(before, after, 1).exposure == 1 && EditSettings.blend(before, after, 0).exposure == 0, "0% and 100% ends")
+
+        // paste some: only the chosen tools come across
+        var target = EditSettings(); target.exposure = -1; target.grading.shadows = GradeZone(hue: 200, sat: 40, lum: 0)
+        var clip = EditSettings(); clip.exposure = 0.7; clip.vibrance = 30; clip.grading.shadows = GradeZone(hue: 20, sat: 10, lum: 0)
+        target.take(.light, from: clip)
+        check(target.exposure == 0.7 && target.vibrance == 0 && target.grading.shadows.hue == 200, "paste some: only Light is taken")
+
+        // clipping kernel: white shows red, black shows blue, the rest unchanged
+        if let k = LumenKernels.shared?.clip {
+            let px = CIImage(color: CIColor(red: 1.2, green: 0.5, blue: 0.5)).cropped(to: CGRect(x: 0, y: 0, width: 4, height: 4))
+            let out = k.apply(extent: px.extent, arguments: [px, CIVector(x: 0.999, y: 0.0007, z: 0, w: 0)])
+            var v = [Float](repeating: 0, count: 4)
+            if let out { LumenGPU.context.render(out, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil) }
+            check(v[0] > 0.9 && v[1] < 0.2, "clipping warning should paint blown highlights red (got \(v))")
+        } else { check(false, "clipping kernel did not load") }
+    } else { check(false, "pro pack checks: no photo could be opened") }
 }
 
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")

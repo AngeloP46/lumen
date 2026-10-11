@@ -32,16 +32,18 @@ struct ColorGrading: Codable, Equatable, Hashable {
     var highlights = GradeZone()
     var blending: Double = 50
     var balance: Double = 0
+    /// Tints every tone (Lightroom's 4th wheel). Added 2026-10-11; older files load with it neutral.
+    @Defaulted<DefaultZone> var global: GradeZone
 
     var isNeutral: Bool {
-        [shadows, midtones, highlights].allSatisfy { $0.sat == 0 && $0.lum == 0 }
+        [shadows, midtones, highlights, global].allSatisfy { $0.sat == 0 && $0.lum == 0 }
     }
 }
 
 // MARK: - Masks
 
 enum MaskKind: String, Codable, CaseIterable, Identifiable {
-    case subject, sky, background, brush, linear, radial, luminance, color
+    case subject, sky, background, people, brush, linear, radial, luminance, color
     var id: String { rawValue }
 
     var title: String {
@@ -49,6 +51,7 @@ enum MaskKind: String, Codable, CaseIterable, Identifiable {
         case .subject: "Subject"
         case .sky: "Sky"
         case .background: "Background"
+        case .people: "People"
         case .brush: "Brush"
         case .linear: "Linear"
         case .radial: "Radial"
@@ -61,6 +64,7 @@ enum MaskKind: String, Codable, CaseIterable, Identifiable {
         case .subject: "person.crop.rectangle"
         case .sky: "cloud.sun"
         case .background: "mountain.2"
+        case .people: "person.2"
         case .brush: "paintbrush.pointed"
         case .linear: "square.tophalf.filled"
         case .radial: "circle.dashed"
@@ -69,7 +73,7 @@ enum MaskKind: String, Codable, CaseIterable, Identifiable {
         }
     }
     /// Kinds that are found automatically and need no shape editing.
-    var isAutomatic: Bool { self == .subject || self == .sky || self == .background }
+    var isAutomatic: Bool { self == .subject || self == .sky || self == .background || self == .people }
 }
 
 enum MaskOp: String, Codable, CaseIterable, Identifiable {
@@ -174,6 +178,9 @@ protocol DefaultValue { associatedtype Value: Codable & Equatable; static var va
 enum DefaultFalse: DefaultValue { static let value = false }
 enum DefaultHDRStops: DefaultValue { static let value = 2.0 }
 enum DefaultNoSections: DefaultValue { static let value: [String] = [] }
+enum DefaultZero: DefaultValue { static let value = 0.0 }
+enum DefaultHundred: DefaultValue { static let value = 100.0 }
+enum DefaultZone: DefaultValue { static let value = GradeZone() }
 
 /// Decodes to the default when the key is absent, so sidecars and saved presets from before the key existed still load.
 @propertyWrapper
@@ -183,6 +190,10 @@ struct Defaulted<D: DefaultValue>: Codable, Equatable {
     init(wrappedValue: D.Value) { self.wrappedValue = wrappedValue }
     init(from decoder: Decoder) throws { wrappedValue = try decoder.singleValueContainer().decode(D.Value.self) }
     func encode(to encoder: Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(wrappedValue) }
+}
+
+extension Defaulted: Hashable where D.Value: Hashable {
+    func hash(into h: inout Hasher) { h.combine(wrappedValue) }
 }
 
 extension KeyedDecodingContainer {
@@ -241,11 +252,21 @@ struct EditSettings: Codable, Equatable {
     var cropT: Double = 0
     var cropR: Double = 1
     var cropB: Double = 1
+    // Flip and transform (2026-10-11). Applied to the whole photo before the turns, straighten and crop.
+    @Defaulted<DefaultFalse> var flipH: Bool
+    @Defaulted<DefaultFalse> var flipV: Bool
+    @Defaulted<DefaultZero> var tVertical: Double     // -100...100: + makes the top wider (fixes converging verticals)
+    @Defaulted<DefaultZero> var tHorizontal: Double   // -100...100: + makes the left side taller
+    @Defaulted<DefaultZero> var tAspect: Double       // -100...100: + stretches sideways, - stretches up/down
+    @Defaulted<DefaultHundred> var tScale: Double     // 50...150 %
+    @Defaulted<DefaultZero> var tOffX: Double         // -100...100: + moves right
+    @Defaulted<DefaultZero> var tOffY: Double         // -100...100: + moves up
 
     // Sections switched off in the Edits sheet (their values are kept, they just don't apply)
     @Defaulted<DefaultNoSections> var disabled: [String]
 
     var hasCrop: Bool { cropL > 0 || cropT > 0 || cropR < 1 || cropB < 1 }
+    var hasTransform: Bool { tVertical != 0 || tHorizontal != 0 || tAspect != 0 || tScale != 100 || tOffX != 0 || tOffY != 0 }
 
     var isDefault: Bool { self == EditSettings() }
 }
@@ -303,9 +324,79 @@ extension EditSettings {
         case .masks:
             masks = d.masks
         case .crop:
-            straighten = d.straighten; quarterTurns = d.quarterTurns; cropAspect = d.cropAspect
-            cropL = d.cropL; cropT = d.cropT; cropR = d.cropR; cropB = d.cropB
+            take(.crop, from: d)
         }
+    }
+
+    /// Copies one section's settings from `o` (Paste some edits; also how reset(.crop) is written).
+    mutating func take(_ s: EditSection, from o: EditSettings) {
+        switch s {
+        case .light:
+            exposure = o.exposure; contrast = o.contrast; highlights = o.highlights
+            shadows = o.shadows; whites = o.whites; blacks = o.blacks
+        case .color:
+            temperature = o.temperature; tint = o.tint; vibrance = o.vibrance; saturation = o.saturation
+            blackAndWhite = o.blackAndWhite; hsl = o.hsl
+        case .grade:
+            grading = o.grading
+        case .curve:
+            curves = o.curves
+        case .detail:
+            texture = o.texture; clarity = o.clarity; dehaze = o.dehaze
+            vignette = o.vignette; vignetteMidpoint = o.vignetteMidpoint; vignetteFeather = o.vignetteFeather
+            vignetteRoundness = o.vignetteRoundness
+            grain = o.grain; grainSize = o.grainSize; grainRoughness = o.grainRoughness
+            sharpness = o.sharpness; sharpenMasking = o.sharpenMasking
+            noiseReduction = o.noiseReduction; colorNoise = o.colorNoise
+        case .masks:
+            masks = o.masks
+        case .crop:
+            straighten = o.straighten; quarterTurns = o.quarterTurns; cropAspect = o.cropAspect
+            cropL = o.cropL; cropT = o.cropT; cropR = o.cropR; cropB = o.cropB
+            flipH = o.flipH; flipV = o.flipV
+            tVertical = o.tVertical; tHorizontal = o.tHorizontal; tAspect = o.tAspect
+            tScale = o.tScale; tOffX = o.tOffX; tOffY = o.tOffY
+        }
+    }
+
+    /// The edits `before` -> `after` at `t` (0 = before, 1 = after): the preset Strength slider. Numbers are mixed;
+    /// on/off settings and curves switch over halfway. Masks, crop and HDR stay as they are.
+    static func blend(_ a: EditSettings, _ b: EditSettings, _ t: Double) -> EditSettings {
+        func m(_ x: Double, _ y: Double) -> Double { x + (y - x) * t }
+        func z(_ x: GradeZone, _ y: GradeZone) -> GradeZone {
+            GradeZone(hue: y.sat > 0 ? y.hue : x.hue, sat: m(x.sat, y.sat), lum: m(x.lum, y.lum))
+        }
+        var r = b
+        r.exposure = m(a.exposure, b.exposure); r.contrast = m(a.contrast, b.contrast)
+        r.highlights = m(a.highlights, b.highlights); r.shadows = m(a.shadows, b.shadows)
+        r.whites = m(a.whites, b.whites); r.blacks = m(a.blacks, b.blacks)
+        r.temperature = m(a.temperature, b.temperature); r.tint = m(a.tint, b.tint)
+        r.vibrance = m(a.vibrance, b.vibrance); r.saturation = m(a.saturation, b.saturation)
+        r.texture = m(a.texture, b.texture); r.clarity = m(a.clarity, b.clarity); r.dehaze = m(a.dehaze, b.dehaze)
+        r.vignette = m(a.vignette, b.vignette); r.vignetteMidpoint = m(a.vignetteMidpoint, b.vignetteMidpoint)
+        r.vignetteFeather = m(a.vignetteFeather, b.vignetteFeather)
+        r.vignetteRoundness = m(a.vignetteRoundness, b.vignetteRoundness)
+        r.grain = m(a.grain, b.grain); r.grainSize = m(a.grainSize, b.grainSize)
+        r.grainRoughness = m(a.grainRoughness, b.grainRoughness)
+        r.sharpness = m(a.sharpness, b.sharpness); r.sharpenMasking = m(a.sharpenMasking, b.sharpenMasking)
+        r.noiseReduction = m(a.noiseReduction, b.noiseReduction); r.colorNoise = m(a.colorNoise, b.colorNoise)
+        for i in r.hsl.bands.indices where i < a.hsl.bands.count {
+            r.hsl.bands[i] = HSLBand(hue: m(a.hsl.bands[i].hue, b.hsl.bands[i].hue),
+                                     sat: m(a.hsl.bands[i].sat, b.hsl.bands[i].sat),
+                                     lum: m(a.hsl.bands[i].lum, b.hsl.bands[i].lum))
+        }
+        r.grading.shadows = z(a.grading.shadows, b.grading.shadows)
+        r.grading.midtones = z(a.grading.midtones, b.grading.midtones)
+        r.grading.highlights = z(a.grading.highlights, b.grading.highlights)
+        r.grading.global = z(a.grading.global, b.grading.global)
+        r.grading.blending = m(a.grading.blending, b.grading.blending)
+        r.grading.balance = m(a.grading.balance, b.grading.balance)
+        if t < 0.5 { r.blackAndWhite = a.blackAndWhite; r.curves = a.curves }
+        r.masks = a.masks
+        r.take(.crop, from: a)
+        r.hdr = a.hdr; r.hdrStops = a.hdrStops
+        r.disabled = a.disabled
+        return r
     }
 
     func hasEdits(_ s: EditSection) -> Bool {

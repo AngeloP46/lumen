@@ -76,3 +76,50 @@ struct EditsSheet: View {
         .accessibilityElement(children: .contain)
     }
 }
+
+/// Paste some edits: choose which tools to take from the copied edits. Tools the copy has edits in start ticked,
+/// except Crop (a crop rarely fits another photo; Lightroom leaves it out by default too).
+struct PasteSomeSheet: View {
+    let clip: EditSettings
+    let paste: (Set<EditSection>) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var chosen: Set<EditSection> = []
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(EditSection.allCases) { sec in
+                        let has = clip.hasEdits(sec)
+                        Toggle(isOn: Binding(get: { chosen.contains(sec) },
+                                             set: { if $0 { chosen.insert(sec) } else { chosen.remove(sec) } })) {
+                            HStack(spacing: 12) {
+                                Image(systemName: sec.icon).frame(width: 26)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(sec.rawValue)
+                                    Text(has ? "Has edits" : "No edits (pasting resets it)")
+                                        .font(.caption).foregroundStyle(has ? Theme.accent : Color.secondary)
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("paste-toggle-\(sec.rawValue)")
+                    }
+                } footer: {
+                    Text("Only the ticked tools are pasted. Everything else on this photo stays as it is.")
+                }
+            }
+            .navigationTitle("Paste some edits")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Paste") { paste(chosen); dismiss() }
+                        .disabled(chosen.isEmpty)
+                        .accessibilityIdentifier("paste-go")
+                }
+            }
+            .onAppear { chosen = Set(EditSection.allCases.filter { $0 != .crop && clip.hasEdits($0) }) }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}

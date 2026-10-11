@@ -974,4 +974,117 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         XCTAssertTrue(el("tools-collapse").exists, "every tool's panel offers the fold button")
     }
+
+    // MARK: Pro pack (2026-10-11)
+
+    func testLuminanceMaskOverlayStaysOnThePhoto() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "luminance"])
+        sleep(3)
+        guard let d = drawn() else { return XCTFail("no drawn value: \(valueOf("photo"))") }
+        let drew = events().last { $0.contains("drew image") } ?? ""
+        let parts = drew.split(separator: " ")
+        // "<t> drew image WxH at y A-B"
+        let span = parts.last.map { $0.split(separator: "-").compactMap { Double($0) } } ?? []
+        XCTAssertEqual(span.count, 2, "draw log: \(drew)")
+        if span.count == 2 {
+            XCTAssertEqual(span[0], Double(d.top), accuracy: 3, "the drawn image must start where the photo starts (\(drew); photo \(d))")
+            XCTAssertEqual(span[1], Double(d.bottom), accuracy: 3, "the drawn image must end where the photo ends (\(drew); photo \(d))")
+        }
+        shot("lum-overlay-on-photo")
+    }
+
+    func testCropFlipTransformTabsAndAutoLevel() {
+        launch(open: 0, tool: "Crop")
+        XCTAssertTrue(el("crop-flip-h").waitForExistence(timeout: 10), "the crop page should have flip buttons")
+        el("crop-flip-h").tap()
+        sleep(1)
+        shot("crop-flipped")
+        el("crop-auto-level").tap()
+        sleep(4)
+        XCTAssertTrue(events().contains { $0.contains("auto level") }, "Auto should try to level the photo")
+        if app.buttons["OK"].exists { app.buttons["OK"].tap() }   // "couldn't find a horizon" is fine on a test photo
+        el("crop-tab-Transform").tap()
+        sleep(1)
+        let v = el("slider-Vertical")
+        XCTAssertTrue(v.waitForExistence(timeout: 5), "the Transform tab should have perspective sliders")
+        XCTAssertTrue(el("slider-Aspect").exists && el("slider-Scale").exists, "Aspect (stretch) and Scale should be there")
+        v.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: v.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)))
+        sleep(1)
+        XCTAssertNotEqual(valueOf("reset-Vertical"), "0", "dragging Vertical should change it")
+        shot("crop-transform")
+        el("crop-tab-Crop").tap()
+    }
+
+    func testClippingWarningAndBeforeAfterSplit() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])
+        el("histogram").tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("histogram"), "clipping on", "tapping the histogram turns the clipping warning on")
+        XCTAssertTrue(el("clip-badge").exists, "a badge says the clipping warning is on")
+        shot("clipping-on")
+        el("clip-badge").tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("histogram"), "clipping off")
+        el("btn-menu").tap()
+        app.buttons["View"].tap()
+        XCTAssertTrue(app.buttons["Before / after split"].waitForExistence(timeout: 5))
+        app.buttons["Before / after split"].tap()
+        sleep(1)
+        let h = el("split-handle")
+        XCTAssertTrue(h.waitForExistence(timeout: 5), "the split line should show")
+        h.press(forDuration: 0.1, thenDragTo: el("photo").coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+        sleep(1)
+        XCTAssertGreaterThan(Double(valueOf("split-handle")) ?? 0, 0.6, "dragging moves the split line")
+        shot("before-after")
+        el("split-close").tap()
+        sleep(1)
+        XCTAssertFalse(el("split-handle").exists, "× ends the split")
+    }
+
+    func testPasteSomeEditsOnlyTakesTheChosenTools() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])
+        el("btn-menu").tap()
+        app.buttons["Copy edits"].tap()
+        sleep(1)
+        el("pill-Reset").tap()   // Light back to 0 on this photo
+        sleep(1)
+        XCTAssertEqual(valueOf("reset-Exposure"), "0.00")
+        el("btn-menu").tap()
+        XCTAssertTrue(app.buttons["Paste some edits…"].waitForExistence(timeout: 5))
+        app.buttons["Paste some edits…"].tap()
+        XCTAssertTrue(el("paste-go").waitForExistence(timeout: 5), "the Paste some sheet should open")
+        shot("paste-some")
+        el("paste-go").tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("reset-Exposure"), "0.30", "Light (ticked) should come back from the copy")
+    }
+
+    func testGlobalGradingTabAndPeopleMaskType() {
+        launch(open: 0, tool: "Grade")
+        el("grade-tab-Global").tap()
+        sleep(1)
+        XCTAssertTrue(el("grade-wheel").waitForExistence(timeout: 5), "Global has its own big wheel")
+        shot("grade-global")
+        el("tool-Masks").tap()
+        sleep(1)
+        XCTAssertTrue(app.buttons["People"].waitForExistence(timeout: 5), "People is one of the mask types")
+        shot("mask-types")
+    }
+
+    func testPresetStrengthSlider() {
+        launch(open: 0, tool: "Presets")
+        sleep(2)
+        XCTAssertTrue(app.buttons["Punchy"].waitForExistence(timeout: 10))
+        app.buttons["Punchy"].tap()
+        sleep(1)
+        let s = el("slider-Strength")
+        XCTAssertTrue(s.waitForExistence(timeout: 5), "after a preset, a Strength slider shows")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        sleep(1)
+        let v = Int(valueOf("reset-Strength")) ?? 100
+        XCTAssertLessThan(v, 90, "dragging left lowers the strength (\(v))")
+        shot("preset-strength")
+    }
 }

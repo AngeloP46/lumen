@@ -402,6 +402,14 @@ float4 lumenMaskMul(sample_t a, sample_t b) {
     return float4(v, v, v, 1.0);
 }
 
+// Clipping warning: channels at or above p.x (white) show red, everything at or below p.y (black) shows blue
+float4 lumenClip(sample_t s, float4 p) {
+    float mx = max(s.r, max(s.g, s.b));
+    if (mx >= p.x) return float4(1.0, 0.08, 0.08, 1.0);
+    if (mx <= p.y) return float4(0.1, 0.4, 1.0, 1.0);
+    return s;
+}
+
 // Mask overlay: tints `s` towards colour.rgb by mask * colour.a
 float4 lumenOverlay(sample_t s, sample_t m, float4 colour) {
     float k = clamp(m.r, 0.0, 1.0) * colour.a;

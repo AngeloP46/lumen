@@ -259,7 +259,23 @@ final class EditorViewModel: ObservableObject {
         // in HDR the histogram shows everything the photo holds above white, also what the screen can't show now
         let hdrImg: CIImage? = s.hdr ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: 1) : nil
         if overlayVisible, let m = selectedMask {
+            let shown = img.extent
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure), settings: s, applyCrop: applyCrop)
+                .cropped(to: shown)
+        }
+        if splitCompare && !showOriginal {
+            // the original with the same crop, flip and transform, so the two halves line up
+            var o = EditSettings()
+            o.take(.crop, from: settings)
+            let before = session.develop(o, source: active, geometry: !skipGeometry, applyCrop: applyCrop)
+            let e = img.extent
+            let cut = e.minX + e.width * min(max(splitPos, 0), 1)
+            img = img.cropped(to: CGRect(x: cut, y: e.minY, width: e.maxX - cut, height: e.height))
+                .composited(over: before.cropped(to: e))
+        }
+        if clipWarning && !showOriginal, let clip = LumenKernels.shared?.clip {
+            let white = s.hdr && hdrScreenStops > 0 ? exp2(hdrScreenStops) * 0.995 : 0.999
+            img = clip.apply(extent: img.extent, arguments: [img, CIVector(x: white, y: 0.0007, z: 0, w: 0)]) ?? img
         }
         // sized from the preview so the shape stays right (crop, rotation, original) while the 100% view is showing
         if base.extent.size != imageSize { imageSize = base.extent.size }
@@ -393,7 +409,7 @@ final class EditorViewModel: ObservableObject {
         autoMaskBusy = true
         workQueue.async {
             session.prepareAutoMasks(snapshot, source: source)
-            let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky].filter { source.hasTried($0) && source.cachedMask($0) == nil })
+            let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople].filter { source.hasTried($0) && source.cachedMask($0) == nil })
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.autoMaskBusy = false
@@ -489,18 +505,80 @@ final class EditorViewModel: ObservableObject {
     func apply(preset edits: EditSettings) {
         var s = edits
         s.masks = settings.masks
-        s.straighten = settings.straighten
-        s.quarterTurns = settings.quarterTurns
-        s.cropAspect = settings.cropAspect
-        s.cropL = settings.cropL; s.cropT = settings.cropT
-        s.cropR = settings.cropR; s.cropB = settings.cropB
+        s.take(.crop, from: settings)
         s.hdr = settings.hdr; s.hdrStops = settings.hdrStops
+        s.disabled = settings.disabled
         if s.temperature == 0 && s.tint == 0 {
             s.temperature = settings.temperature
             s.tint = settings.tint
         }
+        let before = settings
+        settings = s
+        presetRecord = PresetRecord(before: before, after: s)
+        presetAmount = 100
+    }
+
+    // MARK: Preset strength
+
+    /// The last preset applied: the Strength slider mixes between the edits before it and the preset's.
+    struct PresetRecord { var before: EditSettings; var after: EditSettings }
+    @Published private(set) var presetRecord: PresetRecord?
+    @Published private(set) var presetAmount: Double = 100
+
+    /// The Strength slider shows while the photo still holds the preset at the current strength.
+    var presetStrengthAvailable: Bool {
+        guard let r = presetRecord else { return false }
+        return settings == EditSettings.blend(r.before, r.after, presetAmount / 100)
+    }
+
+    func setPresetAmount(_ v: Double) {
+        guard let r = presetRecord else { return }
+        presetAmount = min(max(v, 0), 100)
+        settings = EditSettings.blend(r.before, r.after, presetAmount / 100)
+    }
+
+    // MARK: Paste some edits
+
+    /// Pastes only the chosen tools from the copied edits.
+    func paste(_ sections: Set<EditSection>, from c: EditSettings) {
+        var s = settings
+        for sec in EditSection.allCases where sections.contains(sec) { s.take(sec, from: c) }
         settings = s
     }
+
+    // MARK: Auto-level
+
+    @Published private(set) var levelling = false
+
+    /// Straightens the photo along the horizon Apple's on-phone detection finds.
+    func autoLevel() {
+        guard let session, let source, !levelling else { return }
+        levelling = true
+        let turns = settings.quarterTurns
+        workQueue.async {
+            let a = session.levelAngle(source, quarterTurns: turns)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.levelling = false
+                if let a {
+                    self.settings.straighten = a
+                    if DemoMode.isOn { DemoMode.log("auto level \(a)") }
+                } else {
+                    self.message = "Couldn't find a horizon to level in this photo."
+                    if DemoMode.isOn { DemoMode.log("auto level none") }
+                }
+            }
+        }
+    }
+
+    // MARK: Clipping warning and before / after
+
+    /// Blown highlights show red and crushed shadows blue.
+    @Published var clipWarning = false { didSet { requestRender() } }
+    /// Before / after split: the original left of the line, the edit right of it.
+    @Published var splitCompare = false { didSet { requestRender() } }
+    /// Where the split line is, as a fraction of the photo's width.
+    @Published var splitPos: CGFloat = 0.5 { didSet { requestRender() } }
 
     func apply(_ p: Preset) {
         var s = EditSettings()
