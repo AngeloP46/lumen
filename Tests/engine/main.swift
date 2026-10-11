@@ -1244,7 +1244,11 @@ if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
         for (k, v) in d.inputDescriptionsByName { print("::warning::seg input \(k): \(v)") }
         for (k, v) in d.outputDescriptionsByName { print("::warning::seg output \(k): \(v)") }
         let meta = d.metadata[.creatorDefinedKey] as? [String: String] ?? [:]
-        for (k, v) in meta { print("::warning::seg meta \(k): \(v.prefix(3000))") }
+        if let js = meta["com.apple.coreml.model.preview.params"]?.data(using: .utf8),
+           let o = try? JSONSerialization.jsonObject(with: js) as? [String: Any], let labels = o["labels"] as? [String] {
+            let named = labels.enumerated().filter { $0.offset >= 90 && $0.element != "--" }.map { "\($0.offset):\($0.element)" }
+            print("::warning::seg labels (\(labels.count)) from 90: \(named.joined(separator: ", "))")
+        }
         print("::warning::seg labels: \(String(describing: d.classLabels?.prefix(200)))")
     } catch { print("::warning::seg model failed to load: \(error)") }
 }
