@@ -1181,14 +1181,17 @@ do {
             print("depth \(f.lastPathComponent): \(d.width)x\(d.height) in \(ms) ms, top \(top) bottom \(bottom)")
             if f.lastPathComponent.hasPrefix("matterhorn") {
                 check(top > bottom + 0.15, "matterhorn: the sky and peak (top) should read farther than the ground (bottom): top \(top) bottom \(bottom)")
-                // a Near mask covers the bottom more than the top
-                if let img = session.maskImage(Mask.make(.depth), source: source, gain: 1), let mv = maskValues(img) {
+                // a band reaching from nearest to just past the ground covers the bottom far more than the sky at the top
+                var near = Mask.make(.depth)
+                near.components[0].lumLow = 0; near.components[0].lumHigh = Double(bottom) + 0.1
+                near.components[0].lumHighFeather = 0.05
+                if let img = session.maskImage(near, source: source, gain: 1), let mv = maskValues(img) {
                     let q = mv.h / 4
-                    // maskValues rows: first row = bottom of the image (Core Image's origin is bottom-left)
-                    let lo = mv.v[0..<(q * mv.w)].reduce(0, +) / Float(q * mv.w)
-                    let hi = mv.v[((mv.h - q) * mv.w)...].reduce(0, +) / Float(q * mv.w)
-                    print("depth near mask: one end \(lo), other end \(hi)")
-                    check(abs(lo - hi) > 0.2, "matterhorn: a Near depth mask should cover one end of the photo much more than the other (\(lo) vs \(hi))")
+                    // maskValues rows: top of the image first, as render(toBitmap:) writes them
+                    let topCover = mv.v[0..<(q * mv.w)].reduce(0, +) / Float(q * mv.w)
+                    let bottomCover = mv.v[((mv.h - q) * mv.w)...].reduce(0, +) / Float(q * mv.w)
+                    print("depth near mask: top \(topCover), bottom \(bottomCover)")
+                    check(bottomCover > topCover + 0.3, "matterhorn: a near depth band should cover the ground (bottom \(bottomCover)) far more than the sky (top \(topCover))")
                 } else { check(false, "depth mask render failed") }
             }
         }

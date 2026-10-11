@@ -472,9 +472,9 @@ extension EditSession {
         var px = [Float](repeating: 0, count: w * h * 4)
         LumenGPU.context.render(out, toBitmap: &px, rowBytes: w * 16, bounds: out.extent, format: .RGBAf, colorSpace: nil)
         // the model gives relative nearness (bigger = nearer); spread the 2nd...98th percentile over 0...1, then flip
-        // so 0 = nearest. Rows come out bottom-up (Core Image), the field is stored top row first.
+        // so 0 = nearest. render(toBitmap:) writes the top row first, which is how the field is stored.
         var raw = [Float](repeating: 0, count: w * h)
-        for y in 0..<h { for x in 0..<w { raw[(h - 1 - y) * w + x] = px[(y * w + x) * 4] } }
+        for i in 0..<(w * h) { raw[i] = px[i * 4] }
         let sorted = raw.sorted()
         let lo = sorted[sorted.count * 2 / 100], hi = sorted[sorted.count * 98 / 100]
         guard hi - lo > 1e-6 else { return nil }
@@ -490,11 +490,8 @@ extension EditSession {
 
     /// The depth field as a grey image over the photo (white = far), slightly softened.
     static func depthImage(_ d: DepthField, extent ext: CGRect) -> CIImage {
-        var flipped = [Float](repeating: 0, count: d.values.count)
-        for y in 0..<d.height {
-            for x in 0..<d.width { flipped[(d.height - 1 - y) * d.width + x] = d.values[y * d.width + x] }
-        }
-        let data = flipped.withUnsafeBufferPointer { Data(buffer: $0) }
+        // bitmap data is read top row first, like the field
+        let data = d.values.withUnsafeBufferPointer { Data(buffer: $0) }
         var ci = CIImage(bitmapData: data, bytesPerRow: d.width * 4, size: CGSize(width: d.width, height: d.height),
                          format: .Rf, colorSpace: nil)
         ci = expandRed(ci)
