@@ -1226,33 +1226,8 @@ do {
             }
             let kk = LumenKernels.shared
             check(kk?.gfPack != nil && kk?.gfCoef != nil && kk?.gfApply != nil, "edge refinement kernels should load")
-            print("edge refinement: 8-bit mask buffer works: \(EditSession.materializedMask(soft) != nil)")
-            if let k = kk, let pk = k.gfPack, let cf = k.gfCoef, let ap = k.gfApply {
-                let p0 = pk.apply(extent: ext, arguments: [source.base, soft, CIVector(x: 0, y: 0, z: 0, w: 0)])
-                let p1 = pk.apply(extent: ext, arguments: [source.base, soft, CIVector(x: 1, y: 0, z: 0, w: 0)])
-                let ab = (p0 != nil && p1 != nil) ? cf.apply(extent: ext, arguments: [p0!, p1!, CIVector(x: 0.0015, y: 0, z: 0, w: 0)]) : nil
-                let q = ab != nil ? ap.apply(extent: ext, arguments: [ab!, source.base]) : nil
-                print("::warning::edge refinement steps: pack \(p0 != nil) packIP \(p1 != nil) coef \(ab != nil) apply \(q != nil)")
-                func px(_ img: CIImage, _ x: CGFloat) -> [Float] {
-                    var v = [Float](repeating: 0, count: 4)
-                    LumenGPU.context.render(img, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: x, y: ext.midY, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
-                    return v
-                }
-                if let p0 { print("::warning::guide pack at x=300: \(px(p0, 300)), x=900: \(px(p0, 900)); base at 300: \(px(source.base, 300)) 900: \(px(source.base, 900))") }
-                func bx(_ i: CIImage) -> CIImage { i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: 10]).cropped(to: ext) }
-                if let p0, let p1, let ab2 = cf.apply(extent: ext, arguments: [bx(p0), bx(p1), CIVector(x: 0.0015, y: 0, z: 0, w: 0)]) {
-                    if let q2 = ap.apply(extent: ext, arguments: [bx(ab2), source.base]) {
-                        print("::warning::manual q transition \(transition(q2).map { "\($0.0)" } ?? "nil"); materialized8 \(EditSession.materializedMask(q2).flatMap(transition).map { "\($0.0)" } ?? "nil"); row \(maskValues(q2, width: 1200).map { mv in Array(mv.v[(mv.h / 2 * mv.w + 594)..<(mv.h / 2 * mv.w + 606)]) } ?? [])")
-                    }
-                    if let r = session.refined(soft, source: source), let mv = maskValues(r, width: 1200) {
-                        print("::warning::refined row \(Array(mv.v[(mv.h / 2 * mv.w + 594)..<(mv.h / 2 * mv.w + 606)])) extent \(r.extent)")
-                    }
-                    if let mv = maskValues(soft, width: 1200) { print("::warning::soft row \(Array(mv.v[(mv.h / 2 * mv.w + 594)..<(mv.h / 2 * mv.w + 606)]))") }
-                    print("::warning::blurred pack at 600: \(px(bx(p0), 600)) ip \(px(bx(p1), 600)) ab \(px(ab2, 600))")
-                }
-            }
             if let before = transition(soft), let ref = session.refined(soft, source: source), let after = transition(ref) {
-                print("::warning::edge refinement: soft pixels \(before.0) -> \(after.0), inside \(after.1), outside \(after.2)")
+                print("edge refinement: soft pixels \(before.0) -> \(after.0), inside \(after.1), outside \(after.2)")
                 check(after.0 * 2 <= before.0, "edge refinement should make a soft mask edge much sharper (\(before.0) -> \(after.0) partly-covered pixels)")
                 check(after.1 > 0.9 && after.2 < 0.1, "edge refinement must keep the inside selected and the outside clear (\(after.1), \(after.2))")
             } else { check(false, "edge refinement: render failed") }

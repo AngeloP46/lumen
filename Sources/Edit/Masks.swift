@@ -454,7 +454,8 @@ extension EditSession {
         guard let packed = pack.apply(extent: ext, arguments: [source.base, mask, CIVector(x: 0, y: 0, z: 0, w: 0)]),
               let packedIP = pack.apply(extent: ext, arguments: [source.base, mask, CIVector(x: 1, y: 0, z: 0, w: 0)]),
               let ab = coef.apply(extent: ext, arguments: [box(packed), box(packedIP), CIVector(x: eps, y: 0, z: 0, w: 0)]),
-              let q = apply.apply(extent: ext, arguments: [box(ab), source.base])
+              let q = apply.apply(extent: ext, arguments: [box(ab), source.base,
+                                                          depth ? CIVector(x: 0, y: 1, z: 0, w: 0) : CIVector(x: 0.12, y: 1 / 0.76, z: 0, w: 0)])
         else { return mask }
         return Self.materializedMask(q) ?? Self.materialized(q) ?? q
     }

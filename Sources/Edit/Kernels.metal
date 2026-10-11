@@ -438,9 +438,10 @@ float4 lumenGFCoef(sample_t m, sample_t mip, float4 e) {
     return float4(a, b, 0.0, 1.0);
 }
 // 3. apply the (box-blurred) model to the full-detail guide
-float4 lumenGFApply(sample_t ab, sample_t g) {
+//    s = (low, 1 / span): masks are stretched a little so the filter's faint tails beside an edge drop out
+float4 lumenGFApply(sample_t ab, sample_t g, float4 s) {
     float i = clamp(lmSrgbEnc(lmLum(max(g.rgb, 0.0))), 0.0, 1.5);
-    float q = clamp(ab.x * i + ab.y, 0.0, 1.0);
+    float q = clamp((ab.x * i + ab.y - s.x) * s.y, 0.0, 1.0);
     return float4(q, q, q, 1.0);
 }
 
