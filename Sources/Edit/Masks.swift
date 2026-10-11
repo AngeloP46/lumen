@@ -300,7 +300,26 @@ extension EditSession {
             if abs(deg) <= 20 { return (deg * 10).rounded() / 10 }
         }
         // 2. No horizon (buildings, cars, interiors): level the photo's straight edges instead
-        return Self.edgeLevelAngle(cg)
+        return edgeLevel(of: small)
+    }
+
+    /// Edge levelling, refined: measure, turn by it, measure what is left, until the edges read level (the pixel grid
+    /// pulls a single measurement slightly towards level, so one pass under-turns).
+    func edgeLevel(of image: CIImage) -> Double? {
+        func measure(_ img: CIImage) -> Double? {
+            guard let cg = ctx.createCGImage(img, from: img.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+            else { return nil }
+            return Self.edgeLevelAngle(cg)
+        }
+        guard var total = measure(image) else { return nil }
+        for _ in 0..<3 where abs(total) <= 20 {
+            var s = EditSettings()
+            s.straighten = total
+            guard let rest = measure(geometry(image, s)), abs(rest) >= 0.15 else { break }
+            total += rest
+        }
+        guard abs(total) <= 20 else { return nil }
+        return (total * 10).rounded() / 10
     }
 
     /// Finds the small turn (up to 20°) that makes the photo's strongest straight edges horizontal or vertical,

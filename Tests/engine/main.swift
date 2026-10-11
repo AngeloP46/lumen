@@ -1074,8 +1074,7 @@ do {
             .composited(over: CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
         levelCheck("building", building, tilt: 6)
         // the edge method on its own (photos with no horizon use it): same scene, must also level it
-        if let cg = LumenGPU.context.createCGImage(building, from: building.extent),
-           let e = EditSession.edgeLevelAngle(cg) {
+        if let e = session.edgeLevel(of: building) {
             check(abs(e + 6) < 1.5, "edge levelling should turn the 6° clockwise 'building' back by about -6 (got \(e))")
         } else { check(false, "edge levelling found nothing in the building scene") }
         // a level photo stays (nearly) level
