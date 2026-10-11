@@ -1216,8 +1216,8 @@ do {
             // the "AI" mask: the dark left half, but with a very soft edge (like a mask found on a small copy)
             let hard = EditSession.constant(1, CGRect(x: ext.minX, y: ext.minY, width: ext.width / 2, height: ext.height))
                 .composited(over: EditSession.constant(0, ext))
-            // about as soft as a Vision mask scaled up from its small copy
-            let soft = EditSession.blur(hard, 5, ext)
+            // about as soft as a Vision mask scaled up from its small copy (~4 px on a 2560 px preview)
+            let soft = EditSession.blur(hard, 2, ext)
             func transition(_ img: CIImage) -> (Int, Float, Float)? {
                 guard let mv = maskValues(img, width: 1200) else { return nil }
                 let y = mv.h / 2

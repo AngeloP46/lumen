@@ -445,7 +445,8 @@ extension EditSession {
         let ext = source.extent
         // the window must reach across the mask's soft zone: Vision masks come from ~1024 px (about 2.5x smaller than
         // the preview), depth from 518 px (about 5x)
-        let r = max(3, source.longEdge * (depth ? 0.01 : 0.006))
+        // (a guided filter only restores the edge fully when its window is ~3x wider than the soft zone)
+        let r = max(4, source.longEdge * (depth ? 0.014 : 0.008))
         let eps = depth ? 0.004 : 0.0015
         func box(_ i: CIImage) -> CIImage {
             i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: r]).cropped(to: ext)
