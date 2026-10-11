@@ -452,7 +452,7 @@ extension EditSession {
               let ab = coef.apply(extent: ext, arguments: [box(packed), CIVector(x: eps, y: 0, z: 0, w: 0)]),
               let q = apply.apply(extent: ext, arguments: [box(ab), source.base])
         else { return mask }
-        return Self.materializedMask(q) ?? mask
+        return Self.materializedMask(q) ?? Self.materialized(q) ?? q
     }
 
     /// Renders a grey mask into an 8-bit single-channel buffer (a quarter of the memory of a half-float RGBA one).

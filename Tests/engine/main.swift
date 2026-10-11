@@ -1223,6 +1223,9 @@ do {
                 let row = Array(mv.v[(y * mv.w)..<((y + 1) * mv.w)])
                 return (row.filter { $0 > 0.1 && $0 < 0.9 }.count, row[mv.w / 8], row[mv.w * 7 / 8])
             }
+            let kk = LumenKernels.shared
+            check(kk?.gfPack != nil && kk?.gfCoef != nil && kk?.gfApply != nil, "edge refinement kernels should load")
+            print("edge refinement: 8-bit mask buffer works: \(EditSession.materializedMask(soft) != nil)")
             if let before = transition(soft), let ref = session.refined(soft, source: source), let after = transition(ref) {
                 print("edge refinement: soft pixels \(before.0) -> \(after.0), inside \(after.1), outside \(after.2)")
                 check(after.0 * 3 < before.0, "edge refinement should make a soft mask edge much sharper (\(before.0) -> \(after.0) partly-covered pixels)")
