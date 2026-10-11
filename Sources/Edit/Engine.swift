@@ -333,6 +333,14 @@ final class EditSession: @unchecked Sendable {
         return analyse(base, materialize: materialize)
     }
 
+    /// The same with an explicit heal list (the before view and the split compare use the photo without heals).
+    func makeSource(maxEdge: CGFloat?, materialize: Bool, heals list: [HealSpot]) -> ImageSource? {
+        guard LumenKernels.shared != nil, let decoded = decode(maxEdge: maxEdge, heals: list) else { return nil }
+        var base = decoded
+        if materialize, let m = Self.materialized(decoded) { base = m }
+        return analyse(base, materialize: materialize)
+    }
+
     private func analyse(_ base: CIImage, materialize: Bool) -> ImageSource? {
         guard let k = LumenKernels.shared else { return nil }
         let ext = base.extent

@@ -77,6 +77,10 @@ final class EditorViewModel: ObservableObject {
 
     private var session: EditSession?
     private var source: ImageSource?
+    /// The preview without heals, for the before view (press and hold) and the split compare. Only kept while the
+    /// photo has heals.
+    private var unhealedSource: ImageSource?
+    private var unhealedHDR = false
     /// Estimated depth of the open photo (once a Depth mask asked for it).
     var depthField: DepthField? { source?.depthField }
     /// What the scene model found in the open photo (Landscape mask parts).
@@ -156,11 +160,13 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.session = s
                 self.source = src
+                self.unhealedSource = nil   // belonged to the previous photo
                 self.isLoading = false
                 self.loadFailed = (src == nil)
                 if let src { self.imageSize = src.size; self.sourceSize = src.size }
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()
+                self.refreshUnhealed()
                 // HDR was switched while the photo was still loading: decode it again the other way
                 if self.settings.hdr != wantsHDR { self.reloadSource() }
             }
@@ -196,6 +202,7 @@ final class EditorViewModel: ObservableObject {
                 if DemoMode.isOn { DemoMode.log("reloaded hdr \(wantsHDR)") }
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()
+                self.refreshUnhealed()
                 // a new heal shows once the photo has been decoded with it
                 if self.healBusy && self.healWaitingForReload { self.healBusy = false; self.healStroke = []; self.healWaitingForReload = false }
             }
@@ -260,7 +267,9 @@ final class EditorViewModel: ObservableObject {
         let skipGeometry = false
         let applyCrop = !(cropEditing && !showOriginal)
         let useDetail = zoomLevel > 1.4 && detailSource != nil
-        let active = (useDetail ? detailSource : nil) ?? source
+        var active = (useDetail ? detailSource : nil) ?? source
+        // the original is the photo as shot: without heals too (the preview copy, sharp enough for a quick look)
+        if showOriginal, let u = unhealedSource { active = u }
         // HDR: show as much of the highlights' range as the screen can display right now (headroom 1 = none)
         let screenStops = min(max(log2(Double(effectiveHeadroom)), 0), settings.hdrStops)
         let hdrWeight = s.hdr ? screenStops / max(s.hdrStops, 0.01) : 0
@@ -280,7 +289,9 @@ final class EditorViewModel: ObservableObject {
             // the original with the same crop, flip and transform, so the two halves line up
             var o = EditSettings()
             o.take(.crop, from: settings)
-            let before = session.develop(o, source: active, geometry: !skipGeometry, applyCrop: applyCrop)
+            // without heals as well, when the halves are the same size (not in the 100 % view)
+            let beforeSource = (!useDetail ? unhealedSource : nil) ?? active
+            let before = session.develop(o, source: beforeSource, geometry: !skipGeometry, applyCrop: applyCrop)
             let e = img.extent
             let cut = e.minX + e.width * min(max(splitPos, 0), 1)
             img = img.cropped(to: CGRect(x: cut, y: e.minY, width: e.maxX - cut, height: e.height))
@@ -596,6 +607,27 @@ final class EditorViewModel: ObservableObject {
                 self.healWaitingForReload = true
                 if !self.settings.isOn(.heal) { self.settings.setOn(.heal, true) }
                 self.settings.heals.append(spot)
+            }
+        }
+    }
+
+    /// Keeps a heal-free preview while the photo has heals (built in the background, dropped when there are none).
+    func refreshUnhealed() {
+        let heals = settings.effective.heals
+        guard !heals.isEmpty, let session else { unhealedSource = nil; return }
+        // the photo without heals doesn't change when heals do, only when HDR changes how it is decoded
+        if unhealedSource != nil && unhealedHDR == settings.hdr { return }
+        unhealedSource = nil
+        let hdr = settings.hdr
+        let generation = loadGeneration
+        workQueue.async {
+            let src = session.makeSource(maxEdge: 2560, materialize: true, heals: [])
+            Task { @MainActor [weak self] in
+                guard let self, generation == self.loadGeneration, let src, src.size == self.source?.size else { return }
+                guard hdr == self.settings.hdr else { return }
+                self.unhealedSource = src
+                self.unhealedHDR = hdr
+                if self.showOriginal || self.splitCompare { self.requestRender() }
             }
         }
     }
