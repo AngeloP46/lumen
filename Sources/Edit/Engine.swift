@@ -184,7 +184,8 @@ enum HealStore {
         var out = img
         let ext = img.extent
         for h in heals {
-            guard let patch = load(patchURL(h.id), raw: false), let mask = load(maskURL(h.id), raw: true) else { continue }
+            guard let loaded = load(patchURL(h.id), raw: false), let mask = load(maskURL(h.id), raw: true) else { continue }
+            let patch = loaded.settingAlphaOne(in: loaded.extent)   // patches are always opaque
             // the spot's rectangle on this image (Core Image counts rows from the bottom)
             let r = CGRect(x: ext.minX + h.x * ext.width, y: ext.minY + (1 - h.y - h.h) * ext.height,
                            width: h.w * ext.width, height: h.h * ext.height)

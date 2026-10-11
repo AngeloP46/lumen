@@ -13,11 +13,11 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "LaMa", withExtension: "mlmodelc")
     }()
-    /// CPU only, full precision. The GPU (0.1.137: black) and the Neural Engine (0.1.139: dark fills on bright,
-    /// saturated colours such as red paint or yellow plates) both run it in float16, which this model overflows.
-    /// The CPU is slower (a few seconds) but gives the same answer as the Mac the engine test runs on.
-    private static let healModel: MLModel? = loadHealModel(.cpuOnly)
-    private static let healModelCPU: MLModel? = nil
+    /// `.all` is what the conversion was verified with. (0.1.137 used .cpuAndGPU: black. The dark fills on red
+    /// paint / yellow plates in 0.1.139-145 were not the compute units but the output's alpha channel, see run().)
+    private static let healModel: MLModel? = loadHealModel(.all)
+    /// Full precision, slower: tried when the first answer looks wrong.
+    private static let healModelCPU: MLModel? = loadHealModel(.cpuOnly)
     private static func loadHealModel(_ units: MLComputeUnits) -> MLModel? {
         guard let url = healModelURL else { return nil }
         let cfg = MLModelConfiguration()
@@ -27,6 +27,10 @@ extension EditSession {
     static var hasHealModel: Bool { healModel != nil }
     /// What the last heal measured (engine test diagnostics).
     nonisolated(unsafe) static var healDiagnostics = ""
+    nonisolated(unsafe) static var healAlpha: Float = 1
+    static func fourCC(_ t: OSType) -> String {
+        String(bytes: [24, 16, 8, 0].map { UInt8((t >> $0) & 0xFF) }, encoding: .ascii) ?? "\(t)"
+    }
 
     static let healSide = 800   // the model's fixed input size
 
@@ -122,7 +126,16 @@ extension EditSession {
                   let result = try? m.prediction(from: features),
                   let buffer = result.featureValue(for: "output")?.imageBufferValue
             else { return nil }
-            return CIImage(cvPixelBuffer: buffer, options: [.colorSpace: srgb])
+            // The model only paints red, green and blue: on the iPhone the buffer's 4th (alpha) byte is not 255,
+            // so the PNG kept a see-through patch and red paint (little blue, hence little "alpha") came out
+            // black while white highlights survived (0.1.139-145). The patch is made fully opaque here.
+            let raw = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: srgb])
+            var lo = [Float](repeating: 0, count: 4)
+            let mn = raw.applyingFilter("CIAreaMinimum", parameters: [kCIInputExtentKey: CIVector(cgRect: raw.extent)])
+            LumenGPU.context.render(mn, toBitmap: &lo, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                                    format: .RGBAf, colorSpace: nil)
+            Self.healAlpha = lo[3]
+            return raw.settingAlphaOne(in: CGRect(x: 0, y: 0, width: n, height: n))
         }
         let ring = Self.meanInside(CIImage(cgImage: cgImage), mask: blend, invert: true)
         func plausible(_ o: CIImage) -> Bool {
@@ -131,22 +144,28 @@ extension EditSession {
         }
         var answer = run(model)
         if let a = answer {
-            Self.healDiagnostics = String(format: "ring %.3f, input hole %.3f, output hole %.3f, output ring %.3f, scale %.3f",
+            Self.healDiagnostics = String(format: "ring %.3f, input hole %.3f, output hole %.3f, output ring %.3f, scale %.3f, raw output min alpha %.3f, buffer %@",
                                           ring, Self.meanInside(CIImage(cgImage: cgImage), mask: hole, invert: false),
-                                          Self.meanInside(a, mask: hole, invert: false), Self.meanInside(a, mask: blend, invert: true), scale)
+                                          Self.meanInside(a, mask: hole, invert: false), Self.meanInside(a, mask: blend, invert: true), scale,
+                                          Self.healAlpha, Self.fourCC(model.modelDescription.outputDescriptionsByName["output"]?.imageConstraint?.pixelFormatType ?? 0))
         }
         if answer == nil || !plausible(answer!), let cpu = Self.healModelCPU {
             answer = run(cpu)
         }
         guard let out = answer, plausible(out) else { return nil }
 
-        // 6. keep it: the rebuilt square and where to blend it in
+        // 6. keep it: the rebuilt square and where to blend it in, checked again as it will be read back
         let id = UUID()
         try? FileManager.default.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         do {
             try ctx.writePNGRepresentation(of: out, to: HealStore.patchURL(id), format: .RGBA8, colorSpace: srgb)
             try Self.writeGrayPNG(blend, to: HealStore.maskURL(id))
         } catch { return nil }
+        guard let back = CIImage(contentsOf: HealStore.patchURL(id)), plausible(back) else {
+            try? FileManager.default.removeItem(at: HealStore.patchURL(id))
+            try? FileManager.default.removeItem(at: HealStore.maskURL(id))
+            return nil
+        }
         return HealSpot(id: id, strokes: strokes, x: Double(region.minX / W), y: Double(region.minY / H),
                         w: Double(side / W), h: Double(side / H), scale: scale)
     }

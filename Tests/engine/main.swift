@@ -1366,6 +1366,13 @@ do {
                     }
                     print("::warning::heal red paint: centre after \(v.prefix(3)); steps: \(EditSession.healDiagnostics)")
                     check(v[0] > 0.35 && v[1] < 0.1, "a badge on red paint should heal to red (centre \(v.prefix(3)))")
+                    // the stored patch must be fully opaque (a see-through patch turned red paint black on the iPhone)
+                    if let src = CGImageSourceCreateWithURL(HealStore.patchURL(spot.id) as CFURL, nil),
+                       let cg = CGImageSourceCreateImageAtIndex(src, 0, nil), let px = rgbaBytes(cg) {
+                        var minA: UInt8 = 255
+                        for i in stride(from: 3, to: px.count, by: 4) { minA = min(minA, px[i]) }
+                        check(minA == 255, "the stored heal patch should be fully opaque (lowest alpha \(minA))")
+                    } else { check(false, "the stored heal patch could not be read") }
                 } else { check(false, "red paint: makeHeal failed") }
             }
         }
