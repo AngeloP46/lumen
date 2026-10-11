@@ -1241,6 +1241,13 @@ do {
                 if let p0 { print("::warning::guide pack at x=300: \(px(p0, 300)), x=900: \(px(p0, 900)); base at 300: \(px(source.base, 300)) 900: \(px(source.base, 900))") }
                 func bx(_ i: CIImage) -> CIImage { i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: 10]).cropped(to: ext) }
                 if let p0, let p1, let ab2 = cf.apply(extent: ext, arguments: [bx(p0), bx(p1), CIVector(x: 0.0015, y: 0, z: 0, w: 0)]) {
+                    if let q2 = ap.apply(extent: ext, arguments: [bx(ab2), source.base]) {
+                        print("::warning::manual q transition \(transition(q2).map { "\($0.0)" } ?? "nil"); materialized8 \(EditSession.materializedMask(q2).flatMap(transition).map { "\($0.0)" } ?? "nil"); row \(maskValues(q2, width: 1200).map { mv in Array(mv.v[(mv.h / 2 * mv.w + 594)..<(mv.h / 2 * mv.w + 606)]) } ?? [])")
+                    }
+                    if let r = session.refined(soft, source: source), let mv = maskValues(r, width: 1200) {
+                        print("::warning::refined row \(Array(mv.v[(mv.h / 2 * mv.w + 594)..<(mv.h / 2 * mv.w + 606)])) extent \(r.extent)")
+                    }
+                    if let mv = maskValues(soft, width: 1200) { print("::warning::soft row \(Array(mv.v[(mv.h / 2 * mv.w + 594)..<(mv.h / 2 * mv.w + 606)]))") }
                     print("::warning::blurred pack at 600: \(px(bx(p0), 600)) ip \(px(bx(p1), 600)) ab \(px(ab2, 600))")
                 }
             }
