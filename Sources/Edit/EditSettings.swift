@@ -67,7 +67,7 @@ enum MaskKind: String, Codable, CaseIterable, Identifiable {
         case .sky: "cloud.sun"
         case .background: "mountain.2"
         case .people: "person.2"
-        case .landscape: "tree"
+        case .landscape: "photo"   // a whole scene (water, buildings, ground...), not just plants
         case .brush: "paintbrush.pointed"
         case .linear: "square.tophalf.filled"
         case .radial: "circle.dashed"
