@@ -285,6 +285,15 @@ final class EditorViewModel: ObservableObject {
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure), settings: s, applyCrop: applyCrop)
                 .cropped(to: shown)
         }
+        // Remove people: red = will be removed, a faint white = stays
+        if let people = peopleFound, !showOriginal {
+            let shown = img.extent
+            let kept = people.filter { !peopleChosen.contains($0.id) }, chosen = people.filter { peopleChosen.contains($0.id) }
+            img = session.tintPeople(img, kept, source: active, settings: s, applyCrop: applyCrop,
+                                     colour: CIVector(x: 1, y: 1, z: 1, w: 0.22))
+            img = session.tintPeople(img, chosen, source: active, settings: s, applyCrop: applyCrop,
+                                     colour: CIVector(x: 1.0, y: 0.1, z: 0.12, w: 0.55)).cropped(to: shown)
+        }
         if splitCompare && !showOriginal {
             // the original with the same crop, flip and transform, so the two halves line up
             var o = EditSettings()
@@ -571,6 +580,8 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var healBusy = false
     @Published var healMessage: String?
     @Published var selectedHealID: UUID?
+    /// What the busy badge on the photo says.
+    @Published private(set) var healBusyText = "Removing…"
     fileprivate var healWaitingForReload = false
 
     func healBegin(_ p: Pt) { guard !healBusy else { return }; selectedHealID = nil; healMessage = nil; healStroke = [p] }
@@ -593,14 +604,16 @@ final class EditorViewModel: ObservableObject {
         let stroke = BrushStroke(points: healStroke, size: healSize, erase: false, feather: nil)
         let earlier = settings.effective.heals
         healBusy = true
+        healBusyText = "Removing…"
         workQueue.async {
             let spot = session.makeHeal(strokes: [stroke], earlier: earlier)
+            let why = EditSession.healFailure ?? .failed
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 guard let spot else {
                     self.healBusy = false
                     self.healStroke = []
-                    self.healMessage = "Couldn't remove that one. Try painting over it again, a little wider."
+                    self.healMessage = why.message
                     return
                 }
                 // keep the painted stroke up until the photo is decoded again with the fix
@@ -628,6 +641,121 @@ final class EditorViewModel: ObservableObject {
                 self.unhealedSource = src
                 self.unhealedHDR = hdr
                 if self.showOriginal || self.splitCompare { self.requestRender() }
+            }
+        }
+    }
+
+    // MARK: Remove people
+
+    /// The people found by Remove people. While set, the photo shows them (red = will be removed) and a tap on one
+    /// picks or keeps them.
+    @Published private(set) var peopleFound: [FoundPerson]?
+    @Published private(set) var peopleChosen: Set<Int> = []
+    /// Bumped by Cancel (or leaving Heal) so a search still running is ignored when it finishes.
+    private var peopleSearch = 0
+
+    func findPeople() {
+        guard !healBusy, let session else { return }
+        selectedHealID = nil
+        healMessage = nil
+        // CI: `-lumenDemoPeople` = three made-up people (the simulator has no Vision speed and no heal model)
+        let demo = DemoMode.value("-lumenDemoPeople") != nil ? Self.demoPeople() : nil
+        guard demo != nil || EditSession.hasHealModel else { healMessage = HealFailure.notAvailable.message; return }
+        let earlier = settings.effective.heals
+        healBusy = true
+        healBusyText = "Finding people…"
+        peopleSearch += 1
+        let search = peopleSearch
+        workQueue.async {
+            let people = demo ?? session.findPeople(earlier: earlier)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.healBusy = false
+                guard search == self.peopleSearch else { return }
+                guard !people.isEmpty else { self.healMessage = "No people found in this photo."; return }
+                self.peopleFound = people
+                // everyone but who the photo is of
+                self.peopleChosen = Set(people.filter { !$0.main }.map(\.id))
+                self.requestRender()
+            }
+        }
+    }
+
+    /// Three made-up people for CI: one big (who the photo is of) and two small ones.
+    private static func demoPeople() -> [FoundPerson] {
+        let w = 300, h = 400
+        var px = [UInt8](repeating: 0, count: w * h)
+        for (x0, y0, x1, y1) in [(100, 120, 180, 380), (225, 250, 250, 310), (30, 260, 48, 305)] {
+            for y in y0..<y1 { for x in x0..<x1 { px[y * w + x] = 255 } }
+        }
+        return EditSession.splitPeople(px, width: w, height: h)
+    }
+
+    /// A tap on the photo while picking: the smallest person whose box (a little wider) holds the point.
+    func togglePerson(at p: Pt) {
+        guard !healBusy, let people = peopleFound else { return }
+        let pad = 0.015
+        let hit = people.filter { $0.box.insetBy(dx: -pad, dy: -pad).contains(CGPoint(x: p.x, y: p.y)) }
+            .min { $0.box.width * $0.box.height < $1.box.width * $1.box.height }
+        if let hit { togglePerson(hit.id) }
+    }
+
+    func togglePerson(_ id: Int) {
+        guard !healBusy else { return }
+        if peopleChosen.contains(id) { peopleChosen.remove(id) } else { peopleChosen.insert(id) }
+        requestRender()
+    }
+
+    func chooseAllPeople(_ all: Bool) {
+        guard !healBusy, let people = peopleFound else { return }
+        peopleChosen = all ? Set(people.map(\.id)) : []
+        requestRender()
+    }
+
+    func cancelPeople() {
+        peopleSearch += 1
+        guard peopleFound != nil else { return }
+        peopleFound = nil
+        peopleChosen = []
+        requestRender()
+    }
+
+    /// Removes the people picked, one heal each (each built on the ones before), all added as one undo step.
+    func removeChosenPeople() {
+        guard !healBusy, let session, let people = peopleFound else { return }
+        let chosen = people.filter { peopleChosen.contains($0.id) }
+        guard !chosen.isEmpty else { return }
+        let earlier = settings.effective.heals
+        healBusy = true
+        healBusyText = chosen.count == 1 ? "Removing…" : "Removing 1 of \(chosen.count)…"
+        workQueue.async {
+            var made: [HealSpot] = []
+            var failures: [HealFailure] = []
+            for (i, person) in chosen.enumerated() {
+                if i > 0 {
+                    let text = "Removing \(i + 1) of \(chosen.count)…"
+                    Task { @MainActor [weak self] in self?.healBusyText = text }
+                }
+                if let spot = session.makeHeal(person: person, earlier: earlier + made) {
+                    made.append(spot)
+                } else {
+                    failures.append(EditSession.healFailure ?? .failed)
+                }
+            }
+            let done = made, failed = failures
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.peopleFound = nil
+                self.peopleChosen = []
+                if let first = failed.first {
+                    self.healMessage = done.isEmpty ? first.message
+                        : "\(failed.count) of \(chosen.count) couldn't be removed. Paint over what's left to try again."
+                }
+                guard !done.isEmpty else { self.healBusy = false; self.requestRender(); return }
+                // the busy badge stays until the photo is decoded again with the fixes
+                self.healWaitingForReload = true
+                if !self.settings.isOn(.heal) { self.settings.setOn(.heal, true) }
+                self.settings.heals.append(contentsOf: done)
             }
         }
     }

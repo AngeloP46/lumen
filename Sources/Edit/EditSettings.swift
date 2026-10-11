@@ -134,6 +134,8 @@ struct HealSpot: Codable, Equatable, Hashable, Identifiable {
     var strokes: [BrushStroke]
     var x: Double, y: Double, w: Double, h: Double
     var scale: Double = 1
+    /// Remove people: the box of the person removed (x, y, w, h as fractions of the photo, y down); nil for painted fixes.
+    var person: [Double]? = nil
     var centre: Pt { Pt(x: x + w / 2, y: y + h / 2) }
 }
 

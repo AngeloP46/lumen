@@ -3,6 +3,7 @@ import CoreML
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
+import Vision
 
 /// Heal: paint over something and the on-device LaMa model (large-mask inpainting, Apache-2.0) rebuilds that spot
 /// from its surroundings. Lightroom-style: the rebuilt pixels are made once from the full-resolution photo and kept
@@ -28,6 +29,8 @@ extension EditSession {
     /// What the last heal measured (engine test diagnostics).
     nonisolated(unsafe) static var healDiagnostics = ""
     nonisolated(unsafe) static var healAlpha: Float = 1
+    /// Why the last makeHeal returned nothing (shown to the user).
+    nonisolated(unsafe) static var healFailure: HealFailure?
     static func fourCC(_ t: OSType) -> String {
         String(bytes: [24, 16, 8, 0].map { UInt8((t >> $0) & 0xFF) }, encoding: .ascii) ?? "\(t)"
     }
@@ -37,10 +40,11 @@ extension EditSession {
     /// Rebuilds the painted spot. `earlier` = the heals already made (the new one is built on top of them).
     /// Returns nil when the model is missing or fails. Slow (about a second): call off the main thread.
     func makeHeal(strokes: [BrushStroke], earlier: [HealSpot]) -> HealSpot? {
-        guard let model = Self.healModel, !strokes.isEmpty else { return nil }
+        Self.healFailure = .notAvailable
+        guard Self.healModel != nil, !strokes.isEmpty else { return nil }
         let W = nativeSize.width, H = nativeSize.height, L = max(W, H)
 
-        // 1. the painted area in photo pixels (y down), brush radius included
+        // the painted area in photo pixels (y down), brush radius included
         var minX = CGFloat.infinity, minY = CGFloat.infinity, maxX = -CGFloat.infinity, maxY = -CGFloat.infinity
         for st in strokes where !st.erase {
             let r = CGFloat(st.size) * L / 2
@@ -50,22 +54,121 @@ extension EditSession {
             }
         }
         guard minX.isFinite, maxX > minX, maxY > minY else { return nil }
+        let area = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        let n = CGFloat(Self.healSide)
 
-        // 2. a square around it with plenty of context (the model copies from what it can see), kept inside the photo
-        var side = max(maxX - minX, maxY - minY) * 2.4
-        side = min(max(side, 192), min(W, H))
-        let cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
-        let rx = min(max(cx - side / 2, 0), W - side), ry = min(max(cy - side / 2, 0), H - side)
-        let region = CGRect(x: rx, y: ry, width: side, height: side)          // y down
+        // the hole: the strokes on the 800 x 800 square (white = rebuild), a little wider than painted
+        return makeHeal(around: area, earlier: earlier, strokes: strokes, person: nil) { region, k, grow, soften in
+            guard let g = CGContext(data: nil, width: Self.healSide, height: Self.healSide, bitsPerComponent: 8, bytesPerRow: 0,
+                                    space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+            else { return nil }
+            g.setFillColor(gray: 0, alpha: 1); g.fill(CGRect(x: 0, y: 0, width: n, height: n))
+            g.setLineCap(.round); g.setLineJoin(.round)
+            // CGContext rows go up: flip so photo y (down) maps correctly
+            func pt(_ p: Pt) -> CGPoint { CGPoint(x: (CGFloat(p.x) * W - region.minX) * k, y: n - (CGFloat(p.y) * H - region.minY) * k) }
+            for st in strokes {
+                guard let first = st.points.first else { continue }
+                g.setStrokeColor(gray: st.erase ? 0 : 1, alpha: 1)
+                g.setLineWidth(max(2, CGFloat(st.size) * L * k + (st.erase ? -grow : grow) * 2))
+                g.beginPath(); g.move(to: pt(first)); g.addLine(to: pt(first))
+                for p in st.points.dropFirst() { g.addLine(to: pt(p)) }
+                g.strokePath()
+            }
+            guard let img = g.makeImage() else { return nil }
+            guard soften > 0 else { return img }
+            let ci = Self.blur(Self.expandRed(CIImage(cgImage: img, options: [.colorSpace: NSNull()])), soften,
+                               CGRect(x: 0, y: 0, width: n, height: n))
+            return self.ctx.createCGImage(ci, from: ci.extent, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray())
+        }
+    }
+
+    /// Remove people: rebuilds the area one person (or a group of touching people) covers.
+    func makeHeal(person: FoundPerson, earlier: [HealSpot]) -> HealSpot? {
+        Self.healFailure = .notAvailable
+        guard Self.healModel != nil else { return nil }
+        let W = nativeSize.width, H = nativeSize.height
+        let b = person.box
+        let area = CGRect(x: b.minX * W, y: b.minY * H, width: b.width * W, height: b.height * H)
+        let me = person.mask.extent
+        // the outline was found on a small copy: one of its pixels covers this many photo pixels
+        let coarse = W / max(me.width, 1)
+        let n = CGFloat(Self.healSide)
+        let sq = CGRect(x: 0, y: 0, width: n, height: n)
+        return makeHeal(around: area, earlier: earlier, strokes: [], person: b) { region, k, grow, soften in
+            // the person's outline on the 800 x 800 square, widened by the detection's coarseness plus a little
+            // (hair and edges the detector misses): a leftover rim of the person is what gives a removal away
+            let widen = grow + coarse * k * 1.5 + 0.02 * max(area.width, area.height) * k
+            let ciRegion = CGRect(x: region.minX, y: H - region.maxY, width: region.width, height: region.height)
+            var m = Self.expandRed(person.mask)
+                .transformed(by: CGAffineTransform(translationX: -me.minX, y: -me.minY))
+                .transformed(by: CGAffineTransform(scaleX: W / me.width, y: H / me.height))
+                .cropped(to: ciRegion)
+                .transformed(by: CGAffineTransform(translationX: -ciRegion.minX, y: -ciRegion.minY))
+                .transformed(by: CGAffineTransform(scaleX: k, y: k))
+            m = m.composited(over: Self.constant(0, sq)).cropped(to: sq)
+                .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": 0.5])
+                .applyingFilter("CIMorphologyMaximum", parameters: [kCIInputRadiusKey: min(widen, 50)])
+                .cropped(to: sq)
+            if soften > 0 { m = Self.blur(m, soften, sq) }
+            return self.ctx.createCGImage(m, from: sq, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray())
+        }
+    }
+
+    /// The square the model sees around `area` (photo pixels, y down): 2.4 times the area for context, at least
+    /// 192 px, at most the photo's long edge (and twice its short edge). Up to 0.1.158 it could be no bigger than the
+    /// short edge, so on a portrait photo anything taller than the photo's width was cut off at the square's top and
+    /// bottom (head and legs left behind). Where the square runs past the photo, a mirror image of it fills in.
+    /// nil when the area is bigger than any square allowed (only on a very long panorama).
+    static func healRegion(around area: CGRect, width W: CGFloat, height H: CGFloat) -> CGRect? {
+        let ext = max(area.width, area.height)
+        let limit = min(max(W, H), 2 * min(W, H))
+        guard ext <= limit + 1 else { return nil }
+        let side = min(max(ext * 2.4, 192), limit)
+        func place(_ centre: CGFloat, _ size: CGFloat) -> CGFloat {
+            let lo = min(0, size - side), hi = max(0, size - side)
+            return min(max(centre - side / 2, lo), hi)
+        }
+        return CGRect(x: place(area.midX, W), y: place(area.midY, H), width: side, height: side)
+    }
+
+    /// The picture with mirror images of itself all round: context for a square that runs past the photo's edges.
+    static func mirrorPadded(_ img: CIImage) -> CIImage {
+        let e = img.extent
+        var out = img
+        for dx in -1...1 {
+            for dy in -1...1 where dx != 0 || dy != 0 {
+                let t = CGAffineTransform(a: dx == 0 ? 1 : -1, b: 0, c: 0, d: dy == 0 ? 1 : -1,
+                                          tx: dx == 0 ? 0 : (dx < 0 ? 2 * e.minX : 2 * e.maxX),
+                                          ty: dy == 0 ? 0 : (dy < 0 ? 2 * e.minY : 2 * e.maxY))
+                out = img.transformed(by: t).composited(over: out)
+            }
+        }
+        return out
+    }
+
+    /// The model run shared by painted fixes and Remove people. `drawHole(region, k, grow, soften)` draws the area
+    /// to rebuild on the 800 x 800 square (white), `grow` pixels wider, blurred by `soften`.
+    private func makeHeal(around area: CGRect, earlier: [HealSpot], strokes: [BrushStroke], person: CGRect?,
+                          hole drawHole: (CGRect, CGFloat, CGFloat, CGFloat) -> CGImage?) -> HealSpot? {
+        Self.healFailure = .notAvailable
+        guard let model = Self.healModel else { return nil }
+        let W = nativeSize.width, H = nativeSize.height
+
+        // 1. a square around the area with plenty of context (the model copies from what it can see)
+        Self.healFailure = .tooBig
+        guard let region = Self.healRegion(around: area, width: W, height: H) else { return nil }   // y down
+        Self.healFailure = .failed
+        let side = region.width
         let n = CGFloat(Self.healSide)
         let k = n / side
 
-        // 3. the photo there, full resolution, with the earlier heals, scaled to the model's 800 x 800
+        // 2. the photo there, full resolution, with the earlier heals, scaled to the model's 800 x 800
         guard let full = decode(maxEdge: nil, heals: earlier) else { return nil }
         // the region above was measured on `nativeSize`; it must be the picture as decoded
         guard abs(full.extent.width - W) < 2, abs(full.extent.height - H) < 2 else { return nil }
         let ciRegion = CGRect(x: region.minX, y: H - region.maxY, width: side, height: side)  // Core Image: y up
-        let crop = full.cropped(to: ciRegion)
+        let picture = full.extent.insetBy(dx: -1, dy: -1).contains(ciRegion) ? full : Self.mirrorPadded(full)
+        let crop = picture.cropped(to: ciRegion)
             .transformed(by: CGAffineTransform(translationX: -ciRegion.minX, y: -ciRegion.minY))
             .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0])
             .cropped(to: CGRect(x: 0, y: 0, width: n, height: n))
@@ -86,32 +189,11 @@ extension EditSession {
               let cgImage = ctx.createCGImage(input, from: CGRect(x: 0, y: 0, width: n, height: n), format: .RGBA8, colorSpace: srgb)
         else { return nil }
 
-        // 4. the hole: the strokes on the 800 x 800 square (white = rebuild), a little wider than painted
-        func strokeMask(grow: CGFloat, soften: CGFloat) -> CGImage? {
-            guard let g = CGContext(data: nil, width: Self.healSide, height: Self.healSide, bitsPerComponent: 8, bytesPerRow: 0,
-                                    space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
-            else { return nil }
-            g.setFillColor(gray: 0, alpha: 1); g.fill(CGRect(x: 0, y: 0, width: n, height: n))
-            g.setLineCap(.round); g.setLineJoin(.round)
-            // CGContext rows go up: flip so photo y (down) maps correctly
-            func pt(_ p: Pt) -> CGPoint { CGPoint(x: (CGFloat(p.x) * W - region.minX) * k, y: n - (CGFloat(p.y) * H - region.minY) * k) }
-            for st in strokes {
-                guard let first = st.points.first else { continue }
-                g.setStrokeColor(gray: st.erase ? 0 : 1, alpha: 1)
-                g.setLineWidth(max(2, CGFloat(st.size) * L * k + (st.erase ? -grow : grow) * 2))
-                g.beginPath(); g.move(to: pt(first)); g.addLine(to: pt(first))
-                for p in st.points.dropFirst() { g.addLine(to: pt(p)) }
-                g.strokePath()
-            }
-            guard let img = g.makeImage() else { return nil }
-            guard soften > 0 else { return img }
-            let ci = Self.blur(Self.expandRed(CIImage(cgImage: img, options: [.colorSpace: NSNull()])), soften,
-                               CGRect(x: 0, y: 0, width: n, height: n))
-            return ctx.createCGImage(ci, from: ci.extent, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray())
-        }
-        guard let hole = strokeMask(grow: 6, soften: 0), let blend = strokeMask(grow: 10, soften: 4) else { return nil }
+        // 3. the hole (white = rebuild), and the softer, slightly wider area the result is blended in with
+        guard let hole = drawHole(region, k, 6, 0), let blend = drawHole(region, k, 10, 4),
+              let outer = drawHole(region, k, 34, 0) else { return nil }
 
-        // 5. the model; an answer that is black (or far darker than its surroundings) inside the hole is a numeric
+        // 4. the model; an answer that is black (or far darker than its surroundings) inside the hole is a numeric
         //    failure, not a fill: try once more on the CPU, and never keep a broken patch
         func run(_ m: MLModel) -> CIImage? {
             // The pixels go in exactly as they are (sRGB-encoded bytes, mask 0/255). MLFeatureValue(cgImage:)
@@ -139,24 +221,30 @@ extension EditSession {
             Self.healAlpha = lo[3]
             return raw.settingAlphaOne(in: CGRect(x: 0, y: 0, width: n, height: n))
         }
+        // what the fill is judged against: the photo right around the spot. (Up to 0.1.159 it was the whole square,
+        // so on a dark photo a correct dark fill next to something bright, a white top say, was thrown away.)
         let ring = Self.meanInside(CIImage(cgImage: cgImage), mask: blend, invert: true)
+        let band = Self.meanBetween(CIImage(cgImage: cgImage), outer: outer, inner: blend)
         func plausible(_ o: CIImage) -> Bool {
             let inHole = Self.meanInside(o, mask: hole, invert: false)
-            return inHole.isFinite && !(ring > 0.06 && inHole < ring * 0.3)
+            return inHole.isFinite && !(band > 0.06 && inHole < band * 0.3)
         }
         var answer = run(model)
         if let a = answer {
-            Self.healDiagnostics = String(format: "ring %.3f, input hole %.3f, output hole %.3f, output ring %.3f, scale %.3f, raw output min alpha %.3f, buffer %@",
-                                          ring, Self.meanInside(CIImage(cgImage: cgImage), mask: hole, invert: false),
+            Self.healDiagnostics = String(format: "band %.3f, ring %.3f, input hole %.3f, output hole %.3f, output ring %.3f, scale %.3f, raw output min alpha %.3f, square %.0f px, buffer %@",
+                                          band, ring, Self.meanInside(CIImage(cgImage: cgImage), mask: hole, invert: false),
                                           Self.meanInside(a, mask: hole, invert: false), Self.meanInside(a, mask: blend, invert: true), scale,
-                                          Self.healAlpha, Self.fourCC(model.modelDescription.outputDescriptionsByName["output"]?.imageConstraint?.pixelFormatType ?? 0))
+                                          Self.healAlpha, side, Self.fourCC(model.modelDescription.outputDescriptionsByName["output"]?.imageConstraint?.pixelFormatType ?? 0))
         }
         if answer == nil || !plausible(answer!), let cpu = Self.healModelCPU {
             answer = run(cpu)
         }
-        guard let out = answer, plausible(out) else { return nil }
+        guard let out = answer else { return nil }
+        Self.healFailure = .looksWrong
+        guard plausible(out) else { return nil }
+        Self.healFailure = .failed
 
-        // 6. keep it: the rebuilt square and where to blend it in, checked again as it will be read back
+        // 5. keep it: the rebuilt square and where to blend it in, checked again as it will be read back
         let id = UUID()
         try? FileManager.default.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         do {
@@ -168,8 +256,11 @@ extension EditSession {
             try? FileManager.default.removeItem(at: HealStore.maskURL(id))
             return nil
         }
+        Self.healFailure = nil
+        // the square can run past the photo's edges (x or y below 0, w or h above 1): HealStore crops to the photo
         return HealSpot(id: id, strokes: strokes, x: Double(region.minX / W), y: Double(region.minY / H),
-                        w: Double(side / W), h: Double(side / H), scale: scale)
+                        w: Double(side / W), h: Double(side / H), scale: scale,
+                        person: person.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] })
     }
 
     /// Renders `img` into a new pixel buffer byte for byte (no colour conversion).
@@ -200,11 +291,160 @@ extension EditSession {
         return (a[0] + a[1] + a[2]) / 3 / b[0]
     }
 
+    /// Mean brightness of `img` between two masks (where `outer` is white and `inner` is not): the band around a spot.
+    static func meanBetween(_ img: CIImage, outer: CGImage, inner: CGImage) -> Float {
+        let r = CGRect(x: 0, y: 0, width: CGFloat(healSide), height: CGFloat(healSide))
+        func averages(_ mask: CGImage) -> (Float, Float) {
+            let m = expandRed(CIImage(cgImage: mask, options: [.colorSpace: NSNull()]))
+            let weighted = img.cropped(to: r).applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: m])
+            var a = [Float](repeating: 0, count: 4), b = [Float](repeating: 0, count: 4)
+            let ea = weighted.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: r)])
+            let eb = m.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: r)])
+            LumenGPU.context.render(ea, toBitmap: &a, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+            LumenGPU.context.render(eb, toBitmap: &b, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+            return ((a[0] + a[1] + a[2]) / 3, b[0])
+        }
+        let (so, mo) = averages(outer), (si, mi) = averages(inner)
+        guard mo - mi > 1e-4 else { return 0 }
+        return (so - si) / (mo - mi)
+    }
+
     static func writeGrayPNG(_ img: CGImage, to url: URL) throws {
         guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
             throw CocoaError(.fileWriteUnknown)
         }
         CGImageDestinationAddImage(dest, img, nil)
         guard CGImageDestinationFinalize(dest) else { throw CocoaError(.fileWriteUnknown) }
+    }
+}
+
+/// Why a heal could not be made, in words for the Heal panel.
+enum HealFailure {
+    case notAvailable, tooBig, looksWrong, failed
+
+    var message: String {
+        switch self {
+        case .notAvailable: "Heal isn't available in this build."
+        case .tooBig: "That's too big to remove in one go. Try it in a few smaller pieces."
+        case .looksWrong: "The fix came out looking wrong, so it wasn't used. Try painting it again."
+        case .failed: "Couldn't remove that one. Try again."
+        }
+    }
+}
+
+/// A person found for Remove people (or a group of people touching each other).
+struct FoundPerson: Identifiable, @unchecked Sendable {
+    let id: Int
+    /// Where they are: fractions of the photo, y down.
+    let box: CGRect
+    /// How much of the photo they cover (0...1).
+    let area: Double
+    /// White = this person. Upright, extent (0, 0, w, h) at detection size, covering the whole photo.
+    let mask: CIImage
+    /// Probably who the photo is of (big, and not much smaller than the biggest person): not picked at first.
+    let main: Bool
+}
+
+extension EditSession {
+    /// Remove people: everyone in the photo (with the heals already made), biggest first. Apple's on-device person
+    /// segmentation (the People mask's), split here into separate people. Slow: call off the main thread.
+    func findPeople(earlier: [HealSpot]) -> [FoundPerson] {
+        guard let img = decode(maxEdge: 2048, heals: earlier) else { return [] }
+        let e = img.extent
+        guard let cg = ctx.createCGImage(img, from: e, format: .RGBA8, colorSpace: LumenGPU.displaySpace) else { return [] }
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .accurate
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { return [] }
+        guard let buffer = request.results?.first?.pixelBuffer else { return [] }
+        // the mask covers the whole photo (whatever its own shape): read it back at up to 768 px, the photo's shape
+        let mask = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
+        let me = mask.extent
+        let s = 768 / max(e.width, e.height)
+        let w = max(Int((e.width * s).rounded()), 8), h = max(Int((e.height * s).rounded()), 8)
+        let small = mask.transformed(by: CGAffineTransform(translationX: -me.minX, y: -me.minY))
+            .transformed(by: CGAffineTransform(scaleX: CGFloat(w) / me.width, y: CGFloat(h) / me.height))
+        var px = [UInt8](repeating: 0, count: w * h)
+        LumenGPU.context.render(small, toBitmap: &px, rowBytes: w, bounds: CGRect(x: 0, y: 0, width: w, height: h),
+                                format: .L8, colorSpace: nil)   // top row first
+        return Self.splitPeople(px, width: w, height: h)
+    }
+
+    /// Splits a person mask (8-bit, top row first) into separate people. Pieces less than ~1 % of the photo apart
+    /// count as one (an arm behind a lamp post stays with its body); crumbs are dropped. Biggest first, at most 12.
+    static func splitPeople(_ px: [UInt8], width w: Int, height h: Int) -> [FoundPerson] {
+        let n = w * h
+        guard n > 0, px.count >= n else { return [] }
+        var on = [Bool](repeating: false, count: n)
+        var total = 0
+        for i in 0..<n where px[i] >= 128 { on[i] = true; total += 1 }
+        guard total > 0 else { return [] }
+        // widened copy (square, radius r): what is joined up is decided on this
+        let r = max(1, Int((Double(max(w, h)) * 0.006).rounded()))
+        var rows = [Bool](repeating: false, count: n), grown = [Bool](repeating: false, count: n)
+        for y in 0..<h {
+            for x in 0..<w where on[y * w + x] {
+                for xx in max(0, x - r)...min(w - 1, x + r) { rows[y * w + xx] = true }
+            }
+        }
+        for y in 0..<h {
+            for x in 0..<w where rows[y * w + x] {
+                for yy in max(0, y - r)...min(h - 1, y + r) { grown[yy * w + x] = true }
+            }
+        }
+        // connected pieces of the widened mask
+        var label = [Int32](repeating: 0, count: n)
+        struct Piece { var id: Int32; var count = 0; var x0 = Int.max, y0 = Int.max, x1 = -1, y1 = -1 }
+        var pieces: [Piece] = []
+        var stack: [Int] = []
+        for start in 0..<n where grown[start] && label[start] == 0 {
+            var p = Piece(id: Int32(pieces.count + 1))
+            label[start] = p.id
+            stack.append(start)
+            while let i = stack.popLast() {
+                let x = i % w, y = i / w
+                if on[i] { p.count += 1; p.x0 = min(p.x0, x); p.x1 = max(p.x1, x); p.y0 = min(p.y0, y); p.y1 = max(p.y1, y) }
+                if x > 0, grown[i - 1], label[i - 1] == 0 { label[i - 1] = p.id; stack.append(i - 1) }
+                if x < w - 1, grown[i + 1], label[i + 1] == 0 { label[i + 1] = p.id; stack.append(i + 1) }
+                if y > 0, grown[i - w], label[i - w] == 0 { label[i - w] = p.id; stack.append(i - w) }
+                if y < h - 1, grown[i + w], label[i + w] == 0 { label[i + w] = p.id; stack.append(i + w) }
+            }
+            if p.count >= 20 { pieces.append(p) }
+        }
+        pieces.sort { $0.count > $1.count }
+        pieces = Array(pieces.prefix(12))
+        let biggest = Double(pieces.first?.count ?? 1)
+        var people: [FoundPerson] = []
+        for (k, p) in pieces.enumerated() {
+            var bytes = [UInt8](repeating: 0, count: n)
+            for i in 0..<n where label[i] == p.id { bytes[i] = 255 }
+            guard let provider = CGDataProvider(data: Data(bytes) as CFData),
+                  let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: w,
+                                   space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                                   provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+            else { continue }
+            let area = Double(p.count) / Double(n)
+            people.append(FoundPerson(
+                id: k,
+                box: CGRect(x: Double(p.x0) / Double(w), y: Double(p.y0) / Double(h),
+                            width: Double(p.x1 - p.x0 + 1) / Double(w), height: Double(p.y1 - p.y0 + 1) / Double(h)),
+                area: area,
+                mask: CIImage(cgImage: cg, options: [.colorSpace: NSNull()]),
+                main: area >= 0.03 && Double(p.count) >= 0.3 * biggest))
+        }
+        return people
+    }
+
+    /// Remove people: tints `people` on the shown photo (`colour` = r, g, b, strength), lined up with its crop and turns.
+    func tintPeople(_ img: CIImage, _ people: [FoundPerson], source: ImageSource, settings: EditSettings,
+                    applyCrop: Bool, colour: CIVector) -> CIImage {
+        guard let k = LumenKernels.shared, !people.isEmpty else { return img }
+        var all: CIImage?
+        for p in people {
+            let m = Self.fit(Self.expandRed(p.mask), to: source.extent)
+            all = all.map { m.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: $0]) } ?? m
+        }
+        guard let union = all else { return img }
+        return k.overlay.apply(extent: img.extent, arguments: [img, geometry(union, settings, applyCrop: applyCrop), colour]) ?? img
     }
 }

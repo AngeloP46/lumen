@@ -444,6 +444,31 @@ final class LumenUITests: XCTestCase {
         shot("heal-unavailable")
     }
 
+    /// Remove people (made-up people in CI): the picker shows a pin per person, starts with everyone but the big one,
+    /// All / Cancel work, and Remove without the model says so instead of hanging.
+    func testRemovePeoplePicker() {
+        launch(open: 0, tool: "Heal", extra: ["-lumenDemoPeople", "1"])
+        XCTAssertTrue(el("heal-people").waitForExistence(timeout: 20), "Heal should offer Remove people")
+        el("heal-people").tap()
+        XCTAssertTrue(el("people-note").waitForExistence(timeout: 20), "finding people should open the picker")
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "person-pin").count, 3, "a pin per person")
+        let remove = app.buttons["people-remove"]
+        XCTAssertTrue(remove.label.contains("2"), "the two small people should be picked, not the big one (\(remove.label))")
+        shot("people-picker")
+        el("people-all").tap()
+        XCTAssertTrue(remove.label.contains("3"), "All should pick everyone (\(remove.label))")
+        el("people-cancel").tap()
+        XCTAssertTrue(el("heal-people").waitForExistence(timeout: 10), "Cancel should go back to the Heal panel")
+        XCTAssertFalse(el("person-pin").exists, "and take the pins away")
+        // again, then Remove: this build has no heal model, so the panel must say so and nothing keeps spinning
+        el("heal-people").tap()
+        XCTAssertTrue(remove.waitForExistence(timeout: 20))
+        remove.tap()
+        XCTAssertTrue(el("heal-note").waitForExistence(timeout: 20), "without the model the panel should say so")
+        XCTAssertFalse(el("heal-busy").exists, "nothing should be left spinning")
+        XCTAssertFalse(el("person-pin").exists, "the picker should be closed")
+    }
+
     // MARK: navigation
 
     func testSwipeToNextPhoto() {

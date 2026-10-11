@@ -16,7 +16,9 @@ concurrency:
 jobs:
   test:
     runs-on: macos-15
-    timeout-minutes: 15
+    permissions:
+      contents: write   # uploads the preview sheets to the `test-previews` release
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Fetch sample photos
@@ -27,6 +29,9 @@ jobs:
           bash .github/ci/get.sh samples/matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000" 100000
           bash .github/ci/get.sh samples/falls.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Hopetoun_falls.jpg?width=2000" 100000
           ls -la samples
+          # people on a street (Remove people); kept apart from the samples every edit case renders
+          mkdir -p people
+          bash .github/ci/get.sh people/bus.jpg "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/assets/bus.jpg" 50000
       - uses: actions/cache@v4
         with:
           path: Models
@@ -54,6 +59,7 @@ jobs:
           export LUMEN_DEPTH_MODEL="$PWD/Models/DepthAnythingV2SmallF16.mlmodelc"
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
+          export LUMEN_PEOPLE_SAMPLE="$PWD/people/bus.jpg"
           ./out/engine-test out/k.metallib samples out/render
           code=$?
           echo "engine-test exit code: $code"
@@ -63,6 +69,15 @@ jobs:
             echo "::endgroup::"
           fi
           exit "$code"
+      - name: Publish preview sheets (test-previews release)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls out/render/previews/*.jpg >/dev/null 2>&1 || exit 0
+          gh release view test-previews >/dev/null 2>&1 || gh release create test-previews \
+            --title "Engine test previews" --notes "Preview sheets from the latest engine test run." --prerelease
+          gh release upload test-previews out/render/previews/*.jpg --clobber
       - uses: actions/upload-artifact@v4
         if: always()
         with:

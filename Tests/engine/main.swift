@@ -1418,5 +1418,143 @@ do {
     }
 }
 
+// Remove people and big heals (2026-10-11)
+do {
+    func savePreview(_ name: String, _ items: [(String, CGImage)]) {
+        guard let cg = sheet(items, cell: 380, cols: items.count) else { return }
+        let dir = outDir.appendingPathComponent("previews")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(name + ".jpg")
+        guard let d = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(d, cg, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        CGImageDestinationFinalize(d)
+        print("::notice::preview \(name).jpg saved")
+    }
+    func pixel(_ img: CIImage, _ x: CGFloat, _ yDown: CGFloat) -> [Float] {
+        var v = [Float](repeating: 0, count: 4)
+        let e = img.extent
+        LumenGPU.context.render(img, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: e.minX + x, y: e.maxY - yDown - 1, width: 1, height: 1),
+                                format: .RGBAf, colorSpace: nil)
+        return v
+    }
+
+    // 1. a person mask split into people: two people and a crumb, boxes measured from the top left
+    do {
+        let w = 200, h = 100
+        var px = [UInt8](repeating: 0, count: w * h)
+        for y in 10..<60 { for x in 20..<50 { px[y * w + x] = 255 } }      // tall, upper left
+        for y in 70..<95 { for x in 150..<160 { px[y * w + x] = 200 } }    // small, lower right
+        px[5 * w + 190] = 255                                               // a crumb
+        let people = EditSession.splitPeople(px, width: w, height: h)
+        check(people.count == 2, "splitPeople: two people expected, got \(people.count)")
+        if people.count == 2 {
+            let a = people[0], b = people[1]
+            check(abs(a.box.minX - 0.1) < 0.01 && abs(a.box.minY - 0.1) < 0.02 && abs(a.box.height - 0.5) < 0.02,
+                  "splitPeople: the big one's box should be at the top left (\(a.box))")
+            check(b.box.minY > 0.65, "splitPeople: the small one is near the bottom (\(b.box))")
+            check(a.main && !b.main, "splitPeople: the big one is who the photo is of, the small one is not")
+            // the mask image is upright: white at the big one's place (top), black below it
+            check(pixel(a.mask, 35, 30)[0] > 0.9 && pixel(a.mask, 35, 85)[0] < 0.1,
+                  "splitPeople: the mask should be upright (\(pixel(a.mask, 35, 30)[0]), \(pixel(a.mask, 35, 85)[0]))")
+        }
+    }
+
+    // 2. the square around a tall area on a portrait photo holds all of it (up to 0.1.158 it was cut at the photo's width)
+    let tall = CGRect(x: 1500, y: 500, width: 1000, height: 5000)
+    if let r = EditSession.healRegion(around: tall, width: 4000, height: 6000) {
+        check(r.contains(tall), "a tall area on a portrait photo should fit inside its square (\(r))")
+    } else { check(false, "healRegion gave nothing for a tall area") }
+    if let r = EditSession.healRegion(around: CGRect(x: 100, y: 100, width: 50, height: 50), width: 4000, height: 6000) {
+        check(r.minX >= 0 && r.minY >= 0 && r.width == 192, "a small spot's square should stay inside the photo (\(r))")
+    }
+
+    if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil {
+        HealStore.directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("heal-big-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
+
+        // 3. a red post taller than the photo is wide: one stroke removes all of it, top to bottom
+        let w = 600, h = 1000
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        if let g = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: cs,
+                             bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+            for y in stride(from: 0, to: h, by: 4) {
+                let t = CGFloat(y) / CGFloat(h)
+                g.setFillColor(CGColor(red: 0.25, green: 0.45 + 0.2 * t, blue: 0.5 - 0.2 * t, alpha: 1))
+                g.fill(CGRect(x: 0, y: y, width: w, height: 4))
+            }
+            g.setFillColor(CGColor(red: 0.95, green: 0.05, blue: 0.05, alpha: 1))
+            g.fill(CGRect(x: 275, y: 60, width: 50, height: 880))
+            let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("heal-tall.png")
+            if let cg = g.makeImage(), let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) {
+                CGImageDestinationAddImage(dest, cg, nil); CGImageDestinationFinalize(dest)
+            }
+            if let session = EditSession(url: url), let before = session.decode(maxEdge: nil) {
+                let pts = stride(from: 0.06, through: 0.94, by: 0.02).map { Pt(x: 0.5, y: $0) }
+                let stroke = BrushStroke(points: pts, size: 0.08, erase: false, feather: nil)
+                let t0 = now()
+                if let spot = session.makeHeal(strokes: [stroke], earlier: []) {
+                    print("::notice::tall heal in \(Int((now() - t0) * 1000)) ms, square \(spot.x),\(spot.y) \(spot.w)x\(spot.h)")
+                    session.heals = [spot]
+                    if let after = session.decode(maxEdge: nil) {
+                        for y in [90.0, 500.0, 910.0] {
+                            let v = pixel(after, 300, CGFloat(y))
+                            check(v[0] < 0.5 && v[0] < v[1], "the whole red post should be gone, also at y \(Int(y)) (\(v.prefix(3)))")
+                        }
+                        if let a = smallRender(before, width: 380), let b = smallRender(after, width: 380) {
+                            savePreview("tall-heal", [("painted over the post", a), ("healed", b)])
+                        }
+                    }
+                    session.heals = []
+                } else { check(false, "tall heal: makeHeal failed (\(EditSession.healFailure.map { "\($0)" } ?? "?"))") }
+            }
+        }
+
+        // 4. Remove people on a street photo: everyone found, upright, and one of them removed
+        if let path = ProcessInfo.processInfo.environment["LUMEN_PEOPLE_SAMPLE"],
+           let session = EditSession(url: URL(fileURLWithPath: path)),
+           let src = session.makeSource(maxEdge: 1200, materialize: true, heals: []) {
+            let t0 = now()
+            let people = session.findPeople(earlier: [])
+            print("::notice::found \(people.count) people in \(Int((now() - t0) * 1000)) ms: " + people.map {
+                String(format: "box %.2f,%.2f %.2fx%.2f area %.3f main %@", $0.box.minX, $0.box.minY, $0.box.width, $0.box.height,
+                       $0.area, $0.main ? "yes" : "no") }.joined(separator: " | "))
+            check(people.count >= 3, "the street photo has at least three people, found \(people.count)")
+            // they stand on the pavement: heads in the upper half, feet low down (a flipped mask would put them high up)
+            check(people.prefix(3).allSatisfy { $0.box.minY > 0.25 && $0.box.maxY > 0.6 },
+                  "people's boxes should be the right way up (\(people.prefix(3).map { $0.box }))")
+            if !people.isEmpty {
+                let plain = EditSettings()
+                let original = session.develop(plain, source: src, geometry: true)
+                let target = people.min { abs($0.box.midX - 0.35) < abs($1.box.midX - 0.35) }!
+                let tinted = session.tintPeople(original, [target], source: src, settings: plain, applyCrop: true,
+                                                colour: CIVector(x: 1, y: 0.1, z: 0.12, w: 0.55))
+                let t1 = now()
+                var made: [HealSpot] = []
+                if let spot = session.makeHeal(person: target, earlier: []) {
+                    print("::notice::removed a person in \(Int((now() - t1) * 1000)) ms, square \(spot.w)x\(spot.h); \(EditSession.healDiagnostics)")
+                    made.append(spot)
+                } else { check(false, "Remove people: makeHeal(person:) failed (\(EditSession.healFailure.map { "\($0)" } ?? "?"))") }
+                // and everyone else, each built on the fixes before
+                var all = made
+                for p in people where p.id != target.id {
+                    if let spot = session.makeHeal(person: p, earlier: all) { all.append(spot) }
+                    else { print("::warning::person \(p.id) could not be removed: \(EditSession.healFailure.map { "\($0)" } ?? "?")") }
+                }
+                func developed(_ heals: [HealSpot]) -> CGImage? {
+                    guard let s = session.makeSource(maxEdge: 1200, materialize: true, heals: heals) else { return nil }
+                    return smallRender(session.develop(plain, source: s, geometry: true), width: 380)
+                }
+                if let a = smallRender(original, width: 380), let b = smallRender(tinted, width: 380),
+                   let c = developed(made), let d = developed(all) {
+                    savePreview("remove-people", [("original", a), ("picked (red)", b), ("one removed", c), ("all removed", d)])
+                    if let diff = compareImages(c, a) {
+                        check(diff.all > 1, "removing a person should change the photo (mean diff \(diff.all))")
+                    }
+                }
+            }
+        } else { print("::warning::no LUMEN_PEOPLE_SAMPLE: Remove people not checked on a real photo") }
+    }
+}
+
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
 finishChecks()

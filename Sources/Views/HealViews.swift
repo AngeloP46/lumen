@@ -12,79 +12,125 @@ struct HealOverlay: View {
     var body: some View {
         let diameter = CGFloat(vm.healSize) * max(geo.source.width, geo.source.height) * scale
         ZStack {
-            Color.clear.contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("healSpace"))
-                    .onChanged { v in
-                        guard !vm.pinching, !vm.healBusy else { return }
-                        cursor = v.location
-                        guard xform.rect.contains(v.location) else { return }
-                        let p = norm(v.location)
-                        if painting { vm.healExtend(p) } else { painting = true; vm.healBegin(p) }
-                    }
-                    .onEnded { _ in
-                        cursor = nil
-                        if painting { painting = false; vm.healEnd() }
-                    })
-                .accessibilityIdentifier("heal-layer")
-
-            // the stroke being painted (and kept up while the AI works on it)
-            if !vm.healStroke.isEmpty {
-                Path { p in
-                    let pts = vm.healStroke.map(screen)
-                    p.move(to: pts[0]); p.addLine(to: pts[0])
-                    for q in pts.dropFirst() { p.addLine(to: q) }
-                }
-                .stroke(Color.white.opacity(vm.healBusy ? 0.35 : 0.55),
-                        style: StrokeStyle(lineWidth: max(diameter, 3), lineCap: .round, lineJoin: .round))
-                .allowsHitTesting(false)
-            }
-            if let cursor {
-                Circle().stroke(Color.white, lineWidth: 1.5).frame(width: diameter, height: diameter)
-                    .position(cursor).allowsHitTesting(false)
-            }
-
-            // earlier fixes: a pin each; the selected one also shows what was painted
-            ForEach(vm.settings.heals) { h in
-                let on = vm.selectedHealID == h.id
-                if on {
-                    Path { p in
-                        for st in h.strokes {
-                            let pts = st.points.map(screen)
-                            guard let f = pts.first else { continue }
-                            p.move(to: f); p.addLine(to: f)
-                            for q in pts.dropFirst() { p.addLine(to: q) }
-                        }
-                    }
-                    .stroke(Theme.accent.opacity(0.45),
-                            style: StrokeStyle(lineWidth: max(CGFloat(h.strokes.first?.size ?? 0.03) * max(geo.source.width, geo.source.height) * scale, 3),
-                                               lineCap: .round, lineJoin: .round))
-                    .allowsHitTesting(false)
-                }
-                Circle()
-                    .fill(on ? Theme.accent : Color.white.opacity(0.85))
-                    .overlay(Circle().stroke(Color.black.opacity(0.4), lineWidth: 1))
-                    .frame(width: 16, height: 16)
-                    .frame(width: 36, height: 36)
-                    .contentShape(Circle())
-                    .onTapGesture { vm.selectedHealID = on ? nil : h.id }
-                    .accessibilityIdentifier("heal-pin")
-                    .position(screen(pinPoint(h)))
-            }
-
-            if vm.healBusy {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Removing…").font(.caption.weight(.semibold))
-                }
-                .padding(.horizontal, 11).padding(.vertical, 6)
-                .background(.ultraThinMaterial, in: Capsule())
-                .position(x: xform.canvas.width / 2, y: max(xform.rect.minY, 0) + 70)
-                .allowsHitTesting(false)
-                .accessibilityIdentifier("heal-busy")
+            if let people = vm.peopleFound {
+                peopleLayer(people)
+            } else {
+                paintLayer(diameter)
             }
         }
         .frame(width: xform.canvas.width, height: xform.canvas.height)
         .coordinateSpace(name: "healSpace")
+    }
+
+    /// Remove people: a tap on someone picks or keeps them; a pin on each (red = will be removed).
+    @ViewBuilder private func peopleLayer(_ people: [FoundPerson]) -> some View {
+        Color.clear.contentShape(Rectangle())
+            .gesture(SpatialTapGesture(coordinateSpace: .named("healSpace")).onEnded { v in
+                guard xform.rect.contains(v.location) else { return }
+                vm.togglePerson(at: norm(v.location))
+            })
+            .accessibilityIdentifier("people-layer")
+        ForEach(people) { p in
+            let on = vm.peopleChosen.contains(p.id)
+            ZStack {
+                Circle().fill(on ? Color.red : Color.white.opacity(0.9))
+                Image(systemName: on ? "xmark" : "person.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(on ? Color.white : Color.black.opacity(0.7))
+            }
+            .overlay(Circle().stroke(Color.black.opacity(0.35), lineWidth: 1))
+            .frame(width: 24, height: 24)
+            .frame(width: 40, height: 40)
+            .contentShape(Circle())
+            .onTapGesture { vm.togglePerson(p.id) }
+            .accessibilityIdentifier("person-pin")
+            .position(screen(Pt(x: p.box.midX, y: p.box.midY)))
+        }
+        busyBadge
+    }
+
+    @ViewBuilder private func paintLayer(_ diameter: CGFloat) -> some View {
+        Color.clear.contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("healSpace"))
+                .onChanged { v in
+                    guard !vm.pinching, !vm.healBusy else { return }
+                    cursor = v.location
+                    guard xform.rect.contains(v.location) else { return }
+                    let p = norm(v.location)
+                    if painting { vm.healExtend(p) } else { painting = true; vm.healBegin(p) }
+                }
+                .onEnded { _ in
+                    cursor = nil
+                    if painting { painting = false; vm.healEnd() }
+                })
+            .accessibilityIdentifier("heal-layer")
+
+        // the stroke being painted (and kept up while the AI works on it)
+        if !vm.healStroke.isEmpty {
+            Path { p in
+                let pts = vm.healStroke.map(screen)
+                p.move(to: pts[0]); p.addLine(to: pts[0])
+                for q in pts.dropFirst() { p.addLine(to: q) }
+            }
+            .stroke(Color.white.opacity(vm.healBusy ? 0.35 : 0.55),
+                    style: StrokeStyle(lineWidth: max(diameter, 3), lineCap: .round, lineJoin: .round))
+            .allowsHitTesting(false)
+        }
+        if let cursor {
+            Circle().stroke(Color.white, lineWidth: 1.5).frame(width: diameter, height: diameter)
+                .position(cursor).allowsHitTesting(false)
+        }
+
+        // earlier fixes: a pin each; the selected one also shows what was painted (or the person's box)
+        ForEach(vm.settings.heals) { h in
+            let on = vm.selectedHealID == h.id
+            if on, let b = h.person, b.count == 4 {
+                Path { p in
+                    let c = [Pt(x: b[0], y: b[1]), Pt(x: b[0] + b[2], y: b[1]), Pt(x: b[0] + b[2], y: b[1] + b[3]), Pt(x: b[0], y: b[1] + b[3])].map(screen)
+                    p.move(to: c[0]); for q in c.dropFirst() { p.addLine(to: q) }; p.closeSubpath()
+                }
+                .stroke(Theme.accent.opacity(0.8), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                .allowsHitTesting(false)
+            } else if on {
+                Path { p in
+                    for st in h.strokes {
+                        let pts = st.points.map(screen)
+                        guard let f = pts.first else { continue }
+                        p.move(to: f); p.addLine(to: f)
+                        for q in pts.dropFirst() { p.addLine(to: q) }
+                    }
+                }
+                .stroke(Theme.accent.opacity(0.45),
+                        style: StrokeStyle(lineWidth: max(CGFloat(h.strokes.first?.size ?? 0.03) * max(geo.source.width, geo.source.height) * scale, 3),
+                                           lineCap: .round, lineJoin: .round))
+                .allowsHitTesting(false)
+            }
+            Circle()
+                .fill(on ? Theme.accent : Color.white.opacity(0.85))
+                .overlay(Circle().stroke(Color.black.opacity(0.4), lineWidth: 1))
+                .frame(width: 16, height: 16)
+                .frame(width: 36, height: 36)
+                .contentShape(Circle())
+                .onTapGesture { vm.selectedHealID = on ? nil : h.id }
+                .accessibilityIdentifier("heal-pin")
+                .position(screen(pinPoint(h)))
+        }
+
+        busyBadge
+    }
+
+    @ViewBuilder private var busyBadge: some View {
+        if vm.healBusy {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(vm.healBusyText).font(.caption.weight(.semibold))
+            }
+            .padding(.horizontal, 11).padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+            .position(x: xform.canvas.width / 2, y: max(xform.rect.minY, 0) + 70)
+            .allowsHitTesting(false)
+            .accessibilityIdentifier("heal-busy")
+        }
     }
 
     /// Screen points per source pixel.
@@ -99,6 +145,7 @@ struct HealOverlay: View {
     }
     /// The middle of what was painted (the patch rectangle has extra room around it).
     private func pinPoint(_ h: HealSpot) -> Pt {
+        if let b = h.person, b.count == 4 { return Pt(x: b[0] + b[2] / 2, y: b[1] + b[3] / 2) }
         let pts = h.strokes.flatMap(\.points)
         guard !pts.isEmpty else { return h.centre }
         let xs = pts.map(\.x), ys = pts.map(\.y)
@@ -111,6 +158,48 @@ struct HealPanel: View {
     @ObservedObject var vm: EditorViewModel
 
     var body: some View {
+        if let people = vm.peopleFound {
+            picker(people)
+        } else {
+            controls
+        }
+    }
+
+    /// Remove people, after the search: who goes.
+    private func picker(_ people: [FoundPerson]) -> some View {
+        let n = vm.peopleChosen.count
+        let found = people.count == 1 ? "Found 1 person." : "Found \(people.count) people."
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(n == 0 ? "\(found) Tap the ones you want removed."
+                        : "\(found) Red ones will be removed: tap a person to keep or remove them.")
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("people-note")
+            HStack(spacing: 8) {
+                Button("Cancel") { vm.cancelPeople() }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("people-cancel")
+                Button(n == people.count ? "None" : "All") { vm.chooseAllPeople(n != people.count) }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("people-all")
+                Spacer()
+                Button {
+                    vm.removeChosenPeople()
+                } label: {
+                    Label(n == 1 ? "Remove 1 person" : "Remove \(n) people", systemImage: "person.2.slash")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(n == 0 || vm.healBusy)
+                .accessibilityIdentifier("people-remove")
+            }
+            .font(.system(size: 13, weight: .semibold))
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
+    }
+
+    private var controls: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !EditSession.hasHealModel {
                 note("Heal isn't available in this build.")
@@ -127,19 +216,23 @@ struct HealPanel: View {
                                                         set: { vm.healSize = max($0, 1) / 400 }),
                           range: 1...100, neutral: 12)
             HStack(spacing: 8) {
+                Button { vm.findPeople() } label: {
+                    Label("Remove people", systemImage: "person.2.slash").font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+                .disabled(vm.healBusy)
+                .accessibilityIdentifier("heal-people")
+                Spacer()
                 if let id = vm.selectedHealID {
                     Button(role: .destructive) { vm.deleteHeal(id) } label: {
                         Label("Delete this fix", systemImage: "trash").font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("heal-delete")
-                }
-                Spacer()
-                if !vm.settings.heals.isEmpty {
-                    Text("\(vm.settings.heals.count) fix\(vm.settings.heals.count == 1 ? "" : "es")")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                } else if !vm.settings.heals.isEmpty {
                     Button { vm.settings.reset(.heal); vm.selectedHealID = nil } label: {
-                        Label("Clear all", systemImage: "arrow.counterclockwise").font(.system(size: 12, weight: .semibold))
+                        Label("Clear all (\(vm.settings.heals.count))", systemImage: "arrow.counterclockwise")
+                            .font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("heal-clear")
