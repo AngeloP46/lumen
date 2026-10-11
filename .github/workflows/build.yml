@@ -28,9 +28,11 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: Models
-          key: depth-anything-v2-small-f16-1
-      - name: Depth model
-        run: bash .github/ci/get-depth-model.sh Models
+          key: models-depth-v2s-f16-detr-seg-f16-1
+      - name: Depth and segmentation models
+        run: |
+          bash .github/ci/get-depth-model.sh Models
+          bash .github/ci/get-seg-model.sh Models
 
       - name: Install XcodeGen
         run: brew install xcodegen

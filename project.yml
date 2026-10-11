@@ -20,6 +20,11 @@ targets:
         type: folder
         optional: true
         buildPhase: resources
+      # scene segmentation model (Sky and Landscape masks), compiled by CI (.github/ci/get-seg-model.sh)
+      - path: Models/DETRResnet50SemanticSegmentationF16.mlmodelc
+        type: folder
+        optional: true
+        buildPhase: resources
     info:
       path: Config/Info.plist
       properties:

@@ -1,4 +1,5 @@
 import CoreImage
+import CoreML
 import CoreText
 import Foundation
 import ImageIO
@@ -1233,6 +1234,19 @@ do {
             } else { check(false, "edge refinement: render failed") }
         } else { check(false, "edge refinement: synthetic photo did not open") }
     }
+}
+
+// Probe: what the scene segmentation model expects and returns (printed as annotations)
+if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
+    do {
+        let ml = try MLModel(contentsOf: URL(fileURLWithPath: p))
+        let d = ml.modelDescription
+        for (k, v) in d.inputDescriptionsByName { print("::warning::seg input \(k): \(v)") }
+        for (k, v) in d.outputDescriptionsByName { print("::warning::seg output \(k): \(v)") }
+        let meta = d.metadata[.creatorDefinedKey] as? [String: String] ?? [:]
+        for (k, v) in meta { print("::warning::seg meta \(k): \(v.prefix(3000))") }
+        print("::warning::seg labels: \(String(describing: d.classLabels?.prefix(200)))")
+    } catch { print("::warning::seg model failed to load: \(error)") }
 }
 
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
