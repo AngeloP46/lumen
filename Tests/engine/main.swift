@@ -1344,6 +1344,32 @@ do {
             session.heals = []
         } else { check(false, "heal test: synthetic photo did not open") }
     }
+    // a white badge on plain red paint (the owner's Ferrari): the heal must come back red, not dark
+    if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil {
+        let w = 1200, h = 800
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        if let g = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: cs,
+                             bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+            g.setFillColor(CGColor(red: 0.78, green: 0.08, blue: 0.07, alpha: 1)); g.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            g.setFillColor(CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 1)); g.fillEllipse(in: CGRect(x: 570, y: 360, width: 60, height: 80))
+            let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("heal-red.png")
+            if let cg = g.makeImage(), let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) {
+                CGImageDestinationAddImage(dest, cg, nil); CGImageDestinationFinalize(dest)
+            }
+            if let session = EditSession(url: url) {
+                let stroke = BrushStroke(points: [Pt(x: 0.5, y: 0.48), Pt(x: 0.5, y: 0.52)], size: 0.09, erase: false, feather: nil)
+                if let spot = session.makeHeal(strokes: [stroke], earlier: []) {
+                    session.heals = [spot]
+                    var v = [Float](repeating: 0, count: 4)
+                    if let img = session.decode(maxEdge: nil) {
+                        LumenGPU.context.render(img, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 600, y: 400, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                    }
+                    print("::warning::heal red paint: centre after \(v.prefix(3)); steps: \(EditSession.healDiagnostics)")
+                    check(v[0] > 0.35 && v[1] < 0.1, "a badge on red paint should heal to red (centre \(v.prefix(3)))")
+                } else { check(false, "red paint: makeHeal failed") }
+            }
+        }
+    }
     // the Sony ARW in SDR and HDR: a heal on a plain area must come back about as bright as what surrounds it
     if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil,
        let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }) {
@@ -1368,6 +1394,7 @@ do {
                 session.heals = [spot]
                 if let healed = session.decode(maxEdge: nil) {
                     let after = mean(healed, inner)
+                    print("::warning::heal ARW hdr=\(hdr) steps: \(EditSession.healDiagnostics)")
                     print("::warning::heal ARW hdr=\(hdr): scale \(spot.scale), surroundings \(before.prefix(3)), healed spot \(after.prefix(3))")
                     let lb = (before[0] + before[1] + before[2]) / 3, la = (after[0] + after[1] + after[2]) / 3
                     check(la > lb * 0.4 && la < lb * 2.5, "ARW hdr=\(hdr): a healed spot should be about as bright as its surroundings (\(la) vs \(lb), scale \(spot.scale))")

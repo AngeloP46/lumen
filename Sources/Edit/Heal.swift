@@ -25,6 +25,8 @@ extension EditSession {
         return try? MLModel(contentsOf: url, configuration: cfg)
     }
     static var hasHealModel: Bool { healModel != nil }
+    /// What the last heal measured (engine test diagnostics).
+    nonisolated(unsafe) static var healDiagnostics = ""
 
     static let healSide = 800   // the model's fixed input size
 
@@ -128,6 +130,11 @@ extension EditSession {
             return inHole.isFinite && !(ring > 0.06 && inHole < ring * 0.3)
         }
         var answer = run(model)
+        if let a = answer {
+            Self.healDiagnostics = String(format: "ring %.3f, input hole %.3f, output hole %.3f, output ring %.3f, scale %.3f",
+                                          ring, Self.meanInside(CIImage(cgImage: cgImage), mask: hole, invert: false),
+                                          Self.meanInside(a, mask: hole, invert: false), Self.meanInside(a, mask: blend, invert: true), scale)
+        }
         if answer == nil || !plausible(answer!), let cpu = Self.healModelCPU {
             answer = run(cpu)
         }
