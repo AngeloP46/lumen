@@ -941,4 +941,37 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(el("tool-Color").exists, "the tools sit under the side column")
         shot("landscape")
     }
+
+    func testLandscapeEveryToolFitsInTheSideColumn() {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait; sleep(1) }
+        launch(open: 1, tool: "Presets")
+        sleep(2)
+        let screen = app.windows.firstMatch.frame
+        for name in ["Crop", "Light", "Color", "Grade", "Curve", "Detail", "Masks", "Presets"] {
+            if name != "Presets" { el("tool-\(name)").tap(); sleep(2) }
+            let panel = el("panel").frame, bar = el("tool-Light").frame, photo = el("photo").frame
+            XCTAssertTrue(el("panel").exists, "\(name) should open a panel in landscape")
+            XCTAssertGreaterThan(panel.minX, photo.maxX - 2, "\(name): the panel sits beside the photo, not over it (\(panel) vs \(photo))")
+            XCTAssertLessThanOrEqual(panel.maxX, screen.maxX + 1, "\(name): the panel stays on screen (\(panel))")
+            XCTAssertLessThanOrEqual(panel.maxY, bar.minY + 2, "\(name): the panel stays above the tools (\(panel), \(bar))")
+            XCTAssertGreaterThan(panel.height, screen.height * 0.5, "\(name): the panel uses the column's height (\(panel))")
+            shot("landscape-\(name)")
+        }
+        XCTAssertTrue(el("pill-hdr").exists && el("btn-edits").exists, "the top buttons are still there in landscape")
+    }
+
+    func testFoldedToolBarKeepsEveryToolUsable() {
+        launch(open: 0, tool: "Light")
+        el("tools-collapse").tap()
+        sleep(1)
+        XCTAssertTrue(el("slider-Exposure").exists, "folded: the Light sliders are still there")
+        // the photo still rests on the panel
+        if let d = drawn() { XCTAssertEqual(d.bottom, d.height, accuracy: 2, "folded: no gap under the photo (\(d))") }
+        el("tools-expand").tap()
+        sleep(1)
+        el("tool-Masks").tap()
+        sleep(1)
+        XCTAssertTrue(el("tools-collapse").exists, "every tool's panel offers the fold button")
+    }
 }
