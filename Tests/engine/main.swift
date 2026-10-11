@@ -1344,6 +1344,37 @@ do {
             session.heals = []
         } else { check(false, "heal test: synthetic photo did not open") }
     }
+    // the Sony ARW in SDR and HDR: a heal on a plain area must come back about as bright as what surrounds it
+    if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil,
+       let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }) {
+        for hdr in [false, true] {
+            guard let session = EditSession(url: arw, expandHDR: hdr), let full = session.decode(maxEdge: nil) else { continue }
+            let e = full.extent
+            func mean(_ img: CIImage, _ r: CGRect) -> [Float] {
+                var v = [Float](repeating: 0, count: 4)
+                let a = img.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: r)])
+                LumenGPU.context.render(a, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                return v
+            }
+            // brightest-ish spot near the centre third: a small disc in the middle of the photo
+            let stroke = BrushStroke(points: [Pt(x: 0.5, y: 0.45), Pt(x: 0.52, y: 0.45)], size: 0.02, erase: false, feather: nil)
+            let L = max(e.width, e.height)
+            let r = 0.01 * L
+            let cx = 0.51 * e.width, cy = (1 - 0.45) * e.height
+            let inner = CGRect(x: cx - r * 0.6, y: cy - r * 0.5, width: r * 1.2, height: r)
+            let ring = CGRect(x: cx - r * 4, y: cy - r * 4, width: r * 8, height: r * 8)
+            let before = mean(full, ring)
+            if let spot = session.makeHeal(strokes: [stroke], earlier: []) {
+                session.heals = [spot]
+                if let healed = session.decode(maxEdge: nil) {
+                    let after = mean(healed, inner)
+                    print("::warning::heal ARW hdr=\(hdr): scale \(spot.scale), surroundings \(before.prefix(3)), healed spot \(after.prefix(3))")
+                    let lb = (before[0] + before[1] + before[2]) / 3, la = (after[0] + after[1] + after[2]) / 3
+                    check(la > lb * 0.4 && la < lb * 2.5, "ARW hdr=\(hdr): a healed spot should be about as bright as its surroundings (\(la) vs \(lb), scale \(spot.scale))")
+                }
+            } else { check(false, "ARW hdr=\(hdr): makeHeal failed") }
+        }
+    }
 }
 
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
