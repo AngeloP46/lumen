@@ -280,21 +280,21 @@ extension EditSession {
         }
         var computed = false
         if needSubject, !source.hasTried(Self.aiSubject) {
-            source.storeMask(Self.aiSubject, computeSubject(source))
+            source.storeMask(Self.aiSubject, refined(computeSubject(source), source: source))
             computed = true
         }
         if needSky, !source.hasTried(Self.aiSky) {
-            source.storeMask(Self.aiSky, computeSky(source))
+            source.storeMask(Self.aiSky, refined(computeSky(source), source: source))
             computed = true
         }
         if needPeople, !source.hasTried(Self.aiPeople) {
-            source.storeMask(Self.aiPeople, computePeople(source))
+            source.storeMask(Self.aiPeople, refined(computePeople(source), source: source))
             computed = true
         }
         if needDepth, !source.hasTried(Self.aiDepth) {
             let field = computeDepth(source)
             source.storeDepth(field)
-            source.storeMask(Self.aiDepth, field.map { Self.depthImage($0, extent: source.extent) })
+            source.storeMask(Self.aiDepth, refined(field.map { Self.depthImage($0, extent: source.extent) }, source: source, depth: true))
             computed = true
         }
         return computed
@@ -431,6 +431,44 @@ extension EditSession {
         ci = Self.blur(ci, 1.0, ci.extent)
         if let m = Self.materialized(ci) { ci = m }
         return Self.fit(ci, to: ext)
+    }
+
+    // MARK: Edge refinement
+
+    /// Snaps a soft AI mask onto the photo's real edges (guided filter, guide = the photo's brightness), then keeps
+    /// the result as a finished 8-bit image so it costs nothing while editing. The AI models work on small copies
+    /// (Vision ~1024 px, depth 518 px), so without this their outlines are blurry when zoomed in.
+    /// `depth`: a smooth depth map, refined more gently (a larger window keeps distances from following textures).
+    func refined(_ mask: CIImage?, source: ImageSource, depth: Bool = false) -> CIImage? {
+        guard let mask else { return nil }
+        guard let k = LumenKernels.shared, let pack = k.gfPack, let coef = k.gfCoef, let apply = k.gfApply else { return mask }
+        let ext = source.extent
+        let r = max(2, source.longEdge * (depth ? 0.006 : 0.0035))
+        let eps = depth ? 0.004 : 0.0015
+        func box(_ i: CIImage) -> CIImage {
+            i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: r]).cropped(to: ext)
+        }
+        guard let packed = pack.apply(extent: ext, arguments: [source.base, mask]),
+              let ab = coef.apply(extent: ext, arguments: [box(packed), CIVector(x: eps, y: 0, z: 0, w: 0)]),
+              let q = apply.apply(extent: ext, arguments: [box(ab), source.base])
+        else { return mask }
+        return Self.materializedMask(q) ?? mask
+    }
+
+    /// Renders a grey mask into an 8-bit single-channel buffer (a quarter of the memory of a half-float RGBA one).
+    static func materializedMask(_ img: CIImage) -> CIImage? {
+        let e = img.extent
+        let w = Int(e.width.rounded()), h = Int(e.height.rounded())
+        guard w > 0, h > 0 else { return nil }
+        var pb: CVPixelBuffer?
+        let attrs: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
+                                      kCVPixelBufferMetalCompatibilityKey: true]
+        guard CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_OneComponent8, attrs as CFDictionary, &pb) == kCVReturnSuccess,
+              let buf = pb else { return nil }
+        LumenGPU.context.render(img, to: buf, bounds: CGRect(x: e.minX, y: e.minY, width: CGFloat(w), height: CGFloat(h)),
+                                colorSpace: nil)
+        let out = expandRed(CIImage(cvPixelBuffer: buf, options: [.colorSpace: NSNull()]))
+        return out.transformed(by: CGAffineTransform(translationX: e.minX, y: e.minY))
     }
 
     // MARK: Depth

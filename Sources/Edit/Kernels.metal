@@ -419,6 +419,29 @@ float4 lumenRangeMask(sample_t s, float4 p) {
     return float4(v, v, v, 1.0);
 }
 
+// Edge refinement (guided filter, He et al.): the photo's brightness guides a soft mask onto the real edges.
+// 1. pack guide I and mask p as (I, p, I*I, I*p); the caller box-blurs this
+float4 lumenGFPack(sample_t g, sample_t m) {
+    float i = lmSrgbEnc(lmLum(max(g.rgb, 0.0)));
+    i = clamp(i, 0.0, 1.5);
+    float p = clamp(m.r, 0.0, 1.0);
+    return float4(i, p, i * i, i * p);
+}
+// 2. per-window linear model p = a*I + b; e.x = epsilon (how strongly edges are followed)
+float4 lumenGFCoef(sample_t m, float4 e) {
+    float varI = max(m.z - m.x * m.x, 0.0);
+    float cov = m.w - m.x * m.y;
+    float a = cov / (varI + e.x);
+    float b = m.y - a * m.x;
+    return float4(a, b, 0.0, 1.0);
+}
+// 3. apply the (box-blurred) model to the full-detail guide
+float4 lumenGFApply(sample_t ab, sample_t g) {
+    float i = clamp(lmSrgbEnc(lmLum(max(g.rgb, 0.0))), 0.0, 1.5);
+    float q = clamp(ab.x * i + ab.y, 0.0, 1.0);
+    return float4(q, q, q, 1.0);
+}
+
 // Mask overlay: tints `s` towards colour.rgb by mask * colour.a
 float4 lumenOverlay(sample_t s, sample_t m, float4 colour) {
     float k = clamp(m.r, 0.0, 1.0) * colour.a;

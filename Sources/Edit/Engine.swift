@@ -32,6 +32,8 @@ struct LumenKernels {
     var clip: CIColorKernel?
     /// Band of a grey image (depth mask). Optional: a broken one only disables the Depth mask.
     var rangeMask: CIColorKernel?
+    /// Edge refinement for AI masks (optional: without it masks keep their soft edges).
+    var gfPack: CIColorKernel?, gfCoef: CIColorKernel?, gfApply: CIColorKernel?
 
     static let shared: LumenKernels? = {
         var url = LumenGPU.libraryURL
@@ -52,7 +54,8 @@ struct LumenKernels {
                             accum: h, linearMask: i, radialMask: j, lumMask: l, colorMask: m, similarMask: n,
                             combine: o, maskFinish: p, maskMul: q, overlay: r,
                             gain: k("lumenGain"), gainLocal: k("lumenGainLocal"), applyGain: k("lumenApplyGain"),
-                            clip: k("lumenClip"), rangeMask: k("lumenRangeMask"))
+                            clip: k("lumenClip"), rangeMask: k("lumenRangeMask"),
+                            gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"))
     }()
 }
 
