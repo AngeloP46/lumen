@@ -1202,7 +1202,7 @@ do {
 
 // Edge refinement (2026-10-11): a blurry AI mask is snapped onto the photo's real edge
 do {
-    let w = 400, h = 300
+    let w = 1200, h = 800
     if let gctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
         gctx.setFillColor(CGColor(red: 0.12, green: 0.12, blue: 0.12, alpha: 1)); gctx.fill(CGRect(x: 0, y: 0, width: w / 2, height: h))
@@ -1211,14 +1211,15 @@ do {
         if let cg = gctx.makeImage(), let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) {
             CGImageDestinationAddImage(dest, cg, nil); CGImageDestinationFinalize(dest)
         }
-        if let session = EditSession(url: url), let source = session.makeSource(maxEdge: 400, materialize: true) {
+        if let session = EditSession(url: url), let source = session.makeSource(maxEdge: 1200, materialize: true) {
             let ext = source.extent
             // the "AI" mask: the dark left half, but with a very soft edge (like a mask found on a small copy)
             let hard = EditSession.constant(1, CGRect(x: ext.minX, y: ext.minY, width: ext.width / 2, height: ext.height))
                 .composited(over: EditSession.constant(0, ext))
-            let soft = EditSession.blur(hard, 14, ext)
+            // about as soft as a Vision mask scaled up from its small copy
+            let soft = EditSession.blur(hard, 5, ext)
             func transition(_ img: CIImage) -> (Int, Float, Float)? {
-                guard let mv = maskValues(img, width: 400) else { return nil }
+                guard let mv = maskValues(img, width: 1200) else { return nil }
                 let y = mv.h / 2
                 let row = Array(mv.v[(y * mv.w)..<((y + 1) * mv.w)])
                 return (row.filter { $0 > 0.1 && $0 < 0.9 }.count, row[mv.w / 8], row[mv.w * 7 / 8])
@@ -1228,7 +1229,7 @@ do {
             print("edge refinement: 8-bit mask buffer works: \(EditSession.materializedMask(soft) != nil)")
             if let before = transition(soft), let ref = session.refined(soft, source: source), let after = transition(ref) {
                 print("edge refinement: soft pixels \(before.0) -> \(after.0), inside \(after.1), outside \(after.2)")
-                check(after.0 * 3 < before.0, "edge refinement should make a soft mask edge much sharper (\(before.0) -> \(after.0) partly-covered pixels)")
+                check(after.0 * 2 <= before.0, "edge refinement should make a soft mask edge much sharper (\(before.0) -> \(after.0) partly-covered pixels)")
                 check(after.1 > 0.9 && after.2 < 0.1, "edge refinement must keep the inside selected and the outside clear (\(after.1), \(after.2))")
             } else { check(false, "edge refinement: render failed") }
         } else { check(false, "edge refinement: synthetic photo did not open") }

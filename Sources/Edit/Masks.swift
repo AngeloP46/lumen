@@ -443,7 +443,9 @@ extension EditSession {
         guard let mask else { return nil }
         guard let k = LumenKernels.shared, let pack = k.gfPack, let coef = k.gfCoef, let apply = k.gfApply else { return mask }
         let ext = source.extent
-        let r = max(2, source.longEdge * (depth ? 0.006 : 0.0035))
+        // the window must reach across the mask's soft zone: Vision masks come from ~1024 px (about 2.5x smaller than
+        // the preview), depth from 518 px (about 5x)
+        let r = max(3, source.longEdge * (depth ? 0.01 : 0.006))
         let eps = depth ? 0.004 : 0.0015
         func box(_ i: CIImage) -> CIImage {
             i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: r]).cropped(to: ext)
