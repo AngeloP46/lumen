@@ -447,6 +447,12 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         }
     }
 
+    // nativeSize is the picture as decoded (orientation applied): Heal measures spots with it
+    if let full = session.decode(maxEdge: nil) {
+        check(abs(full.extent.width - session.nativeSize.width) < 2 && abs(full.extent.height - session.nativeSize.height) < 2,
+              "\(stem): nativeSize \(session.nativeSize) must match the decoded picture \(full.extent.size)")
+    }
+
     // Preview source size: long edge at most 1800 px (never upscaled) and the aspect ratio of the native picture.
     do {
         let native = session.nativeSize

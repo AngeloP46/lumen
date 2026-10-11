@@ -275,7 +275,11 @@ final class EditSession: @unchecked Sendable {
             }
             raw = f
             plain = nil
-            nativeSize = f.nativeSize
+            // the size AS SHOWN: CIRAWFilter.nativeSize is the sensor's (landscape) size even for a portrait photo,
+            // which made Heal measure portrait RAWs sideways (wrong spot, black fills off the edge). The output's
+            // extent at full scale has the orientation applied (nothing is rendered to read it).
+            f.scaleFactor = 1
+            nativeSize = f.outputImage.map { $0.extent.size } ?? f.nativeSize
         } else if let img = Self.loadPlain(url, expandHDR: expandHDR) {
             raw = nil
             plain = img

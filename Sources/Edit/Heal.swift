@@ -62,6 +62,8 @@ extension EditSession {
 
         // 3. the photo there, full resolution, with the earlier heals, scaled to the model's 800 x 800
         guard let full = decode(maxEdge: nil, heals: earlier) else { return nil }
+        // the region above was measured on `nativeSize`; it must be the picture as decoded
+        guard abs(full.extent.width - W) < 2, abs(full.extent.height - H) < 2 else { return nil }
         let ciRegion = CGRect(x: region.minX, y: H - region.maxY, width: side, height: side)  // Core Image: y up
         let crop = full.cropped(to: ciRegion)
             .transformed(by: CGAffineTransform(translationX: -ciRegion.minX, y: -ciRegion.minY))
