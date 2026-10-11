@@ -43,7 +43,7 @@ struct ColorGrading: Codable, Equatable, Hashable {
 // MARK: - Masks
 
 enum MaskKind: String, Codable, CaseIterable, Identifiable {
-    case subject, sky, background, people, brush, linear, radial, luminance, color
+    case subject, sky, background, people, brush, linear, radial, luminance, color, depth
     var id: String { rawValue }
 
     var title: String {
@@ -57,6 +57,7 @@ enum MaskKind: String, Codable, CaseIterable, Identifiable {
         case .radial: "Radial"
         case .luminance: "Luminance"
         case .color: "Colour"
+        case .depth: "Depth"
         }
     }
     var icon: String {
@@ -70,10 +71,13 @@ enum MaskKind: String, Codable, CaseIterable, Identifiable {
         case .radial: "circle.dashed"
         case .luminance: "circle.lefthalf.filled"
         case .color: "eyedropper"
+        case .depth: "square.3.layers.3d"
         }
     }
     /// Kinds that are found automatically and need no shape editing.
     var isAutomatic: Bool { self == .subject || self == .sky || self == .background || self == .people }
+    /// Kinds that need an on-device model run before they can be drawn (depth also has a range to edit).
+    var needsAnalysis: Bool { isAutomatic || self == .depth }
 }
 
 enum MaskOp: String, Codable, CaseIterable, Identifiable {
@@ -142,10 +146,11 @@ struct MaskComponent: Codable, Equatable, Identifiable, Hashable {
     var angle: Double = 0             // radial rotation, degrees
     var strokes: [BrushStroke] = []
     var autoMask = false              // brush: only stick to areas similar to what you painted over
-    var lumLow = 0.0, lumHigh = 0.5   // luminance range (display brightness, 0...1)
+    var lumLow = 0.0, lumHigh = 0.5   // luminance range (display brightness, 0...1); depth: range 0 = nearest ... 1 = farthest
     var lumLowFeather = 0.1, lumHighFeather = 0.1
     var samples: [ColorSample] = []   // colour range
     var tolerance = 0.18              // colour range
+    var amount: Double = 100          // this part's own opacity, % (a half-strength Subtract only takes half away)
 
     static func make(_ kind: MaskKind, op: MaskOp = .add) -> MaskComponent {
         var c = MaskComponent(kind: kind, op: op)
@@ -153,6 +158,7 @@ struct MaskComponent: Codable, Equatable, Identifiable, Hashable {
         case .linear: c.x0 = 0.5; c.y0 = 0.25; c.x1 = 0.5; c.y1 = 0.55
         case .radial: c.x0 = 0.5; c.y0 = 0.5; c.x1 = 0.3; c.y1 = 0.3
         case .luminance: c.lumLow = 0.0; c.lumHigh = 0.35
+        case .depth: c.lumLow = 0.0; c.lumHigh = 0.35; c.lumLowFeather = 0; c.lumHighFeather = 0.15
         default: break
         }
         return c

@@ -77,6 +77,8 @@ final class EditorViewModel: ObservableObject {
 
     private var session: EditSession?
     private var source: ImageSource?
+    /// Estimated depth of the open photo (once a Depth mask asked for it).
+    var depthField: DepthField? { source?.depthField }
     private weak var store: LibraryStore?
     private var started = false
     private var histPending = false
@@ -178,6 +180,7 @@ final class EditorViewModel: ObservableObject {
                 if let previous, previous.size == src.size {
                     let (masks, tried) = previous.snapshotMasks()
                     for key in tried { src.storeMask(key, masks[key]) }
+                    src.storeDepth(previous.depthField)
                 }
                 self.session = s
                 self.source = src
@@ -403,13 +406,13 @@ final class EditorViewModel: ObservableObject {
 
     private func prepareAutoMasksIfNeeded() {
         guard let session, let source, !autoMaskBusy else { return }
-        let needs = settings.masks.contains { m in m.components.contains { $0.kind.isAutomatic } }
+        let needs = settings.masks.contains { m in m.components.contains { $0.kind.needsAnalysis } }
         guard needs else { return }
         let snapshot = settings
         autoMaskBusy = true
         workQueue.async {
             session.prepareAutoMasks(snapshot, source: source)
-            let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople].filter { source.hasTried($0) && source.cachedMask($0) == nil })
+            let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople, EditSession.aiDepth].filter { source.hasTried($0) && source.cachedMask($0) == nil })
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.autoMaskBusy = false
@@ -717,6 +720,16 @@ final class EditorViewModel: ObservableObject {
             let sample = ColorSample(r: Double(rgb.x), g: Double(rgb.y), b: Double(rgb.z))
             updateComponent(c.id) { comp in
                 if addToSelection && comp.samples.count < 4 { comp.samples.append(sample) } else { comp.samples = [sample] }
+            }
+        case .depth:
+            // tap = select things at about that distance
+            guard let d = source.depthField?.value(atNormalized: p.x, p.y) else { return }
+            let v = Double(d)
+            updateComponent(c.id) { comp in
+                comp.lumLow = max(0, v - 0.08)
+                comp.lumHigh = min(1, v + 0.08)
+                comp.lumLowFeather = 0.08
+                comp.lumHighFeather = 0.08
             }
         case .luminance:
             let y = Double(Ok.encode(0.22897 * rgb.x * Float(exp2(settings.exposure))

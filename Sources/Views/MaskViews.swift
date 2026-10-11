@@ -33,6 +33,8 @@ struct LumRangeEditor: View {
     @Binding var lowFeather: Double
     @Binding var highFeather: Double
     let histogram: [Float]?
+    /// The same editor for the Depth mask: the bar runs near (left) to far (right).
+    var depth = false
 
     @State private var active: Int?   // 0 / 1 = band start / end, 2 / 3 = dark / light soft edge
 
@@ -40,14 +42,20 @@ struct LumRangeEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             bar
             HStack(spacing: 6) {
-                preset("Shadows", 0, 0.30, 0, 0.15)
-                preset("Midtones", 0.30, 0.70, 0.15, 0.15)
-                preset("Highlights", 0.70, 1, 0.15, 0)
-                preset("Whites", 0.88, 1, 0.10, 0)
+                if depth {
+                    preset("Near", 0, 0.35, 0, 0.15)
+                    preset("Middle", 0.30, 0.70, 0.12, 0.12)
+                    preset("Far", 0.65, 1, 0.15, 0)
+                } else {
+                    preset("Shadows", 0, 0.30, 0, 0.15)
+                    preset("Midtones", 0.30, 0.70, 0.15, 0.15)
+                    preset("Highlights", 0.70, 1, 0.15, 0)
+                    preset("Whites", 0.88, 1, 0.10, 0)
+                }
             }
-            LabeledSlider(title: "Dark edge", value: soft($lowFeather, limit: { low }), range: 0...50, neutral: 0, labelWidth: 66)
+            LabeledSlider(title: depth ? "Near edge" : "Dark edge", value: soft($lowFeather, limit: { low }), range: 0...50, neutral: 0, labelWidth: 66)
                 .opacity(low <= 0.001 ? 0.35 : 1).allowsHitTesting(low > 0.001)
-            LabeledSlider(title: "Light edge", value: soft($highFeather, limit: { 1 - high }), range: 0...50, neutral: 0, labelWidth: 66)
+            LabeledSlider(title: depth ? "Far edge" : "Light edge", value: soft($highFeather, limit: { 1 - high }), range: 0...50, neutral: 0, labelWidth: 66)
                 .opacity(high >= 0.999 ? 0.35 : 1).allowsHitTesting(high < 0.999)
         }
     }
@@ -76,7 +84,8 @@ struct LumRangeEditor: View {
             ]
             ZStack(alignment: .topLeading) {
                 Group {
-                    LinearGradient(colors: [.black, .white], startPoint: .leading, endPoint: .trailing)
+                    LinearGradient(colors: depth ? [Color(white: 0.85), Color(red: 0.1, green: 0.14, blue: 0.3)] : [.black, .white],
+                                   startPoint: .leading, endPoint: .trailing)
                         .frame(height: barH).clipShape(RoundedRectangle(cornerRadius: 6))
                     if let h = histogram {
                         Canvas { ctx, size in
@@ -366,8 +375,13 @@ struct MaskPanel: View {
                     }
                 }
                 componentControls(c)
+                if m.components.count > 1 {
+                    // just the selected part (e.g. how much a Subject subtract takes away), not the whole mask
+                    LabeledSlider(title: "Part opacity", value: cb(c, \.amount), range: 0...100, neutral: 100)
+                }
             }
-            LabeledSlider(title: "Opacity", value: mb(m, \.amount), range: 0...100, neutral: 100)
+            LabeledSlider(title: m.components.count > 1 ? "Mask opacity" : "Opacity", value: mb(m, \.amount),
+                          range: 0...100, neutral: 100)
             HStack(spacing: 6) {
                 if let c = vm.selectedComponent {
                     Chip(title: "Invert shape", system: "circle.lefthalf.filled", selected: c.invert) { vm.updateComponent(c.id) { $0.invert.toggle() } }
@@ -424,6 +438,19 @@ struct MaskPanel: View {
             LumRangeEditor(low: cb(c, \.lumLow), high: cb(c, \.lumHigh),
                            lowFeather: cb(c, \.lumLowFeather), highFeather: cb(c, \.lumHighFeather),
                            histogram: vm.histogram?.luma)
+        case .depth:
+            if !EditSession.hasDepthModel {
+                hint("This build has no depth model, so the Depth mask can't work yet.")
+            } else if vm.autoMaskBusy && vm.depthField == nil {
+                HStack { ProgressView(); Text("Measuring depth…").font(.caption).foregroundStyle(.secondary) }
+            } else if vm.autoMaskMissing.contains(EditSession.aiDepth) {
+                hint("Couldn't estimate depth for this photo. Try a Linear or Brush mask instead.")
+            } else {
+                hint("Left is near, right is far. Drag the white handles to pick a distance, or tap the photo to select things that far away.", kind: .depth)
+            }
+            LumRangeEditor(low: cb(c, \.lumLow), high: cb(c, \.lumHigh),
+                           lowFeather: cb(c, \.lumLowFeather), highFeather: cb(c, \.lumHighFeather),
+                           histogram: vm.depthField?.histogram, depth: true)
         case .color:
             hint("Tap the photo to pick a colour. Turn on the + to add more colours (up to 4).", kind: .color)
             HStack(spacing: 8) {
@@ -546,7 +573,7 @@ struct MaskOverlay: View {
                     guard xform.rect.contains(v.location) else { return }
                     vm.pick(at: norm(v.location), addToSelection: vm.colorAddMode)
                 })
-        case .luminance:
+        case .luminance, .depth:
             Color.clear.contentShape(Rectangle())
                 .gesture(SpatialTapGesture(coordinateSpace: .named("maskSpace")).onEnded { v in
                     guard xform.rect.contains(v.location) else { return }

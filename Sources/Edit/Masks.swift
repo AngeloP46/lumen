@@ -2,6 +2,7 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreGraphics
 import Vision
+import CoreML
 
 /// Local adjustments. Every mask becomes one grey image (white = fully affected). Each mask's slider offsets are
 /// multiplied by that image and summed into five "parameter planes" the develop kernel reads per pixel, so any
@@ -10,6 +11,7 @@ extension EditSession {
     static let aiSubject = "subject"
     static let aiSky = "sky"
     static let aiPeople = "people"
+    static let aiDepth = "depth"
 
     // MARK: Planes
 
@@ -46,6 +48,17 @@ extension EditSession {
         for c in m.components {
             var ci = componentImage(c, source: source, gain: gain)
             if c.invert { ci = k.maskFinish.apply(extent: source.extent, arguments: [ci, CIVector(x: 1, y: 1, z: 0, w: 0)]) ?? ci }
+            if c.amount < 100 {
+                // this part only, before it is combined: a 50 % Subtract takes away half, the rest stays untouched;
+                // a 50 % Intersect trims half as much (1 - t·(1 - b))
+                let t = max(c.amount, 0) / 100
+                if c.op == .intersect && acc != nil {
+                    let cut = k.maskFinish.apply(extent: source.extent, arguments: [ci, CIVector(x: 1, y: t, z: 0, w: 0)]) ?? ci
+                    ci = k.maskFinish.apply(extent: source.extent, arguments: [cut, CIVector(x: 1, y: 1, z: 0, w: 0)]) ?? ci
+                } else {
+                    ci = k.maskFinish.apply(extent: source.extent, arguments: [ci, CIVector(x: 0, y: t, z: 0, w: 0)]) ?? ci
+                }
+            }
             if let a = acc {
                 let op: Double = c.op == .add ? 0 : (c.op == .subtract ? 1 : 2)
                 acc = k.combine.apply(extent: source.extent, arguments: [a, ci, CIVector(x: op, y: 0, z: 0, w: 0)])
@@ -114,6 +127,12 @@ extension EditSession {
                 source.base,
                 CIVector(x: c.lumLow, y: c.lumHigh, z: c.lumLowFeather, w: c.lumHighFeather),
                 CIVector(x: gain, y: 0, z: 0, w: 0)]) ?? zero
+        case .depth:
+            if let d = source.cachedMask(Self.aiDepth), let rk = k.rangeMask {
+                img = rk.apply(extent: ext, arguments: [d, CIVector(x: c.lumLow, y: c.lumHigh, z: c.lumLowFeather, w: c.lumHighFeather)]) ?? zero
+            } else {
+                img = zero   // still estimating, or no depth model in this build
+            }
         case .color:
             var vs = [CIVector](repeating: CIVector(x: 0, y: 0, z: 0, w: 0), count: 4)
             for (i, smp) in c.samples.prefix(4).enumerated() {
@@ -250,12 +269,13 @@ extension EditSession {
     /// Computes any automatic masks `s` needs and caches them on `source`. Call off the main thread.
     @discardableResult
     func prepareAutoMasks(_ s: EditSettings, source: ImageSource) -> Bool {
-        var needSubject = false, needSky = false, needPeople = false
+        var needSubject = false, needSky = false, needPeople = false, needDepth = false
         for m in s.masks {
             for c in m.components {
                 if c.kind == .subject || c.kind == .background { needSubject = true }
                 if c.kind == .sky { needSky = true }
                 if c.kind == .people { needPeople = true }
+                if c.kind == .depth { needDepth = true }
             }
         }
         var computed = false
@@ -269,6 +289,12 @@ extension EditSession {
         }
         if needPeople, !source.hasTried(Self.aiPeople) {
             source.storeMask(Self.aiPeople, computePeople(source))
+            computed = true
+        }
+        if needDepth, !source.hasTried(Self.aiDepth) {
+            let field = computeDepth(source)
+            source.storeDepth(field)
+            source.storeMask(Self.aiDepth, field.map { Self.depthImage($0, extent: source.extent) })
             computed = true
         }
         return computed
@@ -405,6 +431,76 @@ extension EditSession {
         ci = Self.blur(ci, 1.0, ci.extent)
         if let m = Self.materialized(ci) { ci = m }
         return Self.fit(ci, to: ext)
+    }
+
+    // MARK: Depth
+
+    /// The depth model (Depth Anything V2 small, Apple's Core ML conversion), compiled into the app by CI.
+    /// Tests can point `LUMEN_DEPTH_MODEL` at a compiled .mlmodelc. nil when this build has no model.
+    nonisolated(unsafe) static var depthModelURL: URL? = {
+        if let p = ProcessInfo.processInfo.environment["LUMEN_DEPTH_MODEL"] { return URL(fileURLWithPath: p) }
+        return Bundle.main.url(forResource: "DepthAnythingV2SmallF16", withExtension: "mlmodelc")
+    }()
+    private static let depthModel: VNCoreMLModel? = {
+        guard let url = depthModelURL else { return nil }
+        let cfg = MLModelConfiguration()
+        cfg.computeUnits = .all
+        guard let ml = try? MLModel(contentsOf: url, configuration: cfg) else { return nil }
+        return try? VNCoreMLModel(for: ml)
+    }()
+    static var hasDepthModel: Bool { depthModel != nil }
+
+    /// Estimates how far away every part of the photo is (on-device, any photo, no depth data needed).
+    /// The model sees a landscape frame, so portrait photos are turned a quarter for it and the result turned back.
+    func computeDepth(_ source: ImageSource) -> DepthField? {
+        guard let model = Self.depthModel else { return nil }
+        let ext = source.extent
+        let k = min(1, 1024 / max(ext.width, ext.height))
+        var small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
+        let portrait = ext.height > ext.width
+        if portrait { small = Self.normalized(small.transformed(by: CGAffineTransform(rotationAngle: -.pi / 2))) }
+        guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+        else { return nil }
+        let request = VNCoreMLRequest(model: model)
+        request.imageCropAndScaleOption = .scaleFill
+        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { return nil }
+        guard let obs = request.results?.first as? VNPixelBufferObservation else { return nil }
+        var out = CIImage(cvPixelBuffer: obs.pixelBuffer, options: [.colorSpace: NSNull()])
+        if portrait { out = Self.normalized(out.transformed(by: CGAffineTransform(rotationAngle: .pi / 2))) }
+        let w = Int(out.extent.width.rounded()), h = Int(out.extent.height.rounded())
+        guard w > 1, h > 1 else { return nil }
+        var px = [Float](repeating: 0, count: w * h * 4)
+        LumenGPU.context.render(out, toBitmap: &px, rowBytes: w * 16, bounds: out.extent, format: .RGBAf, colorSpace: nil)
+        // the model gives relative nearness (bigger = nearer); spread the 2nd...98th percentile over 0...1, then flip
+        // so 0 = nearest. Rows come out bottom-up (Core Image), the field is stored top row first.
+        var raw = [Float](repeating: 0, count: w * h)
+        for y in 0..<h { for x in 0..<w { raw[(h - 1 - y) * w + x] = px[(y * w + x) * 4] } }
+        let sorted = raw.sorted()
+        let lo = sorted[sorted.count * 2 / 100], hi = sorted[sorted.count * 98 / 100]
+        guard hi - lo > 1e-6 else { return nil }
+        var hist = [Float](repeating: 0, count: 64)
+        let values = raw.map { v -> Float in
+            let d = 1 - min(max((v - lo) / (hi - lo), 0), 1)
+            hist[min(Int(d * 64), 63)] += 1
+            return d
+        }
+        let top = max(hist.max() ?? 1, 1)
+        return DepthField(width: w, height: h, values: values, histogram: hist.map { $0 / top })
+    }
+
+    /// The depth field as a grey image over the photo (white = far), slightly softened.
+    static func depthImage(_ d: DepthField, extent ext: CGRect) -> CIImage {
+        var flipped = [Float](repeating: 0, count: d.values.count)
+        for y in 0..<d.height {
+            for x in 0..<d.width { flipped[(d.height - 1 - y) * d.width + x] = d.values[y * d.width + x] }
+        }
+        let data = flipped.withUnsafeBufferPointer { Data(buffer: $0) }
+        var ci = CIImage(bitmapData: data, bytesPerRow: d.width * 4, size: CGSize(width: d.width, height: d.height),
+                         format: .Rf, colorSpace: nil)
+        ci = expandRed(ci)
+        ci = blur(ci, 0.8, ci.extent)
+        if let m = materialized(ci) { ci = m }
+        return fit(ci, to: ext)
     }
 
     /// Apple's on-device foreground segmentation (Vision, iOS 17+).

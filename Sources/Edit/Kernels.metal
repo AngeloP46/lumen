@@ -410,6 +410,15 @@ float4 lumenClip(sample_t s, float4 p) {
     return s;
 }
 
+// Band of a grey value (depth mask): same shape as the luminance band. p = (low, high, low soft edge, high soft edge)
+float4 lumenRangeMask(sample_t s, float4 p) {
+    float y = s.r;
+    float v = lmStep(p.x - max(p.z, 0.001), p.x, y) * (1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y));
+    if (p.x <= 0.001) v = (1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y));
+    if (p.y >= 0.999) v = lmStep(p.x - max(p.z, 0.001), p.x, y);
+    return float4(v, v, v, 1.0);
+}
+
 // Mask overlay: tints `s` towards colour.rgb by mask * colour.a
 float4 lumenOverlay(sample_t s, sample_t m, float4 colour) {
     float k = clamp(m.r, 0.0, 1.0) * colour.a;

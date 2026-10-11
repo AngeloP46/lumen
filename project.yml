@@ -15,6 +15,11 @@ targets:
     platform: iOS
     sources:
       - Sources
+      # depth model, compiled by CI (.github/ci/get-depth-model.sh); builds without it simply have no Depth mask
+      - path: Models/DepthAnythingV2SmallF16.mlmodelc
+        type: folder
+        optional: true
+        buildPhase: resources
     info:
       path: Config/Info.plist
       properties:

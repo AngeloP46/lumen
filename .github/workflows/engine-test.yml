@@ -27,6 +27,12 @@ jobs:
           bash .github/ci/get.sh samples/matterhorn.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Matterhorn_from_Domh%C3%BCtte_-_2.jpg?width=2000" 100000
           bash .github/ci/get.sh samples/falls.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Hopetoun_falls.jpg?width=2000" 100000
           ls -la samples
+      - uses: actions/cache@v4
+        with:
+          path: Models
+          key: depth-anything-v2-small-f16-1
+      - name: Depth model
+        run: bash .github/ci/get-depth-model.sh Models
       - name: Build kernels and test tool
         run: |
           mkdir -p out
@@ -42,6 +48,7 @@ jobs:
         # and the backtrace never changes the result: exit 1 = a check failed, other non-zero = it crashed.
         run: |
           set +e
+          export LUMEN_DEPTH_MODEL="$PWD/Models/DepthAnythingV2SmallF16.mlmodelc"
           ./out/engine-test out/k.metallib samples out/render
           code=$?
           echo "engine-test exit code: $code"

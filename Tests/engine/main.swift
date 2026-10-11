@@ -1142,5 +1142,60 @@ do {
     } else { check(false, "pro pack checks: no photo could be opened") }
 }
 
+// Masks (2026-10-11): each part has its own opacity; the Depth mask estimates distance with the on-device model
+do {
+    if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f),
+       let source = session.makeSource(maxEdge: 900, materialize: true) {
+        // a whole-photo part minus a whole-photo part at 50 % leaves half
+        var all = MaskComponent.make(.luminance); all.lumLow = 0; all.lumHigh = 1; all.lumLowFeather = 0; all.lumHighFeather = 0
+        var cut = all; cut.id = UUID(); cut.op = .subtract; cut.amount = 50
+        let m = Mask(name: "p", components: [all, cut])
+        if let img = session.maskImage(m, source: source, gain: 1), let mv = maskValues(img) {
+            let mean = mv.v.reduce(0, +) / Float(max(mv.v.count, 1))
+            check(abs(mean - 0.5) < 0.05, "a 50 % Subtract part should take away half, not dim the whole mask (mean \(mean))")
+        } else { check(false, "part opacity: mask render failed") }
+        var full = cut; full.amount = 100
+        if let img = session.maskImage(Mask(name: "p", components: [all, full]), source: source, gain: 1), let mv = maskValues(img) {
+            check((mv.v.max() ?? 1) < 0.02, "a 100 % Subtract of everything leaves nothing (max \(mv.v.max() ?? 1))")
+        }
+    }
+
+    if ProcessInfo.processInfo.environment["LUMEN_DEPTH_MODEL"] != nil {
+        check(EditSession.hasDepthModel, "the depth model should load from LUMEN_DEPTH_MODEL")
+        for f in files where f.pathExtension.lowercased() != "arw" {
+            guard let session = EditSession(url: f), let source = session.makeSource(maxEdge: 1200, materialize: true) else { continue }
+            var s = EditSettings(); s.masks = [Mask.make(.depth)]
+            let t0 = now()
+            session.prepareAutoMasks(s, source: source)
+            let ms = Int((now() - t0) * 1000)
+            guard let d = source.depthField else { check(false, "\(f.lastPathComponent): no depth estimated"); continue }
+            let photoTall = source.size.height > source.size.width, fieldTall = d.height > d.width
+            check(photoTall == fieldTall, "\(f.lastPathComponent): depth field (\(d.width)x\(d.height)) should have the photo's orientation (\(source.size))")
+            let rows = d.height / 4
+            func band(_ r0: Int, _ r1: Int) -> Float {
+                var t: Float = 0; var n: Float = 0
+                for y in r0..<r1 { for x in 0..<d.width { t += d.values[y * d.width + x]; n += 1 } }
+                return t / max(n, 1)
+            }
+            let top = band(0, rows), bottom = band(d.height - rows, d.height)
+            print("depth \(f.lastPathComponent): \(d.width)x\(d.height) in \(ms) ms, top \(top) bottom \(bottom)")
+            if f.lastPathComponent.hasPrefix("matterhorn") {
+                check(top > bottom + 0.15, "matterhorn: the sky and peak (top) should read farther than the ground (bottom): top \(top) bottom \(bottom)")
+                // a Near mask covers the bottom more than the top
+                if let img = session.maskImage(Mask.make(.depth), source: source, gain: 1), let mv = maskValues(img) {
+                    let q = mv.h / 4
+                    // maskValues rows: first row = bottom of the image (Core Image's origin is bottom-left)
+                    let lo = mv.v[0..<(q * mv.w)].reduce(0, +) / Float(q * mv.w)
+                    let hi = mv.v[((mv.h - q) * mv.w)...].reduce(0, +) / Float(q * mv.w)
+                    print("depth near mask: one end \(lo), other end \(hi)")
+                    check(abs(lo - hi) > 0.2, "matterhorn: a Near depth mask should cover one end of the photo much more than the other (\(lo) vs \(hi))")
+                } else { check(false, "depth mask render failed") }
+            }
+        }
+    } else {
+        print("::warning::no LUMEN_DEPTH_MODEL: depth mask not checked")
+    }
+}
+
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
 finishChecks()

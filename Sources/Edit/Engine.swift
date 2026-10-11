@@ -30,6 +30,8 @@ struct LumenKernels {
     var gain, gainLocal, applyGain: CIColorKernel?
     /// Clipping warning (optional too: a broken one only hides the warning).
     var clip: CIColorKernel?
+    /// Band of a grey image (depth mask). Optional: a broken one only disables the Depth mask.
+    var rangeMask: CIColorKernel?
 
     static let shared: LumenKernels? = {
         var url = LumenGPU.libraryURL
@@ -50,7 +52,7 @@ struct LumenKernels {
                             accum: h, linearMask: i, radialMask: j, lumMask: l, colorMask: m, similarMask: n,
                             combine: o, maskFinish: p, maskMul: q, overlay: r,
                             gain: k("lumenGain"), gainLocal: k("lumenGainLocal"), applyGain: k("lumenApplyGain"),
-                            clip: k("lumenClip"))
+                            clip: k("lumenClip"), rangeMask: k("lumenRangeMask"))
     }()
 }
 
@@ -76,6 +78,7 @@ final class ImageSource: @unchecked Sendable {
     private var masks: [String: CIImage] = [:]
     private var tried: Set<String> = []
     private var raster: [MaskComponent: CIImage] = [:]
+    private var depth: DepthField?
 
     var longEdge: CGFloat { max(size.width, size.height) }
     var extent: CGRect { CGRect(origin: .zero, size: size) }
@@ -103,11 +106,37 @@ final class ImageSource: @unchecked Sendable {
     }
     func hasTried(_ key: String) -> Bool { lock.lock(); defer { lock.unlock() }; return tried.contains(key) }
 
+    /// Estimated depth (see Masks.swift computeDepth), kept for picking a depth by tapping and for the range graph.
+    var depthField: DepthField? { lock.lock(); defer { lock.unlock() }; return depth }
+    func storeDepth(_ d: DepthField?) { lock.lock(); defer { lock.unlock() }; if let d { depth = d } }
+
     func cachedRaster(_ c: MaskComponent) -> CIImage? { lock.lock(); defer { lock.unlock() }; return raster[c] }
     func storeRaster(_ c: MaskComponent, _ img: CIImage) {
         lock.lock(); defer { lock.unlock() }
         if raster.count > 24 { raster.removeAll() }
         raster[c] = img
+    }
+}
+
+/// Depth estimated for a photo: 0 = nearest ... 1 = farthest, row-major, top row first.
+struct DepthField: Sendable {
+    var width: Int
+    var height: Int
+    var values: [Float]
+    /// 64 bins over 0...1, scaled so the tallest is 1 (drawn behind the depth range editor).
+    var histogram: [Float]
+
+    /// Depth at a normalised point (x right, y down), averaged over a small neighbourhood.
+    func value(atNormalized x: Double, _ y: Double) -> Float {
+        let cx = Int((min(max(x, 0), 1) * Double(width - 1)).rounded())
+        let cy = Int((min(max(y, 0), 1) * Double(height - 1)).rounded())
+        var sum: Float = 0, n: Float = 0
+        for dy in -2...2 { for dx in -2...2 {
+            let px = cx + dx, py = cy + dy
+            guard px >= 0, py >= 0, px < width, py < height else { continue }
+            sum += values[py * width + px]; n += 1
+        } }
+        return n > 0 ? sum / n : 0.5
     }
 }
 
