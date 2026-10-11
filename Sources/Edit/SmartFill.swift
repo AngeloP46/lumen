@@ -305,6 +305,24 @@ extension EditSession {
         let mom = MLArrays.floats(moments)                       // [8, 64, 64]: mean then log variance
         let LL = 4 * L8 * L8
         let maskedLatent = (0..<LL).map { mom[$0] * 0.18215 }
+        var debug = ""
+        if ProcessInfo.processInfo.environment["LUMEN_SMARTFILL_DEBUG"] != nil {
+            // round trip: decode the masked image's latent and read a pixel away from the hole (should be the photo)
+            let holeCount = hole.reduce(0) { $0 + ($1 > 127 ? 1 : 0) }
+            let maskSum = mask64.reduce(0, +)
+            var rt = "-"
+            if let z = MLArrays.half(maskedLatent.map { $0 / 0.18215 }, shape: [1, 4, L8, L8]),
+               let o = try? models.vaeDecoder.prediction(from: MLDictionaryFeatureProvider(dictionary: ["z": z])),
+               let im = o.featureValue(for: "image")?.multiArrayValue {
+                let f = MLArrays.floats(im)
+                let p = 40 * N + 40, q = (N / 2) * N + N / 2
+                rt = String(format: "corner %.2f %.2f %.2f centre %.2f %.2f %.2f", f[p], f[N * N + p], f[2 * N * N + p],
+                            f[q], f[N * N + q], f[2 * N * N + q])
+            }
+            let inPx = String(format: "%.2f %.2f %.2f", img[40 * N + 40], img[N * N + 40 * N + 40], img[2 * N * N + 40 * N + 40])
+            let lm = (0..<4).map { c in (0..<(L8 * L8)).reduce(Float(0)) { $0 + maskedLatent[c * L8 * L8 + $1] } / Float(L8 * L8) }
+            debug = "hole px \(holeCount), mask64 \(maskSum), input corner \(inPx), latent means \(lm.map { String(format: "%.2f", $0) }), vae round trip \(rt)"
+        }
 
         // 5. DPM-Solver++ (2M) with classifier-free guidance; the unconditional half uses the negative prompt
         var betas = [Double](repeating: 0, count: 1000)
@@ -411,7 +429,8 @@ extension EditSession {
         let ring = Self.meanInside(CIImage(cgImage: inCG), mask: blend, invert: true, side: N)
         let inHole = Self.meanInside(out, mask: holeCG, invert: false, side: N)
         Self.healDiagnostics = String(format: "smart: ring %.3f, output hole %.3f, scale %.3f, gpu retry %@", ring, inHole, scale,
-                                      retriedOnGPU ? "yes" : "no")
+                                      retriedOnGPU ? "yes" : "no") + (debug.isEmpty ? "" : "; " + debug)
+            + String(format: "; decoded centre %.2f %.2f %.2f", dec[(N / 2) * N + N / 2], dec[N * N + (N / 2) * N + N / 2], dec[2 * N * N + (N / 2) * N + N / 2])
         guard inHole.isFinite, !(ring > 0.06 && inHole < ring * 0.3) else { return nil }
 
         let id = UUID()

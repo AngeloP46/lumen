@@ -1399,7 +1399,7 @@ do {
                 let stroke = BrushStroke(points: [Pt(x: 0.5, y: 0.48), Pt(x: 0.5, y: 0.52)], size: 0.09, erase: false, feather: nil)
                 let t0 = now()
                 var lastStep = 0
-                let spot = session.makeSmartHeal(strokes: [stroke], earlier: [], seed: 7, steps: 12) { s, _ in lastStep = s }
+                let spot = session.makeSmartHeal(strokes: [stroke], earlier: [], seed: 7, steps: 8) { s, _ in lastStep = s }
                 print("::notice::smart fill in \(Int((now() - t0) * 1000)) ms, steps done \(lastStep): \(EditSession.healDiagnostics)")
                 if let spot {
                     session.heals = [spot]

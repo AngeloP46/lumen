@@ -61,6 +61,7 @@ jobs:
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           export LUMEN_SMARTFILL_DIR="$PWD/SmartFill"
+          export LUMEN_SMARTFILL_DEBUG=1
           ./out/engine-test out/k.metallib samples out/render
           code=$?
           echo "engine-test exit code: $code"
