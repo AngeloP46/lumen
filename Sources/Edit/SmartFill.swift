@@ -174,8 +174,14 @@ enum MLArrays {
 
     static func half(_ values: [Float], shape: [Int]) -> MLMultiArray? {
         guard let a = try? MLMultiArray(shape: shape.map { NSNumber(value: $0) }, dataType: .float16) else { return nil }
-        let p = a.dataPointer.bindMemory(to: Float16.self, capacity: values.count)
-        for i in values.indices { p[i] = Float16(values[i]) }
+        // write through the array's own strides (Core ML may pad rows of half-precision arrays)
+        let strides = a.strides.map(\.intValue)
+        let p = a.dataPointer.bindMemory(to: Float16.self, capacity: 1)
+        for i in values.indices {
+            var rest = i, o = 0
+            for d in stride(from: shape.count - 1, through: 0, by: -1) { o += (rest % shape[d]) * strides[d]; rest /= shape[d] }
+            p[o] = Float16(values[i])
+        }
         return a
     }
 }
@@ -312,14 +318,19 @@ extension EditSession {
             // round trip: decode the masked image's latent and read a pixel away from the hole (should be the photo)
             let holeCount = hole.reduce(0) { $0 + ($1 > 127 ? 1 : 0) }
             let maskSum = mask64.reduce(0, +)
-            var rt = "-"
-            if let z = MLArrays.half(maskedLatent.map { $0 / 0.18215 }, shape: [1, 4, L8, L8]),   // as the final decode does
-               let o = try? models.vaeDecoder.prediction(from: MLDictionaryFeatureProvider(dictionary: ["z": z])),
-               let im = o.featureValue(for: "image")?.multiArrayValue {
-                let f = MLArrays.floats(im)
-                let p = 40 * N + 40, q = (N / 2) * N + N / 2
-                rt = String(format: "corner %.2f %.2f %.2f centre %.2f %.2f %.2f", f[p], f[N * N + p], f[2 * N * N + p],
-                            f[q], f[N * N + q], f[2 * N * N + q])
+            var rt = ""
+            for (label, f) in [("x0.18215", Float(0.18215)), ("x1", Float(1)), ("/0.18215", Float(1 / 0.18215))] {
+                if let z = MLArrays.half(maskedLatent.map { $0 * f }, shape: [1, 4, L8, L8]),
+                   let o = try? models.vaeDecoder.prediction(from: MLDictionaryFeatureProvider(dictionary: ["z": z])),
+                   let im = o.featureValue(for: "image")?.multiArrayValue {
+                    let fl = MLArrays.floats(im)
+                    let p = 40 * N + 40
+                    rt += String(format: "[%@ corner %.2f %.2f %.2f] ", label, fl[p], fl[N * N + p], fl[2 * N * N + p])
+                }
+            }
+            if let probe = MLArrays.half([Float](repeating: 0, count: 2 * 768 * 77), shape: [2, 768, 1, 77]),
+               let probe2 = MLArrays.half([Float](repeating: 0, count: 4 * L8 * L8), shape: [1, 4, L8, L8]) {
+                rt += "strides hs \(probe.strides) z \(probe2.strides) enc out \(moments.strides) shape \(moments.shape)"
             }
             let inPx = String(format: "%.2f %.2f %.2f", img[40 * N + 40], img[N * N + 40 * N + 40], img[2 * N * N + 40 * N + 40])
             let lm = (0..<4).map { c in (0..<(L8 * L8)).reduce(Float(0)) { $0 + maskedLatent[c * L8 * L8 + $1] } / Float(L8 * L8) }
