@@ -1087,4 +1087,26 @@ final class LumenUITests: XCTestCase {
         XCTAssertLessThan(v, 90, "dragging left lowers the strength (\(v))")
         shot("preset-strength")
     }
+
+    /// Owner's bug 2026-10-11: with a mask selected, turning the phone left edits invisible until a tab change.
+    func testEditsStillShowAfterTurningThePhoneInMasks() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "linear", "-lumenDemoMaskTab", "adjust"])
+        defer { XCUIDevice.shared.orientation = .portrait; sleep(1) }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        sleep(3)
+        let s = el("slider-Exposure")
+        XCTAssertTrue(s.waitForExistence(timeout: 10), "mask Exposure slider in landscape")
+        let before = events().filter { $0.contains("drew image") }.count
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(2)
+        let after = events().filter { $0.contains("drew image") }.count
+        XCTAssertGreaterThan(after, before, "moving a mask slider after turning the phone must redraw the photo (\(before) -> \(after))")
+        XCUIDevice.shared.orientation = .portrait
+        sleep(2)
+        let back = events().filter { $0.contains("drew image") }.count
+        el("slider-Exposure").doubleTap()
+        sleep(2)
+        XCTAssertGreaterThan(events().filter { $0.contains("drew image") }.count, back, "and again after turning back")
+    }
 }

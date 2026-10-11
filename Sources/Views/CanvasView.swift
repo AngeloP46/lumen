@@ -196,6 +196,10 @@ struct CanvasView: UIViewRepresentable {
     }
 
     func updateUIView(_ v: MTKView, context: Context) {
+        // The model must always point at the view on screen. Turning the phone rebuilds the layout: a view made and
+        // thrown away along the way could leave the model with no view (it is weak), so edits rendered into nothing
+        // until something else redrew the screen (owner's bug report 2026-10-11).
+        if model.view !== v { model.view = v; v.setNeedsDisplay() }
         context.coordinator.xform = xform
         if context.coordinator.hdrOn != hdr {
             context.coordinator.hdrOn = hdr

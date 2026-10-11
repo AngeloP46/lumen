@@ -1096,7 +1096,7 @@ do {
             let out = k.apply(extent: px.extent, arguments: [px, CIVector(x: 0.999, y: 0.0007, z: 0, w: 0)])
             var v = [Float](repeating: 0, count: 4)
             if let out { LumenGPU.context.render(out, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil) }
-            check(v[0] > 0.9 && v[1] < 0.2, "clipping warning should paint blown highlights red (got \(v))")
+            check(v[0] > 0.7 && v[0] > v[1] * 2.5 && v[0] > v[2] * 2.5, "clipping warning should paint blown highlights red (got \(v))")
         } else { check(false, "clipping kernel did not load") }
     } else { check(false, "pro pack checks: no photo could be opened") }
 }

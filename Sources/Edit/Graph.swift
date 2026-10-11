@@ -79,7 +79,9 @@ extension EditSession {
             img = img.applyingFilter("CIPerspectiveTransform", parameters: [
                 "inputTopLeft": pt(q[0]), "inputTopRight": pt(q[1]),
                 "inputBottomRight": pt(q[2]), "inputBottomLeft": pt(q[3]),
-            ]).cropped(to: e)
+            ])
+            // keep the full frame when the photo is made smaller (cropping alone would shrink the extent to the photo)
+            img = img.composited(over: CIImage(color: .clear).cropped(to: e)).cropped(to: e)
         }
         // Flip (mirror) about the centre
         if s.flipH || s.flipV {
