@@ -664,14 +664,16 @@ struct MaskOverlay: View {
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { v in
                     guard !vm.pinching else { return }; let p = free(v.location); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } })
-        // turn: a knob just outside the top of the ellipse; drag it round the centre
-        RotateDot().accessibilityElement(children: .ignore).accessibilityIdentifier("mask-rotate").position(CGPoint(x: centre.x - v.x * (ry + 34), y: centre.y - v.y * (ry + 34)))
+        // turn: a knob just below the centre pin (thumb side), clear of the edge handle; drag it round the centre.
+        // A small ellipse puts it just outside its lower edge instead.
+        let knobR: CGFloat = ry > 110 ? 60 : ry + 40
+        RotateDot().accessibilityElement(children: .ignore).accessibilityIdentifier("mask-rotate").position(CGPoint(x: centre.x + v.x * knobR, y: centre.y + v.y * knobR))
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
                 .onChanged { g in
                     guard !vm.pinching else { return }
                     let fx = g.location.x - centre.x, fy = g.location.y - centre.y
                     guard hypot(fx, fy) > 12 else { return }
-                    // the knob sits along -v, i.e. at (screen angle - 90°); an ellipse looks the same turned 180°
+                    // the knob sits along +v, i.e. at (screen angle + 90°); an ellipse looks the same turned 180°, so this matches
                     var d = Double(atan2(fy, fx)) * 180 / .pi + 90 - Double(geo.clockwise)
                     d = (d + 90).truncatingRemainder(dividingBy: 180)
                     if d < 0 { d += 180 }

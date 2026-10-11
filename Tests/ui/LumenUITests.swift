@@ -907,6 +907,8 @@ final class LumenUITests: XCTestCase {
         launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "radial"])
         XCTAssertTrue(el("mask-pin").waitForExistence(timeout: 30), "radial mask should have a move pin")
         XCTAssertTrue(el("mask-rotate").exists, "radial mask should have a turn handle")
+        let pin = el("mask-pin").frame, knob = el("mask-rotate").frame
+        XCTAssertGreaterThan(knob.midY, pin.midY + 20, "the radial turn knob should sit below the pin, within thumb reach (pin \(pin), knob \(knob))")
         shot("radial-handles")
     }
 
