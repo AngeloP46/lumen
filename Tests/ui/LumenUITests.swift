@@ -444,6 +444,16 @@ final class LumenUITests: XCTestCase {
         shot("heal-unavailable")
     }
 
+    /// A RAW photo opened for the first time starts in HDR (the sample ARW, fresh: no saved edits).
+    func testRawStartsInHDR() {
+        // the library shows the newest import first: the ARW (imported first) is the third photo
+        launch(open: 2, tool: "Light", extra: ["-lumenDemoRawHDR", "1"])
+        XCTAssertTrue(el("pill-hdr").waitForExistence(timeout: 20))
+        XCTAssertTrue(el("file-kind").waitForExistence(timeout: 45) && el("file-kind").label.contains("RAW"),
+                      "the third demo photo should be the RAW (\(el("file-kind").label))")
+        XCTAssertEqual(valueOf("pill-hdr"), "on", "a RAW opened for the first time should start with HDR on")
+    }
+
     /// Remove people (made-up people in CI): the picker shows a pin per person, starts with everyone but the big one,
     /// All / Cancel work, and Remove without the model says so instead of hanging.
     func testRemovePeoplePicker() {

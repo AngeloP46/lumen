@@ -352,13 +352,28 @@ extension EditSession {
         guard let img = decode(maxEdge: 2048, heals: earlier) else { return [] }
         let e = img.extent
         guard let cg = ctx.createCGImage(img, from: e, format: .RGBA8, colorSpace: LumenGPU.displaySpace) else { return [] }
+        // two of Apple's finders, put together: the segmentation (the People mask's) and the per-person one, which
+        // on the CI street photo also caught a man cut off by the frame whose top half the segmentation missed
         let request = VNGeneratePersonSegmentationRequest()
         request.qualityLevel = .accurate
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
-        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { return [] }
-        guard let buffer = request.results?.first?.pixelBuffer else { return [] }
-        // the mask covers the whole photo (whatever its own shape): read it back at up to 768 px, the photo's shape
-        let mask = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
+        let instances = VNGeneratePersonInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+        try? handler.perform([request, instances])
+        // each mask covers the whole photo (whatever its own shape): stretched over it, read back at up to 768 px
+        let ext = CGRect(x: 0, y: 0, width: e.width, height: e.height)
+        var found: [CIImage] = []
+        if let buffer = request.results?.first?.pixelBuffer {
+            found.append(Self.fit(Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])), to: ext))
+        }
+        if let obs = instances.results?.first, !obs.allInstances.isEmpty,
+           let buffer = try? obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler) {
+            found.append(Self.fit(Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])), to: ext))
+        }
+        guard var mask = found.first else { return [] }
+        for m in found.dropFirst() {
+            mask = m.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: mask]).cropped(to: ext)
+        }
         let me = mask.extent
         let s = 768 / max(e.width, e.height)
         let w = max(Int((e.width * s).rounded()), 8), h = max(Int((e.height * s).rounded()), 8)

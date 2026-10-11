@@ -129,7 +129,7 @@ final class EditorViewModel: ObservableObject {
         started = true
         self.store = store
         applyingHistory = true
-        var loaded = store.settings(for: item)
+        var loaded = store.editorSettings(for: item)
         // brush strokes painted before strokes kept their own softness: fix them at the softness they show now,
         // so moving the Feather slider never changes strokes already on the photo
         for mi in loaded.masks.indices {

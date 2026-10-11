@@ -163,6 +163,19 @@ final class LibraryStore: ObservableObject {
         return Self.decodeSettings(data)
     }
 
+    /// What the editor opens a photo with: its saved edits, or for a photo never edited, today's defaults, with HDR on
+    /// for RAW files (they hold highlight detail above white; owner's call 2026-10-11). Edited photos keep their own HDR.
+    func editorSettings(for item: LibraryItem) -> EditSettings {
+        var s = settings(for: item)
+        // CI keeps the old start (the UI tests switch HDR themselves) unless a test asks for this
+        let demoOff = DemoMode.isOn && DemoMode.value("-lumenDemoRawHDR") == nil
+        if !demoOff, !FileManager.default.fileExists(atPath: editURL(item).path),
+           UTType(filenameExtension: (item.fileName as NSString).pathExtension.lowercased())?.conforms(to: .rawImage) == true {
+            s.hdr = true
+        }
+        return s
+    }
+
     private static func decodeSettings(_ data: Data) -> EditSettings {
         let decoder = JSONDecoder()
         if let s = try? decoder.decode(EditSettings.self, from: data) { return s }
