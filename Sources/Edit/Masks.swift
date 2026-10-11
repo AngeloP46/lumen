@@ -451,8 +451,9 @@ extension EditSession {
         func box(_ i: CIImage) -> CIImage {
             i.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: r]).cropped(to: ext)
         }
-        guard let packed = pack.apply(extent: ext, arguments: [source.base, mask]),
-              let ab = coef.apply(extent: ext, arguments: [box(packed), CIVector(x: eps, y: 0, z: 0, w: 0)]),
+        guard let packed = pack.apply(extent: ext, arguments: [source.base, mask, CIVector(x: 0, y: 0, z: 0, w: 0)]),
+              let packedIP = pack.apply(extent: ext, arguments: [source.base, mask, CIVector(x: 1, y: 0, z: 0, w: 0)]),
+              let ab = coef.apply(extent: ext, arguments: [box(packed), box(packedIP), CIVector(x: eps, y: 0, z: 0, w: 0)]),
               let q = apply.apply(extent: ext, arguments: [box(ab), source.base])
         else { return mask }
         return Self.materializedMask(q) ?? Self.materialized(q) ?? q
