@@ -1050,7 +1050,6 @@ do {
                 .concatenating(CGAffineTransform(translationX: W / 2, y: H / 2)))
         let scene = ground.composited(over: sky).cropped(to: sky.extent)
         func levelCheck(_ name: String, _ img: CIImage, tilt: Double) {
-            print("level \(name): vision horizon \(session.levelAngle(of: img).map { String($0) } ?? "none")")
             guard let a = session.levelAngle(of: img) else { check(false, "auto-level found nothing in the \(name) scene"); return }
             check(abs(abs(a) - tilt) < 1.5, "auto-level should find the \(tilt)° tilt of the \(name) scene (got \(a)°)")
             var s = EditSettings(); s.straighten = a
@@ -1074,6 +1073,11 @@ do {
             .concatenating(CGAffineTransform(translationX: W / 2, y: H / 2)))
             .composited(over: CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5))).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
         levelCheck("building", building, tilt: 6)
+        // the edge method on its own (photos with no horizon use it): same scene, must also level it
+        if let cg = LumenGPU.context.createCGImage(building, from: building.extent),
+           let e = EditSession.edgeLevelAngle(cg) {
+            check(abs(e + 6) < 1.5, "edge levelling should turn the 6° clockwise 'building' back by about -6 (got \(e))")
+        } else { check(false, "edge levelling found nothing in the building scene") }
         // a level photo stays (nearly) level
         let flat = bars.composited(over: CIImage(color: .gray)).cropped(to: CGRect(x: 0, y: 0, width: W, height: H))
         if let z = session.levelAngle(of: flat) { check(abs(z) < 0.6, "a level photo should need no turn (got \(z)°)") }

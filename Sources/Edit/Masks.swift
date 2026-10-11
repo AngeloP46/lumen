@@ -294,8 +294,9 @@ extension EditSession {
         let request = VNDetectHorizonRequest()
         if (try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])) != nil,
            let obs = request.results?.first {
-            // Vision: the horizon's angle, anticlockwise positive; turning the photo clockwise by it levels it
-            let deg = Double(obs.angle) * 180 / .pi
+            // Vision's angle is the turn that levels the photo, anticlockwise positive; Straighten is clockwise
+            // positive, hence the minus (checked by the engine test on tilted synthetic scenes)
+            let deg = -Double(obs.angle) * 180 / .pi
             if abs(deg) <= 20 { return (deg * 10).rounded() / 10 }
         }
         // 2. No horizon (buildings, cars, interiors): level the photo's straight edges instead
@@ -354,9 +355,9 @@ extension EditSession {
         let mean = smooth.reduce(0, +) / Float(bins)
         guard smooth[peak] > mean * 2.2 else { return nil }
         let tilt = (Double(peak) + 0.5) / Double(bins) * 40 - 20     // degrees, image rows going down
-        // the folded edge angle is the Straighten value that levels the photo (checked by the engine test on
-        // tilted synthetic scenes: applying it must bring the measured tilt back to zero)
-        let straighten = tilt
+        // rows run downwards, so an edge tilted anticlockwise on screen reads as a negative angle here; the
+        // clockwise turn that levels it (Straighten) is therefore -tilt (checked by the engine test)
+        let straighten = -tilt
         guard abs(straighten) >= 0.2 else { return 0 }
         return (straighten * 10).rounded() / 10
     }
