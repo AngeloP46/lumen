@@ -5,6 +5,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 import Metal
+import Vision
 
 // Headless render test: `engine-test <metallib> <inputDir> <outDir>`
 setvbuf(stdout, nil, _IONBF, 0)
@@ -1547,6 +1548,29 @@ do {
                 if let a = smallRender(original, width: 380), let b = smallRender(tinted, width: 380),
                    let c = developed(made), let d = developed(all) {
                     savePreview("remove-people", [("original", a), ("picked (red)", b), ("one removed", c), ("all removed", d)])
+                    // what Apple's two people finders see (grey = how sure): the one used, and the per-person one
+                    if let img = session.decode(maxEdge: 1200),
+                       let cg = LumenGPU.context.createCGImage(img, from: img.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace) {
+                        var tiles: [(String, CGImage)] = [("photo", a)]
+                        let seg = VNGeneratePersonSegmentationRequest()
+                        seg.qualityLevel = .accurate
+                        seg.outputPixelFormat = kCVPixelFormatType_OneComponent8
+                        let inst = VNGeneratePersonInstanceMaskRequest()
+                        let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+                        try? handler.perform([seg, inst])
+                        if let buf = seg.results?.first?.pixelBuffer {
+                            let m = EditSession.expandRed(CIImage(cvPixelBuffer: buf, options: [.colorSpace: NSNull()]))
+                            let fitted = EditSession.fit(m, to: img.extent)
+                            if let t = smallRender(fitted, width: 380) { tiles.append(("segmentation (used)", t)) }
+                        }
+                        if let obs = inst.results?.first,
+                           let buf = try? obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler) {
+                            print("::notice::person instance request: \(obs.allInstances.count) people")
+                            let m = EditSession.expandRed(CIImage(cvPixelBuffer: buf, options: [.colorSpace: NSNull()]))
+                            if let t = smallRender(EditSession.fit(m, to: img.extent), width: 380) { tiles.append(("instances (\(obs.allInstances.count))", t)) }
+                        } else { print("::warning::person instance request gave nothing") }
+                        savePreview("people-finders", tiles)
+                    }
                     if let diff = compareImages(c, a) {
                         check(diff.all > 1, "removing a person should change the photo (mean diff \(diff.all))")
                     }
