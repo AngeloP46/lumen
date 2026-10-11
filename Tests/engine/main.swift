@@ -1050,6 +1050,7 @@ do {
                 .concatenating(CGAffineTransform(translationX: W / 2, y: H / 2)))
         let scene = ground.composited(over: sky).cropped(to: sky.extent)
         func levelCheck(_ name: String, _ img: CIImage, tilt: Double) {
+            print("level \(name): vision horizon \(session.levelAngle(of: img).map { String($0) } ?? "none")")
             guard let a = session.levelAngle(of: img) else { check(false, "auto-level found nothing in the \(name) scene"); return }
             check(abs(abs(a) - tilt) < 1.5, "auto-level should find the \(tilt)° tilt of the \(name) scene (got \(a)°)")
             var s = EditSettings(); s.straighten = a

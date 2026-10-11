@@ -354,9 +354,9 @@ extension EditSession {
         let mean = smooth.reduce(0, +) / Float(bins)
         guard smooth[peak] > mean * 2.2 else { return nil }
         let tilt = (Double(peak) + 0.5) / Double(bins) * 40 - 20     // degrees, image rows going down
-        // rows run downwards, so an edge tilted anticlockwise on screen reads as a negative angle here; the
-        // clockwise turn that levels it (Straighten) is therefore -tilt
-        let straighten = -tilt
+        // the folded edge angle is the Straighten value that levels the photo (checked by the engine test on
+        // tilted synthetic scenes: applying it must bring the measured tilt back to zero)
+        let straighten = tilt
         guard abs(straighten) >= 0.2 else { return 0 }
         return (straighten * 10).rounded() / 10
     }
