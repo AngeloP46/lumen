@@ -149,10 +149,7 @@ struct EditorView: View {
             vm.panMode = false
             if new == .masks, vm.selectedMaskID == nil, let first = vm.settings.masks.first { vm.selectMask(first.id) }
             if new == .presets { vm.loadPresetThumbs(user: store.userPresets) }
-            if new != .heal {
-                vm.selectedHealID = nil; vm.healMessage = nil
-                if !vm.smartBusy { SmartFillModels.unload() }   // ~1 GB of AI: only kept while healing
-            }
+            if new != .heal { vm.selectedHealID = nil; vm.healMessage = nil }
             if new == .crop || (new != .masks && zoom < 0.999) { withAnimation(.easeOut(duration: 0.18)) { resetZoom() } }
         }
         .onChange(of: zoom) { _, z in vm.zoomChanged(z) }
@@ -190,7 +187,7 @@ struct EditorView: View {
         switch t {
         case .presets: return ToolSpec(compact: vm.presetStrengthAvailable ? 152 : 112, roomy: vm.presetStrengthAvailable ? 152 : 112)
         case .crop: return ToolSpec(compact: 200, roomy: 240)
-        case .heal: return ToolSpec(compact: 196, roomy: 196)
+        case .heal: return ToolSpec(compact: 150, roomy: 150)
         case .grade: return ToolSpec(compact: 250, roomy: 262)
         case .curve: return ToolSpec(compact: 280, roomy: 340)   // the curve fills its panel: bigger is easier
         case .light: return ToolSpec(compact: 100, roomy: 0, rows: 6, header: 44)

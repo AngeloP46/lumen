@@ -15,7 +15,7 @@ struct HealOverlay: View {
             Color.clear.contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("healSpace"))
                     .onChanged { v in
-                        guard !vm.pinching, !vm.healBusy, !vm.smartBusy else { return }
+                        guard !vm.pinching, !vm.healBusy else { return }
                         cursor = v.location
                         guard xform.rect.contains(v.location) else { return }
                         let p = norm(v.location)
@@ -71,11 +71,10 @@ struct HealOverlay: View {
                     .position(screen(pinPoint(h)))
             }
 
-            if vm.healBusy || vm.smartBusy {
+            if vm.healBusy {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text(vm.smartBusy ? "Smart fill \(Int(vm.smartProgress * 100))%" : "Removing…").font(.caption.weight(.semibold))
-                        .monospacedDigit()
+                    Text("Removing…").font(.caption.weight(.semibold))
                 }
                 .padding(.horizontal, 11).padding(.vertical, 6)
                 .background(.ultraThinMaterial, in: Capsule())
@@ -110,15 +109,11 @@ struct HealOverlay: View {
 /// Heal panel: brush size, what to do with a selected fix, and how many there are.
 struct HealPanel: View {
     @ObservedObject var vm: EditorViewModel
-    @ObservedObject private var smart = SmartFillDownloader.shared
-    @State private var askDownload = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !EditSession.hasHealModel {
                 note("Heal isn't available in this build.")
-            } else if case .failed(let why) = smart.state {
-                note(why)
             } else if let msg = vm.healMessage {
                 note(msg)
             } else {
@@ -131,11 +126,10 @@ struct HealPanel: View {
             LabeledSlider(title: "Size", value: Binding(get: { (vm.healSize * 400).rounded() },
                                                         set: { vm.healSize = max($0, 1) / 400 }),
                           range: 1...100, neutral: 12)
-            if let id = vm.selectedHealID { selectedRow(id) }
             HStack(spacing: 8) {
                 if let id = vm.selectedHealID {
                     Button(role: .destructive) { vm.deleteHeal(id) } label: {
-                        Label("Delete", systemImage: "trash").font(.system(size: 12, weight: .semibold))
+                        Label("Delete this fix", systemImage: "trash").font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("heal-delete")
@@ -154,63 +148,6 @@ struct HealPanel: View {
         }
         .padding(.horizontal, 14)
         .padding(.top, 4)
-    }
-
-    /// The picked fix: its versions (quick heal first) and Smart fill.
-    @ViewBuilder
-    private func selectedRow(_ id: UUID) -> some View {
-        let versions = vm.versions(of: id)
-        let at = versions.firstIndex { $0.id == id } ?? 0
-        HStack(spacing: 8) {
-            if versions.count > 1 {
-                Button { vm.useVersion(versions[at - 1]) } label: { Image(systemName: "chevron.left") }
-                    .disabled(at == 0 || vm.smartBusy).accessibilityIdentifier("heal-version-prev")
-                Text(at == 0 ? "Quick fix" : "Smart \(at) of \(versions.count - 1)")
-                    .font(.system(size: 12, weight: .medium)).monospacedDigit().frame(minWidth: 80)
-                    .accessibilityIdentifier("heal-version")
-                Button { vm.useVersion(versions[at + 1]) } label: { Image(systemName: "chevron.right") }
-                    .disabled(at >= versions.count - 1 || vm.smartBusy).accessibilityIdentifier("heal-version-next")
-            }
-            Spacer()
-            smartButton(id, again: versions.count > 1)
-        }
-        .confirmationDialog("Download Smart fill?", isPresented: $askDownload, titleVisibility: .visible) {
-            Button("Download \(smart.megabytes) MB") { smart.start() }
-            Button("Not now", role: .cancel) {}
-        } message: {
-            Text("Smart fill is a bigger AI that understands scenes better than the quick fix. It downloads once (\(smart.megabytes) MB, Wi-Fi recommended) and stays in the app. Each fill takes several seconds; the first one also prepares the AI and takes longer.")
-        }
-    }
-
-    @ViewBuilder
-    private func smartButton(_ id: UUID, again: Bool) -> some View {
-        switch smart.state {
-        case .ready:
-            if vm.smartBusy {
-                ProgressView(value: vm.smartProgress).frame(width: 110).accessibilityIdentifier("smart-progress")
-            } else {
-                Button { vm.smartFill(id) } label: {
-                    Label(again ? "Another" : "Smart fill (beta)", systemImage: "sparkles").font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(vm.healBusy)
-                .accessibilityIdentifier("smart-fill")
-            }
-        case .downloading:
-            HStack(spacing: 6) {
-                ProgressView(value: smart.fraction).frame(width: 90)
-                Text("\(Int(smart.fraction * 100))%").font(.system(size: 11)).monospacedDigit()
-                Button { smart.cancel() } label: { Image(systemName: "xmark.circle.fill") }
-                    .accessibilityLabel("Stop download")
-            }
-            .accessibilityIdentifier("smart-downloading")
-        case .idle, .failed:
-            Button { askDownload = true } label: {
-                Label("Smart fill (beta)", systemImage: "arrow.down.circle").font(.system(size: 12, weight: .semibold))
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("smart-get")
-        }
     }
 
     private func note(_ s: String) -> some View {

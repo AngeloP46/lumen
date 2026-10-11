@@ -62,6 +62,9 @@ final class LibraryStore: ObservableObject {
         // healed patches (Heal tool) live with the library so they survive app updates
         HealStore.directory = root.appendingPathComponent("heals", isDirectory: true)
         try? fm.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
+        // Smart fill (beta, 0.1.154) was taken out again: free the ~950 MB it may have downloaded
+        let lib = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        try? fm.removeItem(at: lib.appendingPathComponent("SmartFill-cyberrealistic-v8-inpaint-6bit", isDirectory: true))
         loadIndex()
         fillInDatesTaken()
         // thumbnails that never got made (or were lost) are made again

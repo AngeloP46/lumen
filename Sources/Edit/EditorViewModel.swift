@@ -5,8 +5,6 @@ import UniformTypeIdentifiers
 
 private let histQueue = DispatchQueue(label: "lumen.hist", qos: .utility)
 private let workQueue = DispatchQueue(label: "lumen.work", qos: .userInitiated)
-/// Smart fill takes many seconds: its own queue, so loading and edits are never stuck behind it.
-private let smartQueue = DispatchQueue(label: "lumen.smartfill", qos: .userInitiated)
 
 struct ExportResult: Identifiable {
     let id = UUID()
@@ -163,8 +161,6 @@ final class EditorViewModel: ObservableObject {
                 self.session = s
                 self.source = src
                 self.unhealedSource = nil   // belonged to the previous photo
-                self.healVersions = [:]
-                self.healSlot = [:]
                 self.isLoading = false
                 self.loadFailed = (src == nil)
                 if let src { self.imageSize = src.size; self.sourceSize = src.size }
@@ -577,7 +573,7 @@ final class EditorViewModel: ObservableObject {
     @Published var selectedHealID: UUID?
     fileprivate var healWaitingForReload = false
 
-    func healBegin(_ p: Pt) { guard !healBusy, !smartBusy else { return }; selectedHealID = nil; healMessage = nil; healStroke = [p] }
+    func healBegin(_ p: Pt) { guard !healBusy else { return }; selectedHealID = nil; healMessage = nil; healStroke = [p] }
     func healExtend(_ p: Pt) {
         guard !healBusy, !healStroke.isEmpty else { return }
         if let last = healStroke.last, hypot(last.x - p.x, last.y - p.y) < 0.002 { return }
@@ -611,8 +607,6 @@ final class EditorViewModel: ObservableObject {
                 self.healWaitingForReload = true
                 if !self.settings.isOn(.heal) { self.settings.setOn(.heal, true) }
                 self.settings.heals.append(spot)
-                // picked straight away, so Smart fill is one tap if the quick fix isn't right
-                self.selectedHealID = spot.id
             }
         }
     }
@@ -636,55 +630,6 @@ final class EditorViewModel: ObservableObject {
                 if self.showOriginal || self.splitCompare { self.requestRender() }
             }
         }
-    }
-
-    // MARK: Smart fill
-
-    @Published private(set) var smartBusy = false
-    @Published private(set) var smartProgress: Double = 0
-    /// Versions made for one fix, the quick heal first: flip between them or make another. Kept while the photo is
-    /// open (the chosen one is what the edit stores).
-    @Published private(set) var healVersions: [UUID: [HealSpot]] = [:]
-    private var healSlot: [UUID: UUID] = [:]   // any version's id -> its fix's key (the quick heal's id)
-
-    func versions(of id: UUID) -> [HealSpot] { healVersions[healSlot[id] ?? id] ?? [] }
-    func isSmart(_ id: UUID) -> Bool { guard let key = healSlot[id] else { return false }; return key != id }
-
-    /// Remakes the fix `id` with the diffusion model and switches to the new version.
-    func smartFill(_ id: UUID) {
-        guard !smartBusy, !healBusy, let session, let idx = settings.heals.firstIndex(where: { $0.id == id }) else { return }
-        let spot = settings.heals[idx]
-        let earlier = Array(settings.heals.prefix(idx))
-        let key = healSlot[id] ?? id
-        if healVersions[key] == nil { healVersions[key] = [spot]; healSlot[id] = key }
-        let seed = UInt64.random(in: 1..<UInt64.max)
-        smartBusy = true
-        smartProgress = 0
-        healMessage = nil
-        smartQueue.async {
-            let made = session.makeSmartHeal(strokes: spot.strokes, earlier: earlier, seed: seed) { step, total in
-                Task { @MainActor [weak self] in self?.smartProgress = Double(step) / Double(total) }
-            }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.smartBusy = false
-                guard let made else {
-                    self.healMessage = "Smart fill couldn't make a version this time. Try again."
-                    return
-                }
-                self.healVersions[key, default: [spot]].append(made)
-                self.healSlot[made.id] = key
-                self.useVersion(made)
-            }
-        }
-    }
-
-    /// Puts another version of a fix in its place (undo brings the previous one back).
-    func useVersion(_ v: HealSpot) {
-        guard let key = healSlot[v.id],
-              let idx = settings.heals.firstIndex(where: { (healSlot[$0.id] ?? $0.id) == key }) else { return }
-        settings.heals[idx] = v
-        selectedHealID = v.id
     }
 
     func deleteHeal(_ id: UUID) {

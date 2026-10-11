@@ -183,8 +183,8 @@ extension EditSession {
     }
 
     /// Mean brightness of `img` where `mask` is white (or, with `invert`, where it is black).
-    static func meanInside(_ img: CIImage, mask: CGImage, invert: Bool, side: Int = healSide) -> Float {
-        let n = CGFloat(side)
+    static func meanInside(_ img: CIImage, mask: CGImage, invert: Bool) -> Float {
+        let n = CGFloat(healSide)
         var m = expandRed(CIImage(cgImage: mask, options: [.colorSpace: NSNull()]))
         if invert { m = m.applyingFilter("CIColorInvert") }
         let r = CGRect(x: 0, y: 0, width: n, height: n)
