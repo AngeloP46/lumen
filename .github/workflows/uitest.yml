@@ -43,6 +43,8 @@ jobs:
         # so a pipe closing early (head) can never turn a passing run into a failure or hide a failing one.
         run: |
           mkdir -p uiout
+          # the AI models are only fetched for real builds; empty stand-ins keep the project building (no Depth/Landscape)
+          mkdir -p Models/DepthAnythingV2SmallF16.mlmodelc Models/DETRResnet50SemanticSegmentationF16.mlmodelc
           xcodegen generate
           UDID=$(xcrun simctl list devices available | grep -E "iPhone 16 Pro Max" | head -1 | grep -oE '[0-9A-F-]{36}')
           xcrun simctl boot $UDID
