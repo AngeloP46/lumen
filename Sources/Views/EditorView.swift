@@ -192,12 +192,12 @@ struct EditorView: View {
             // the colour mixer has a row of swatches above its three sliders
             return vm.colorMix ? ToolSpec(compact: 150, roomy: 0, rows: 3, header: 44 + 46)
                                : ToolSpec(compact: 100, roomy: 0, rows: 4, header: 44, sections: 2 * 30)
-        case .detail: return ToolSpec(compact: 100, roomy: 0, rows: 14, header: 44, sections: 5 * 30)
+        case .detail: return ToolSpec(compact: 100, roomy: 0, rows: 14, header: 8, sections: 5 * 30)
         case .masks:
             if vm.settings.masks.isEmpty || vm.selectedMask == nil { return ToolSpec(compact: 150, roomy: 176) }
-            // header rows (mask chips + Shape/Adjust tabs) sit above the sliders; the list also has a Reset row
+            // header rows (mask chips + Shape/Adjust tabs) sit above the sliders; Reset rides on the first heading
             return vm.maskTab == .shape ? ToolSpec(compact: 250, roomy: 330)
-                                        : ToolSpec(compact: 190, roomy: 0, rows: 14, header: 82 + 44, sections: 4 * 30)
+                                        : ToolSpec(compact: 190, roomy: 0, rows: 14, header: 82, sections: 4 * 30)
         }
     }
 

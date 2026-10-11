@@ -394,6 +394,17 @@ final class LumenUITests: XCTestCase {
         XCTAssertLessThan(abs(panel.frame.height - h0), 4, "a pull that stops short of the list should settle back (\(h0) -> \(panel.frame.height))")
     }
 
+    /// Full list: the page Reset shares the first heading's row instead of taking a row of its own.
+    func testListResetSitsOnFirstHeadingRow() {
+        launch(open: 1, tool: "Masks", extra: ["-lumenDemoMask", "linear", "-lumenDemoMaskTab", "adjust", "-lumenDemoSlider", "list"])
+        let heading = el("section-Light"), reset = el("pill-Reset")
+        XCTAssertTrue(heading.waitForExistence(timeout: 30), "the mask list should start with its Light heading")
+        XCTAssertTrue(reset.exists, "the mask list should have a Reset button")
+        shot("list-reset-heading")
+        XCTAssertLessThan(abs(reset.frame.midY - heading.frame.midY), 14, "Reset (\(reset.frame)) should sit on the heading's row (\(heading.frame))")
+        XCTAssertLessThan(reset.frame.height, 34, "the list Reset should be small (\(reset.frame))")
+    }
+
     // MARK: navigation
 
     func testSwipeToNextPhoto() {

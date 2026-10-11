@@ -187,9 +187,9 @@ struct MaskPanel: View {
                 if vm.maskTab == .shape {
                     ScrollView { shapeControls(m).padding(.horizontal, 14).padding(.bottom, 8) }
                 } else {
-                    ParamPanel(items: localItems(m), selected: $sel, header: AnyView(
-                        PanelActions(resetEnabled: !m.adjust.isNeutral,
-                                     reset: { vm.updateMask(m.id) { $0.adjust = LocalAdjust() } }) { EmptyView() }))
+                    ParamPanel(items: localItems(m), selected: $sel,
+                               pageReset: { vm.updateMask(m.id) { $0.adjust = LocalAdjust() } },
+                               pageResetEnabled: !m.adjust.isNeutral)
                 }
             } else {
                 header(nil)

@@ -235,6 +235,10 @@ struct ParamPanel: View {
     /// Extra control shown beside a section heading (e.g. the white balance picker next to "White balance").
     /// In the one-at-a-time layout, where there are no headings, it sits in the chip row instead.
     var accessories: [String: AnyView] = [:]
+    /// Page reset with nothing else to sit beside: in the list it rides on the first heading's row (no row of its
+    /// own), in the one-at-a-time strip it is a small round icon in front of the slider names.
+    var pageReset: (() -> Void)?
+    var pageResetEnabled = true
     @Environment(\.sliderLayout) private var layout
     @Environment(\.listRowHeight) private var rowHeight
     @State private var sliding = false
@@ -256,9 +260,12 @@ struct ParamPanel: View {
                 if let header {
                     header.padding(.horizontal, 14).padding(.bottom, 4)
                 }
+                if pageReset != nil, items.first?.section == nil {
+                    HStack { Spacer(); smallReset }.padding(.horizontal, 14).frame(height: 30)
+                }
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
                     if let sec = it.section, i == 0 || items[i - 1].section != sec {
-                        SectionHeading(title: sec, accessory: accessories[sec])
+                        SectionHeading(title: sec, accessory: headingAccessory(sec, first: i == 0))
                     }
                     SliderRow(item: it, height: rowHeight, onActive: { sliding = $0 }, reset: { reset(it) })
                 }
@@ -266,6 +273,38 @@ struct ParamPanel: View {
             .padding(.vertical, 4)
         }
         .scrollDisabled(sliding)
+    }
+
+    private func headingAccessory(_ sec: String, first: Bool) -> AnyView? {
+        guard first, pageReset != nil else { return accessories[sec] }
+        return AnyView(HStack(spacing: 8) { if let a = accessories[sec] { a }; smallReset })
+    }
+
+    private var smallReset: some View {
+        Button { pageReset?() } label: {
+            Label("Reset", systemImage: "arrow.counterclockwise")
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 10).frame(height: 26)
+                .background(Theme.chip, in: Capsule())
+                .foregroundStyle(.white)
+        }
+        .opacity(pageResetEnabled ? 1 : 0.45)
+        .disabled(!pageResetEnabled)
+        .accessibilityIdentifier("pill-Reset")
+    }
+
+    private var resetIcon: some View {
+        Button { pageReset?() } label: {
+            Image(systemName: "arrow.counterclockwise")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .background(Theme.chip, in: Circle())
+                .foregroundStyle(.white)
+        }
+        .opacity(pageResetEnabled ? 1 : 0.45)
+        .disabled(!pageResetEnabled)
+        .accessibilityLabel("Reset")
+        .accessibilityIdentifier("pill-Reset")
     }
 
     // MARK: strip
@@ -276,6 +315,7 @@ struct ParamPanel: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
+                        if pageReset != nil { resetIcon }
                         if let header { header }
                         ForEach(Array(accessories.keys.sorted()), id: \.self) { k in accessories[k] }
                         ForEach(items) { it in

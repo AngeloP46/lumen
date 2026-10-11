@@ -210,8 +210,8 @@ struct DetailPanel: View {
             vm.param("Grain", \.grain, range: 0...100, section: "Grain"),
             vm.param("Grain size", \.grainSize, range: 0...100, neutral: 25, section: "Grain"),
             vm.param("Roughness", \.grainRoughness, range: 0...100, neutral: 50, section: "Grain"),
-        ], selected: $sel, header: AnyView(
-            PanelActions(resetEnabled: vm.settings.hasEdits(.detail), reset: { vm.settings.reset(.detail) }) { EmptyView() }))
+        ], selected: $sel,
+           pageReset: { vm.settings.reset(.detail) }, pageResetEnabled: vm.settings.hasEdits(.detail))
     }
 }
 
