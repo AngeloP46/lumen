@@ -1377,6 +1377,44 @@ do {
             }
         }
     }
+    // Smart fill (diffusion inpainting): the tokenizer, and a badge on red paint filled red
+    if ProcessInfo.processInfo.environment["LUMEN_SMARTFILL_DIR"] != nil {
+        check(SmartFillFiles.isComplete, "the smart fill files should all be there")
+        let d = SmartFillFiles.directory
+        if let tok = CLIPTokenizer(vocab: d.appendingPathComponent("vocab.json"), merges: d.appendingPathComponent("merges.txt")) {
+            let ids = tok.encode("a photo")
+            check(Array(ids.prefix(4)) == [49406, 320, 1125, 49407] && ids.count == 77, "CLIP tokens for 'a photo' (\(ids.prefix(5)))")
+        } else { check(false, "the CLIP tokenizer did not load") }
+        let w = 1200, h = 800
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        if let g = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: cs,
+                             bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+            g.setFillColor(CGColor(red: 0.78, green: 0.08, blue: 0.07, alpha: 1)); g.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            g.setFillColor(CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 1)); g.fillEllipse(in: CGRect(x: 570, y: 360, width: 60, height: 80))
+            let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("smart-red.png")
+            if let cg = g.makeImage(), let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) {
+                CGImageDestinationAddImage(dest, cg, nil); CGImageDestinationFinalize(dest)
+            }
+            if let session = EditSession(url: url) {
+                let stroke = BrushStroke(points: [Pt(x: 0.5, y: 0.48), Pt(x: 0.5, y: 0.52)], size: 0.09, erase: false, feather: nil)
+                let t0 = now()
+                var lastStep = 0
+                let spot = session.makeSmartHeal(strokes: [stroke], earlier: [], seed: 7, steps: 12) { s, _ in lastStep = s }
+                print("::notice::smart fill in \(Int((now() - t0) * 1000)) ms, steps done \(lastStep): \(EditSession.healDiagnostics)")
+                if let spot {
+                    session.heals = [spot]
+                    var v = [Float](repeating: 0, count: 4)
+                    if let img = session.decode(maxEdge: nil) {
+                        LumenGPU.context.render(img, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 600, y: 400, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                    }
+                    print("::notice::smart fill red paint centre \(v.prefix(3))")
+                    check(v[0] > 0.3 && v[0] > v[1] * 3 && v[0] > v[2] * 3, "smart fill should paint the badge over in red (centre \(v.prefix(3)))")
+                    session.heals = []
+                } else { check(false, "smart fill returned nothing (\(EditSession.healDiagnostics))") }
+            }
+        }
+        SmartFillModels.unload()
+    } else { print("::warning::no LUMEN_SMARTFILL_DIR: smart fill not checked") }
     // the Sony ARW in SDR and HDR: a heal on a plain area must come back about as bright as what surrounds it
     if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil,
        let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }) {

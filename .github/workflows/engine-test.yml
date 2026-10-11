@@ -16,7 +16,7 @@ concurrency:
 jobs:
   test:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Fetch sample photos
@@ -36,6 +36,12 @@ jobs:
           bash .github/ci/get-depth-model.sh Models
           bash .github/ci/get-seg-model.sh Models
           bash .github/ci/get-heal-model.sh Models
+      - uses: actions/cache@v4
+        with:
+          path: SmartFill
+          key: smartfill-cyberrealistic-v8-inpaint-6bit-1
+      - name: Smart fill model
+        run: bash .github/ci/get-smartfill-model.sh SmartFill
       - name: Build kernels and test tool
         run: |
           mkdir -p out
@@ -43,7 +49,7 @@ jobs:
           xcrun -sdk macosx metallib -cikernel out/k.air -o out/k.metallib
           swiftc -Onone -g -o out/engine-test \
             Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift \
-            Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift \
+            Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift Sources/Edit/SmartFill.swift \
             Sources/Edit/Histogram.swift \
             Tests/engine/main.swift
       - name: Run
@@ -54,6 +60,7 @@ jobs:
           export LUMEN_DEPTH_MODEL="$PWD/Models/DepthAnythingV2SmallF16.mlmodelc"
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
+          export LUMEN_SMARTFILL_DIR="$PWD/SmartFill"
           ./out/engine-test out/k.metallib samples out/render
           code=$?
           echo "engine-test exit code: $code"
