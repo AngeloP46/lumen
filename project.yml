@@ -25,6 +25,11 @@ targets:
         type: folder
         optional: true
         buildPhase: resources
+      # heal model (LaMa inpainting), compiled by CI (.github/ci/get-heal-model.sh)
+      - path: Models/LaMa.mlmodelc
+        type: folder
+        optional: true
+        buildPhase: resources
     info:
       path: Config/Info.plist
       properties:

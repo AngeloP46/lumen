@@ -1280,5 +1280,16 @@ if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
     print("::warning::no LUMEN_SEG_MODEL: scene masks not checked")
 }
 
+// Probe: the heal model's inputs and outputs (annotations)
+if let p = ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] {
+    do {
+        let ml = try MLModel(contentsOf: URL(fileURLWithPath: p))
+        let d = ml.modelDescription
+        for (k, v) in d.inputDescriptionsByName { print("::warning::heal input \(k): \(v)") }
+        for (k, v) in d.outputDescriptionsByName { print("::warning::heal output \(k): \(v)") }
+        for (k, v) in d.metadata { print("::warning::heal meta \(k.rawValue): \(String(describing: v).prefix(400))") }
+    } catch { print("::warning::heal model failed to load: \(error)") }
+}
+
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
 finishChecks()

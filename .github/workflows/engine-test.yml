@@ -30,11 +30,12 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: Models
-          key: models-depth-v2s-f16-detr-seg-f16-1
-      - name: Depth and segmentation models
+          key: models-depth-v2s-f16-detr-seg-f16-lama-1
+      - name: AI models (depth, scene, heal)
         run: |
           bash .github/ci/get-depth-model.sh Models
           bash .github/ci/get-seg-model.sh Models
+          bash .github/ci/get-heal-model.sh Models
       - name: Build kernels and test tool
         run: |
           mkdir -p out
@@ -52,6 +53,7 @@ jobs:
           set +e
           export LUMEN_DEPTH_MODEL="$PWD/Models/DepthAnythingV2SmallF16.mlmodelc"
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
+          export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           ./out/engine-test out/k.metallib samples out/render
           code=$?
           echo "engine-test exit code: $code"
