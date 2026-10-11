@@ -34,6 +34,8 @@ struct LumenKernels {
     var rangeMask: CIColorKernel?
     /// Edge refinement for AI masks (optional: without it masks keep their soft edges).
     var gfPack: CIColorKernel?, gfCoef: CIColorKernel?, gfApply: CIColorKernel?
+    /// Sky seen through trees (optional: without them the sky mask is the scene model's alone).
+    var skyWeigh: CIColorKernel?, leafWeigh: CIColorKernel?, skyGaps: CIColorKernel?
 
     static let shared: LumenKernels? = {
         var url = LumenGPU.libraryURL
@@ -55,7 +57,8 @@ struct LumenKernels {
                             combine: o, maskFinish: p, maskMul: q, overlay: r,
                             gain: k("lumenGain"), gainLocal: k("lumenGainLocal"), applyGain: k("lumenApplyGain"),
                             clip: k("lumenClip"), rangeMask: k("lumenRangeMask"),
-                            gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"))
+                            gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
+                            skyWeigh: k("lumenSkyWeigh"), leafWeigh: k("lumenLeafWeigh"), skyGaps: k("lumenSkyGaps"))
     }()
 }
 

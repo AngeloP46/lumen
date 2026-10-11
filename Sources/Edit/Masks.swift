@@ -298,7 +298,7 @@ extension EditSession {
         }
         if needSky, !source.hasTried(Self.aiSky) {
             if let scene = source.sceneField, scene.found.contains(.sky) {
-                source.storeMask(Self.aiSky, sceneMask([.sky], scene, source: source))
+                source.storeMask(Self.aiSky, sceneMask([.sky], scene, source: source).map { skyThroughTrees($0, scene: scene, source: source) })
             } else {
                 // no scene model in this build, or it saw no sky: the classical finder has a go
                 source.storeMask(Self.aiSky, refined(computeSky(source), source: source))
@@ -557,6 +557,49 @@ extension EditSession {
         ci = Self.blur(ci, 0.7, ci.extent)
         if let m = Self.materialized(ci) { ci = m }
         return refined(Self.fit(ci, to: source.extent), source: source)
+    }
+
+    /// Sky seen through trees (2026-10-11, the owner's Photomator comparison): the scene model works on a 448 px copy,
+    /// so the gaps in the leaves are lost. In the trees near the sky, each pixel is compared with the sky's colour
+    /// there and the leaves' colour there (both measured on the photo around it) and joins whichever it is closer to.
+    /// Only the model's trees are looked at: grass, flowers, buildings and cars never turn into sky.
+    func skyThroughTrees(_ sky: CIImage, scene: SceneField, source: ImageSource) -> CIImage {
+        guard let k = LumenKernels.shared, let weigh = k.skyWeigh, let leaf = k.leafWeigh, let gaps = k.skyGaps else { return sky }
+        let tree = ScenePart.treeClass
+        let cover = scene.labels.map { $0 == tree ? Float(1) : 0 }
+        guard cover.contains(1) else { return sky }
+        let ext = source.extent
+        let data = cover.withUnsafeBufferPointer { Data(buffer: $0) }
+        var t = Self.expandRed(CIImage(bitmapData: data, bytesPerRow: scene.width * 4,
+                                       size: CGSize(width: scene.width, height: scene.height), format: .Rf, colorSpace: nil))
+        // a little wider than the model drew them (their edges are where most gaps are), then softened
+        t = t.applyingFilter("CIMorphologyMaximum", parameters: [kCIInputRadiusKey: 2]).cropped(to: t.extent)
+        t = Self.blur(t, 1.0, t.extent)
+        if let m = Self.materialized(t) { t = m }
+        t = Self.fit(t, to: ext)
+        // the colour fields change slowly: measured on a copy an eighth the size, blurred widely, stretched back
+        let f: CGFloat = 0.125
+        let sigma = max(2, 0.05 * source.longEdge * f)
+        func field(_ img: CIImage?) -> CIImage? {
+            guard let img else { return nil }
+            let small = img.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0])
+            let se = small.extent
+            guard se.width >= 2, se.height >= 2 else { return nil }
+            var b = small.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: sigma]).cropped(to: se)
+            if let m = Self.materialized(b) { b = m }
+            return b.clampedToExtent()
+                .transformed(by: CGAffineTransform(translationX: -se.minX, y: -se.minY))
+                .transformed(by: CGAffineTransform(scaleX: ext.width / se.width, y: ext.height / se.height))
+                .cropped(to: ext)
+        }
+        let sure = CIVector(x: 0.9, y: 0.98, z: 0, w: 0), sureW = CIVector(x: 0.9, y: 0.98, z: 1, w: 0)
+        guard let sn = field(weigh.apply(extent: ext, arguments: [source.base, sky, sure])),
+              let sd = field(weigh.apply(extent: ext, arguments: [source.base, sky, sureW])),
+              let fn = field(leaf.apply(extent: ext, arguments: [source.base, t, sn, sd, CIVector(x: 0, y: 0, z: 0, w: 0)])),
+              let fd = field(leaf.apply(extent: ext, arguments: [source.base, t, sn, sd, CIVector(x: 0, y: 0, z: 1, w: 0)])),
+              let out = gaps.apply(extent: ext, arguments: [source.base, sky, t, sn, sd, fn, fd, CIVector(x: 0.05, y: 0.15, z: 0, w: 0)])
+        else { return sky }
+        return Self.materializedMask(out) ?? out
     }
 
     // MARK: Depth

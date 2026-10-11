@@ -445,6 +445,39 @@ float4 lumenGFApply(sample_t ab, sample_t g, float4 s) {
     return float4(q, q, q, 1.0);
 }
 
+// Sky seen through trees (2026-10-11, the owner's Photomator comparison). The scene model works on a 448 px copy,
+// so gaps in the leaves are lost; these find them again by colour. Colours in OkLab, highlights clamped at white.
+inline float3 lmSkyLab(float3 c) { return lmToLab(clamp(c, 0.0, 1.0)); }
+// 1. the sky colour field's parts: weight = how surely a pixel is sky (soft step p.x..p.y on the sky mask);
+//    p.z > 0.5 = the weight alone, else colour x weight (two images: alpha can't carry data)
+float4 lumenSkyWeigh(sample_t img, sample_t w, float4 p) {
+    float k = lmStep(p.x, p.y, w.r);
+    if (p.z > 0.5) return float4(k, k, k, 1.0);
+    return float4(lmSkyLab(img.rgb) * k, 1.0);
+}
+// 2. the leaves' colour field: tree area that is clearly darker than the sky around it (gaps must not count as leaves)
+//    sn / sd = the sky colour field (colour sum, weight); p.z as above
+float4 lumenLeafWeigh(sample_t img, sample_t t, sample_t sn, sample_t sd, float4 p) {
+    float3 lab = lmSkyLab(img.rgb);
+    float skyL = sn.r / max(sd.r, 1e-4);
+    float k = clamp(t.r, 0.0, 1.0) * (1.0 - lmStep(skyL - 0.3, skyL - 0.12, lab.x));
+    if (p.z > 0.5) return float4(k, k, k, 1.0);
+    return float4(lab * k, 1.0);
+}
+// 3. in the trees near the sky each pixel joins whichever colour it is closer to, the sky's there or the leaves';
+//    elsewhere the sky mask stays as it was. p = (margin, how much sky around counts as near, 0, 0)
+float4 lumenSkyGaps(sample_t img, sample_t sky, sample_t t, sample_t sn, sample_t sd, sample_t fn, sample_t fd, float4 p) {
+    float s = clamp(sky.r, 0.0, 1.0);
+    float zone = clamp(t.r, 0.0, 1.0) * clamp(sd.r / p.y, 0.0, 1.0) * lmStep(0.0, 0.02, fd.r);
+    if (zone <= 0.0) return float4(s, s, s, 1.0);
+    float3 lab = lmSkyLab(img.rgb);
+    float3 sc = sn.rgb / max(sd.r, 1e-4);
+    float3 fc = fn.rgb / max(fd.r, 1e-4);
+    float score = lmStep(-p.x, p.x, distance(lab, fc) - distance(lab, sc));
+    float v = mix(s, score, zone);
+    return float4(v, v, v, 1.0);
+}
+
 // Mask overlay: tints `s` towards colour.rgb by mask * colour.a
 float4 lumenOverlay(sample_t s, sample_t m, float4 colour) {
     float k = clamp(m.r, 0.0, 1.0) * colour.a;

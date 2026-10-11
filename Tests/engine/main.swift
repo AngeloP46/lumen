@@ -1283,6 +1283,49 @@ if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
             check(mv.v.reduce(0, +) / Float(mv.v.count) > 0.05, "matterhorn: the Mountains part should select something")
         }
     }
+    // Sky seen through trees (2026-10-11): before / after sheets, and the gaps never spill onto a white building
+    var skyTiles: [(String, CGImage)] = []
+    var skyPhotos = files.filter { ["jpg", "arw"].contains($0.pathExtension.lowercased()) }
+    if let t = ProcessInfo.processInfo.environment["LUMEN_TREES_SAMPLE"] { skyPhotos.insert(URL(fileURLWithPath: t), at: 0) }
+    for url in skyPhotos {
+        guard let session = EditSession(url: url), let source = session.makeSource(maxEdge: 1200, materialize: true),
+              let scene = session.computeScene(source), scene.found.contains(.sky),
+              let before = session.sceneMask([.sky], scene, source: source), let k = LumenKernels.shared else { continue }
+        let stem = url.deletingPathExtension().lastPathComponent
+        let t0 = now()
+        let after = session.skyThroughTrees(before, scene: scene, source: source)
+        let ms = Int((now() - t0) * 1000)
+        guard let mb = maskValues(before, width: 96), let ma = maskValues(after, width: 96) else { continue }
+        let meanB = mb.v.reduce(0, +) / Float(mb.v.count), meanA = ma.v.reduce(0, +) / Float(ma.v.count)
+        let trees = scene.labels.filter { $0 == ScenePart.treeClass }.count
+        print("::notice::sky through trees \(stem): \(ms) ms, sky \(meanB) -> \(meanA), tree labels \(trees)")
+        check(meanA > meanB - 0.02, "\(stem): sky through trees should not lose sky (\(meanB) -> \(meanA))")
+        if trees == 0 { check(abs(meanA - meanB) < 0.005, "\(stem): with no trees the sky mask should not change (\(meanB) -> \(meanA))") }
+        if stem == "building" {
+            // the white facade (right half, upper middle) is architecture: it must stay out of the sky
+            var sum: Float = 0, n: Float = 0
+            for y in 0..<ma.h where Float(y) / Float(ma.h) > 0.15 && Float(y) / Float(ma.h) < 0.6 {
+                for x in 0..<ma.w where Float(x) / Float(ma.w) > 0.6 && Float(x) / Float(ma.w) < 0.9 { sum += ma.v[y * ma.w + x]; n += 1 }
+            }
+            check(n > 0 && sum / n < 0.15, "building: the white facade must not become sky (\(sum / max(n, 1)))")
+        }
+        let photo = session.develop(EditSettings(), source: source, geometry: true)
+        func tinted(_ m: CIImage) -> CGImage? {
+            smallRender(k.overlay.apply(extent: photo.extent, arguments: [photo, m, CIVector(x: 1, y: 0.1, z: 0.12, w: 0.55)]) ?? photo, width: 300)
+        }
+        if let p = smallRender(photo, width: 300), let b = tinted(before), let a = tinted(after) {
+            skyTiles += [("\(stem)", p), ("sky before", b), ("sky through trees", a)]
+        }
+    }
+    if !skyTiles.isEmpty, let cg = sheet(skyTiles, cell: 300, cols: 3) {
+        let dir = outDir.appendingPathComponent("previews")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let d = CGImageDestinationCreateWithURL(dir.appendingPathComponent("sky-trees.jpg") as CFURL, UTType.jpeg.identifier as CFString, 1, nil) {
+            CGImageDestinationAddImage(d, cg, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+            CGImageDestinationFinalize(d)
+            print("::notice::preview sky-trees.jpg saved")
+        }
+    }
 } else {
     print("::warning::no LUMEN_SEG_MODEL: scene masks not checked")
 }

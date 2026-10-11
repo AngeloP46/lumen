@@ -32,6 +32,8 @@ jobs:
           # people on a street (Remove people); kept apart from the samples every edit case renders
           mkdir -p people
           bash .github/ci/get.sh people/bus.jpg "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/assets/bus.jpg" 50000
+          # a tree against a pale sky beside a white building (sky seen through trees)
+          bash .github/ci/get.sh people/building.jpg "https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/building.jpg" 50000
       - uses: actions/cache@v4
         with:
           path: Models
@@ -60,6 +62,7 @@ jobs:
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           export LUMEN_PEOPLE_SAMPLE="$PWD/people/bus.jpg"
+          export LUMEN_TREES_SAMPLE="$PWD/people/building.jpg"
           ./out/engine-test out/k.metallib samples out/render
           code=$?
           echo "engine-test exit code: $code"

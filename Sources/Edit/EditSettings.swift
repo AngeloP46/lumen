@@ -113,6 +113,9 @@ enum ScenePart: String, Codable, CaseIterable, Identifiable {
     /// that picked it still work.
     static let landscapeParts: [ScenePart] = [.water, .vegetation, .mountains, .architecture, .naturalGround, .artificialGround]
 
+    /// "tree-merged": the only class looked at for sky seen through leaves.
+    static let treeClass: Int32 = 184
+
     var classes: [Int32] {
         switch self {
         case .sky: [187]
