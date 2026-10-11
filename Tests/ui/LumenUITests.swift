@@ -432,6 +432,18 @@ final class LumenUITests: XCTestCase {
         XCTAssertFalse(el("mask-empty").exists)
     }
 
+    /// Heal: a stroke on the photo never crashes or hangs, and without the model the panel says Heal isn't available.
+    func testHealToolPaintsAndExplainsWhenUnavailable() {
+        launch(open: 0, tool: "Heal")
+        XCTAssertTrue(el("heal-layer").waitForExistence(timeout: 20), "the Heal tool should put a paint layer on the photo")
+        let photo = el("photo")
+        photo.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: photo.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.5)))
+        XCTAssertTrue(el("heal-note").waitForExistence(timeout: 10), "without the model in this build, the panel should say so")
+        XCTAssertFalse(el("heal-busy").exists, "nothing should be left spinning")
+        shot("heal-unavailable")
+    }
+
     // MARK: navigation
 
     func testSwipeToNextPhoto() {
@@ -501,7 +513,7 @@ final class LumenUITests: XCTestCase {
         launch(open: 0, tool: "Presets")
         let bar = el("tool-Light").frame
         // each tap switches to a different tool than the one before, so no tap closes the panel
-        for name in ["Presets", "Crop", "Light", "Color", "Grade", "Curve", "Detail", "Masks"] {
+        for name in ["Presets", "Crop", "Light", "Color", "Grade", "Curve", "Detail", "Masks", "Heal"] {
             if name != "Presets" {
                 XCTAssertTrue(el("tool-\(name)").waitForExistence(timeout: 10), "tool button \(name) should exist")
                 el("tool-\(name)").tap()

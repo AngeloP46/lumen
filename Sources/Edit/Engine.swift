@@ -160,6 +160,55 @@ struct SceneField: Sendable {
     }
 }
 
+/// Where healed patches live: `<id>.png` (the rebuilt pixels, sRGB, divided by the spot's `scale`) and
+/// `<id>-mask.png` (where to blend them in, soft-edged). The app points `directory` at its library folder; files are
+/// never changed once written, so a spot's id names its pixels for good (undo, reopening, export all find them).
+enum HealStore {
+    nonisolated(unsafe) static var directory: URL = FileManager.default.temporaryDirectory.appendingPathComponent("LumenHeals")
+    private static let cache = NSCache<NSString, CIImage>()
+
+    static func patchURL(_ id: UUID) -> URL { directory.appendingPathComponent("\(id.uuidString).png") }
+    static func maskURL(_ id: UUID) -> URL { directory.appendingPathComponent("\(id.uuidString)-mask.png") }
+
+    private static func load(_ url: URL, raw: Bool) -> CIImage? {
+        let key = url.lastPathComponent as NSString
+        if let hit = cache.object(forKey: key) { return hit }
+        let opts: [CIImageOption: Any] = raw ? [.colorSpace: NSNull()] : [:]
+        guard let img = CIImage(contentsOf: url, options: opts) else { return nil }
+        cache.setObject(img, forKey: key)
+        return img
+    }
+
+    /// Paints every spot's rebuilt pixels into `img` (any size: the spot's rectangle is a fraction of the photo).
+    static func apply(_ heals: [HealSpot], to img: CIImage) -> CIImage {
+        var out = img
+        let ext = img.extent
+        for h in heals {
+            guard let patch = load(patchURL(h.id), raw: false), let mask = load(maskURL(h.id), raw: true) else { continue }
+            // the spot's rectangle on this image (Core Image counts rows from the bottom)
+            let r = CGRect(x: ext.minX + h.x * ext.width, y: ext.minY + (1 - h.y - h.h) * ext.height,
+                           width: h.w * ext.width, height: h.h * ext.height)
+            func fit(_ i: CIImage) -> CIImage {
+                let e = i.extent
+                return i.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+                    .transformed(by: CGAffineTransform(scaleX: r.width / e.width, y: r.height / e.height))
+                    .transformed(by: CGAffineTransform(translationX: r.minX, y: r.minY))
+            }
+            var p = fit(patch)
+            if h.scale != 1 {
+                let s = CGFloat(h.scale)
+                p = p.applyingFilter("CIColorMatrix", parameters: [
+                    "inputRVector": CIVector(x: s, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: s, z: 0, w: 0),
+                    "inputBVector": CIVector(x: 0, y: 0, z: s, w: 0)])
+            }
+            let m = fit(mask)
+            out = p.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: out, kCIInputMaskImageKey: m])
+                .cropped(to: ext)
+        }
+        return out
+    }
+}
+
 /// Small row-major float RGBA grid (linear working space).
 struct PixelGrid: Sendable {
     var width: Int
@@ -193,6 +242,13 @@ final class EditSession: @unchecked Sendable {
     private let plain: CIImage?
     let nativeSize: CGSize
     private let decodeLock = NSLock()
+    /// Healed spots to paint into every decode (preview, full resolution, export, thumbnails). Set from the edits
+    /// before decoding; `renderCGImage(_:maxEdge:)` and `renderData` do it themselves.
+    var heals: [HealSpot] {
+        get { decodeLock.lock(); defer { decodeLock.unlock() }; return healList }
+        set { decodeLock.lock(); healList = newValue; decodeLock.unlock() }
+    }
+    private var healList: [HealSpot] = []
 
     // Look table cache
     private let cubeLock = NSLock()
@@ -241,6 +297,12 @@ final class EditSession: @unchecked Sendable {
     /// Linear working-space image whose long edge is at most `maxEdge` (nil = full size), origin at (0,0).
     func decode(maxEdge: CGFloat?) -> CIImage? {
         decodeLock.lock(); defer { decodeLock.unlock() }
+        guard let img = decodeUnhealed(maxEdge: maxEdge) else { return nil }
+        return HealStore.apply(healList, to: img)
+    }
+
+    /// The photo as the camera made it, without heals (Heal needs it to rebuild a spot from scratch).
+    func decodeUnhealed(maxEdge: CGFloat?) -> CIImage? {
         let longEdge = max(nativeSize.width, nativeSize.height)
         let target = maxEdge.map { min(1, $0 / longEdge) } ?? 1
         if let raw {
@@ -254,6 +316,13 @@ final class EditSession: @unchecked Sendable {
                                      parameters: [kCIInputScaleKey: target, kCIInputAspectRatioKey: 1.0])
         }
         return Self.normalized(img)
+    }
+
+    /// Decode with heals for an explicit list (used while making a new heal, which must see the earlier ones).
+    func decode(maxEdge: CGFloat?, heals list: [HealSpot]) -> CIImage? {
+        decodeLock.lock(); defer { decodeLock.unlock() }
+        guard let img = decodeUnhealed(maxEdge: maxEdge) else { return nil }
+        return HealStore.apply(list, to: img)
     }
 
     /// Decodes and analyses the photo. `materialize` renders the pieces into GPU buffers so slider drags are cheap.

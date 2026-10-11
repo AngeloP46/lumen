@@ -122,6 +122,7 @@ extension EditSession {
 
     /// Small renders for thumbnails and presets. Automatic (AI) masks are skipped.
     func renderCGImage(_ s: EditSettings, maxEdge: CGFloat) -> CGImage? {
+        heals = s.effective.heals
         guard let src = makeSource(maxEdge: maxEdge, materialize: false) else { return nil }
         return renderCGImage(s, source: src)
     }
@@ -135,6 +136,7 @@ extension EditSession {
     /// HDR gain map when the photo is edited in HDR.
     func renderData(_ s: EditSettings, format: ExportFormat, quality: Double, maxEdge: CGFloat? = nil,
                     includeHDR: Bool = true) -> Data? {
+        heals = s.effective.heals
         guard let src = makeSource(maxEdge: nil, materialize: false) else { return nil }
         prepareAutoMasks(s, source: src)
         var img = develop(s, source: src, geometry: true)

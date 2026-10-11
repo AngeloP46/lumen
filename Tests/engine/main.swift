@@ -1280,15 +1280,70 @@ if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] {
     print("::warning::no LUMEN_SEG_MODEL: scene masks not checked")
 }
 
-// Probe: the heal model's inputs and outputs (annotations)
-if let p = ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] {
-    do {
-        let ml = try MLModel(contentsOf: URL(fileURLWithPath: p))
-        let d = ml.modelDescription
-        for (k, v) in d.inputDescriptionsByName { print("::warning::heal input \(k): \(v)") }
-        for (k, v) in d.outputDescriptionsByName { print("::warning::heal output \(k): \(v)") }
-        for (k, v) in d.metadata { print("::warning::heal meta \(k.rawValue): \(String(describing: v).prefix(400))") }
-    } catch { print("::warning::heal model failed to load: \(error)") }
+// Heal (2026-10-11): a stored patch is painted into every decode; with the model, a red disc is removed
+do {
+    HealStore.directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("heal-test-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
+    let w = 1200, h = 800
+    let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+    if let g = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: cs,
+                         bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+        // a soft green-to-blue background with stripes (something to copy from) and a red disc in the middle
+        for x in stride(from: 0, to: w, by: 4) {
+            let t = CGFloat(x) / CGFloat(w)
+            g.setFillColor(CGColor(red: 0.2, green: 0.5 - 0.2 * t, blue: 0.3 + 0.4 * t, alpha: 1))
+            g.fill(CGRect(x: x, y: 0, width: 4, height: h))
+        }
+        g.setFillColor(CGColor(red: 0.15, green: 0.35, blue: 0.4, alpha: 1))
+        for y in stride(from: 0, to: h, by: 40) { g.fill(CGRect(x: 0, y: y, width: w, height: 6)) }
+        g.setFillColor(CGColor(red: 0.95, green: 0.05, blue: 0.05, alpha: 1))
+        g.fillEllipse(in: CGRect(x: 540, y: 340, width: 120, height: 120))
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("heal-test.png")
+        if let cg = g.makeImage(), let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) {
+            CGImageDestinationAddImage(dest, cg, nil); CGImageDestinationFinalize(dest)
+        }
+        if let session = EditSession(url: url) {
+            func centre(_ heals: [HealSpot]) -> [Float] {
+                session.heals = heals
+                guard let img = session.decode(maxEdge: nil) else { return [] }
+                var v = [Float](repeating: 0, count: 4)
+                LumenGPU.context.render(img, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 600, y: 400, width: 1, height: 1),
+                                        format: .RGBAf, colorSpace: nil)
+                return v
+            }
+            let before = centre([])
+            check(before.count == 4 && before[0] > before[1] * 3, "heal test: the disc should be red before healing (\(before))")
+            // 1. the store: a hand-made grey patch over the disc replaces it
+            let id = UUID()
+            if let grey = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0, space: cs,
+                                    bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
+               let maskCtx = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,
+                                       space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) {
+                grey.setFillColor(CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)); grey.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+                maskCtx.setFillColor(gray: 1, alpha: 1); maskCtx.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+                try? LumenGPU.context.writePNGRepresentation(of: CIImage(cgImage: grey.makeImage()!), to: HealStore.patchURL(id),
+                                                              format: .RGBA8, colorSpace: cs)
+                try? EditSession.writeGrayPNG(maskCtx.makeImage()!, to: HealStore.maskURL(id))
+                let spot = HealSpot(id: id, strokes: [], x: 0.4, y: 0.4, w: 0.2, h: 0.2)
+                let after = centre([spot])
+                check(after.count == 4 && abs(after[0] - after[1]) < 0.05, "a stored heal patch should replace the disc (\(after))")
+            }
+            // 2. the model: paint over the disc and it is rebuilt from the stripes around it
+            if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil {
+                check(EditSession.hasHealModel, "the heal model should load from LUMEN_HEAL_MODEL")
+                let stroke = BrushStroke(points: [Pt(x: 0.49, y: 0.5), Pt(x: 0.51, y: 0.5)], size: 0.12, erase: false, feather: nil)
+                session.heals = []
+                let t0 = now()
+                if let spot = session.makeHeal(strokes: [stroke], earlier: []) {
+                    print("::notice::heal made in \(Int((now() - t0) * 1000)) ms, rect \(spot.x),\(spot.y) \(spot.w)x\(spot.h), scale \(spot.scale)")
+                    let after = centre([spot])
+                    check(after.count == 4 && after[0] < after[2] && after[0] < 0.5 * before[0],
+                          "healing should remove the red disc (centre before \(before), after \(after))")
+                } else { check(false, "makeHeal returned nothing") }
+            } else { print("::warning::no LUMEN_HEAL_MODEL: heal model not checked") }
+            session.heals = []
+        } else { check(false, "heal test: synthetic photo did not open") }
+    }
 }
 
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")

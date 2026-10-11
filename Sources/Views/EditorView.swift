@@ -3,7 +3,7 @@ import SwiftUI
 private enum Tool: String, CaseIterable, Identifiable {
     // tool bar order, left to right; Presets is last (least used)
     case crop = "Crop", light = "Light", color = "Color", grade = "Grade"
-    case curve = "Curve", detail = "Detail", masks = "Masks", presets = "Presets"
+    case curve = "Curve", detail = "Detail", masks = "Masks", heal = "Heal", presets = "Presets"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -15,6 +15,7 @@ private enum Tool: String, CaseIterable, Identifiable {
         case .curve: return "point.topleft.down.curvedto.point.bottomright.up"
         case .detail: return "triangle"
         case .masks: return "circle.dashed.inset.filled"
+        case .heal: return "bandage"
         }
     }
     /// The part of the edit this tool owns (Presets owns none).
@@ -148,6 +149,7 @@ struct EditorView: View {
             vm.panMode = false
             if new == .masks, vm.selectedMaskID == nil, let first = vm.settings.masks.first { vm.selectMask(first.id) }
             if new == .presets { vm.loadPresetThumbs(user: store.userPresets) }
+            if new != .heal { vm.selectedHealID = nil; vm.healMessage = nil }
             if new == .crop || (new != .masks && zoom < 0.999) { withAnimation(.easeOut(duration: 0.18)) { resetZoom() } }
         }
         .onChange(of: zoom) { _, z in vm.zoomChanged(z) }
@@ -185,6 +187,7 @@ struct EditorView: View {
         switch t {
         case .presets: return ToolSpec(compact: vm.presetStrengthAvailable ? 152 : 112, roomy: vm.presetStrengthAvailable ? 152 : 112)
         case .crop: return ToolSpec(compact: 200, roomy: 240)
+        case .heal: return ToolSpec(compact: 150, roomy: 150)
         case .grade: return ToolSpec(compact: 250, roomy: 262)
         case .curve: return ToolSpec(compact: 280, roomy: 340)   // the curve fills its panel: bigger is easier
         case .light: return ToolSpec(compact: 100, roomy: 0, rows: 6, header: 44)
@@ -205,7 +208,7 @@ struct EditorView: View {
     /// leaves room for it, so switching between them never moves or resizes the photo.
     private func sharesHeight(_ t: Tool) -> Bool {
         switch t {
-        case .crop: return false
+        case .crop, .heal: return false
         case .masks: return vm.selectedMask != nil && vm.maskTab == .adjust
         default: return true
         }
@@ -432,6 +435,10 @@ struct EditorView: View {
                             // hidden (not removed, so a drag in progress survives) while the original is showing
                             .opacity(vm.showOriginal ? 0 : 1)
                     }
+                    if tool == .heal {
+                        HealOverlay(vm: vm, xform: xform, geo: SourceGeometry(source: vm.sourceSize, settings: vm.settings))
+                            .opacity(vm.showOriginal ? 0 : 1)
+                    }
                     if tool == .color && vm.wbPicking && !vm.colorMix { wbLayer(xform) }
                     if vm.splitCompare && !vm.showOriginal && tool != .crop { splitLayer(xform) }
                 }
@@ -607,7 +614,7 @@ struct EditorView: View {
             Menu {
                 // Short, flat, most-used first. Nothing in here changes while the menu is open.
                 Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
-                Button { if let c = store.clipboard { vm.settings = c } } label: {
+                Button { if var c = store.clipboard { c.heals = vm.settings.heals; vm.settings = c } } label: {
                     Label("Paste edits", systemImage: "doc.on.clipboard")
                 }.disabled(store.clipboard == nil)
                 Button { showPasteSome = true } label: {
@@ -664,8 +671,9 @@ struct EditorView: View {
 
     // MARK: Gestures
 
-    private var canNavigate: Bool { tool != .masks && tool != .crop }
-    private var canCompare: Bool { tool != .crop && !(tool == .masks && vm.maskTab == .shape && vm.selectedMask != nil) }
+    private var canNavigate: Bool { tool != .masks && tool != .crop && tool != .heal }
+    // in Heal a resting finger is the start of a stroke, not a request to see the original
+    private var canCompare: Bool { tool != .crop && tool != .heal && !(tool == .masks && vm.maskTab == .shape && vm.selectedMask != nil) }
     /// One finger pans a zoomed photo wherever it is not busy with something else (mask handles, brush, crop frame).
     private var canPan: Bool { tool != .crop }
     /// In Masks the photo can be made smaller than the screen, so a gradient or radial can reach far past its edges.
@@ -779,6 +787,7 @@ struct EditorView: View {
             if DemoMode.isOn { DemoMode.log(String(format: "pinch began spread %.0f tool %@", Double(spread), tool?.rawValue ?? "none")) }
             vm.pinching = true
             if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
+            if tool == .heal { vm.healCancel() }
             twoFinger = (zoom, pan, p, spread)
             panBase = nil
             pinchBase = nil
@@ -818,6 +827,7 @@ struct EditorView: View {
                 if pinchBase == nil {
                     pinchBase = (zoom, pan)
                     if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
+                    if tool == .heal { vm.healCancel() }
                 }
                 if let b = pinchBase { setZoom(b.zoom * v.magnification, anchor: v.startLocation, from: b, xf) }
             }
@@ -905,6 +915,7 @@ struct EditorView: View {
         case .curve: CurvePanel(vm: vm)
         case .detail: DetailPanel(vm: vm)
         case .masks: MaskPanel(vm: vm)
+        case .heal: HealPanel(vm: vm)
         }
     }
 }

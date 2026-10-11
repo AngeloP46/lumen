@@ -89,7 +89,7 @@ struct PasteSomeSheet: View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(EditSection.allCases) { sec in
+                    ForEach(EditSection.allCases.filter(\.canPaste)) { sec in
                         let has = clip.hasEdits(sec)
                         Toggle(isOn: Binding(get: { chosen.contains(sec) },
                                              set: { if $0 { chosen.insert(sec) } else { chosen.remove(sec) } })) {

@@ -59,6 +59,9 @@ final class LibraryStore: ObservableObject {
         for d in [filesDir, thumbsDir, editsDir] {
             try? fm.createDirectory(at: d, withIntermediateDirectories: true)
         }
+        // healed patches (Heal tool) live with the library so they survive app updates
+        HealStore.directory = root.appendingPathComponent("heals", isDirectory: true)
+        try? fm.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         loadIndex()
         fillInDatesTaken()
         // thumbnails that never got made (or were lost) are made again
@@ -208,8 +211,9 @@ final class LibraryStore: ObservableObject {
     func apply(_ edits: EditSettings, to list: [LibraryItem], keepOwn: Bool) {
         for item in list {
             var s = edits
+            let own = settings(for: item)
+            s.heals = own.heals   // heals are made for one photo's pixels: always keep each photo's own
             if keepOwn {
-                let own = settings(for: item)
                 s.masks = own.masks
                 s.straighten = own.straighten
                 s.quarterTurns = own.quarterTurns
@@ -333,6 +337,7 @@ final class LibraryStore: ObservableObject {
     func addUserPreset(name: String, from edits: EditSettings) {
         var s = edits
         s.masks = []
+        s.heals = []
         s.straighten = 0
         s.quarterTurns = 0
         s.cropAspect = 0

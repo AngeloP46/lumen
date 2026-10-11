@@ -141,10 +141,12 @@ final class EditorViewModel: ObservableObject {
         applyingHistory = false
         let url = store.fileURL(item)
         let wantsHDR = settings.hdr
+        let heals = settings.effective.heals
         let asked = Date()
         workQueue.async {
             let began = Date()
             let s = EditSession(url: url, expandHDR: wantsHDR)
+            s?.heals = heals
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -173,9 +175,11 @@ final class EditorViewModel: ObservableObject {
         let generation = loadGeneration
         let url = store.fileURL(item)
         let wantsHDR = settings.hdr
+        let heals = settings.effective.heals
         let previous = source
         workQueue.async {
             let s = EditSession(url: url, expandHDR: wantsHDR)
+            s?.heals = heals
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self, generation == self.loadGeneration, let s, let src else { return }
@@ -192,6 +196,8 @@ final class EditorViewModel: ObservableObject {
                 if DemoMode.isOn { DemoMode.log("reloaded hdr \(wantsHDR)") }
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()
+                // a new heal shows once the photo has been decoded with it
+                if self.healBusy && self.healWaitingForReload { self.healBusy = false; self.healStroke = []; self.healWaitingForReload = false }
             }
         }
     }
@@ -224,7 +230,8 @@ final class EditorViewModel: ObservableObject {
         scheduleSave()
         requestRender()
         if settings.masks != old.masks { prepareAutoMasksIfNeeded() }
-        if settings.hdr != old.hdr { reloadSource() }
+        // HDR changes how the file is decoded; heals are painted in while decoding
+        if settings.hdr != old.hdr || settings.effective.heals != old.effective.heals { reloadSource() }
     }
 
     private func scheduleSave() {
@@ -511,6 +518,7 @@ final class EditorViewModel: ObservableObject {
     func apply(preset edits: EditSettings) {
         var s = edits
         s.masks = settings.masks
+        s.heals = settings.heals
         s.take(.crop, from: settings)
         s.hdr = settings.hdr; s.hdrStops = settings.hdrStops
         s.disabled = settings.disabled
@@ -543,12 +551,66 @@ final class EditorViewModel: ObservableObject {
         settings = EditSettings.blend(r.before, r.after, presetAmount / 100)
     }
 
+    // MARK: Heal
+
+    /// The stroke being painted with Heal (photo-normalised points), shown on the photo until the AI is done.
+    @Published var healStroke: [Pt] = []
+    /// Heal brush diameter, a fraction of the photo's long edge.
+    @Published var healSize = 0.03
+    @Published private(set) var healBusy = false
+    @Published var healMessage: String?
+    @Published var selectedHealID: UUID?
+    fileprivate var healWaitingForReload = false
+
+    func healBegin(_ p: Pt) { guard !healBusy else { return }; selectedHealID = nil; healMessage = nil; healStroke = [p] }
+    func healExtend(_ p: Pt) {
+        guard !healBusy, !healStroke.isEmpty else { return }
+        if let last = healStroke.last, hypot(last.x - p.x, last.y - p.y) < 0.002 { return }
+        healStroke.append(p)
+    }
+    /// A pinch started: the first finger was not a stroke.
+    func healCancel() { if !healBusy { healStroke = [] } }
+
+    /// Finger lifted: rebuild what was painted over.
+    func healEnd() {
+        guard !healBusy, !healStroke.isEmpty, let session else { if !healBusy { healStroke = [] }; return }
+        guard EditSession.hasHealModel else {
+            healStroke = []
+            healMessage = "Heal isn't available in this build."
+            return
+        }
+        let stroke = BrushStroke(points: healStroke, size: healSize, erase: false, feather: nil)
+        let earlier = settings.effective.heals
+        healBusy = true
+        workQueue.async {
+            let spot = session.makeHeal(strokes: [stroke], earlier: earlier)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard let spot else {
+                    self.healBusy = false
+                    self.healStroke = []
+                    self.healMessage = "Couldn't remove that one. Try painting over it again, a little wider."
+                    return
+                }
+                // keep the painted stroke up until the photo is decoded again with the fix
+                self.healWaitingForReload = true
+                if !self.settings.isOn(.heal) { self.settings.setOn(.heal, true) }
+                self.settings.heals.append(spot)
+            }
+        }
+    }
+
+    func deleteHeal(_ id: UUID) {
+        settings.heals.removeAll { $0.id == id }
+        if selectedHealID == id { selectedHealID = nil }
+    }
+
     // MARK: Paste some edits
 
     /// Pastes only the chosen tools from the copied edits.
     func paste(_ sections: Set<EditSection>, from c: EditSettings) {
         var s = settings
-        for sec in EditSection.allCases where sections.contains(sec) { s.take(sec, from: c) }
+        for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: c) }
         settings = s
     }
 

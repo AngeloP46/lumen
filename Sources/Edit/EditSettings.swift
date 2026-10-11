@@ -126,6 +126,17 @@ enum ScenePart: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// One thing removed with Heal: what was painted over (photo-normalised, x right, y down, like brush masks) and the
+/// rectangle the AI rebuilt. The rebuilt pixels live in a file named after `id` (see `HealStore`), so the edit stays
+/// small; `scale` undoes the brightness squeeze used to fit HDR highlights into the AI's 8-bit picture.
+struct HealSpot: Codable, Equatable, Hashable, Identifiable {
+    var id = UUID()
+    var strokes: [BrushStroke]
+    var x: Double, y: Double, w: Double, h: Double
+    var scale: Double = 1
+    var centre: Pt { Pt(x: x + w / 2, y: y + h / 2) }
+}
+
 enum MaskOp: String, Codable, CaseIterable, Identifiable {
     case add, subtract, intersect
     var id: String { rawValue }
@@ -234,6 +245,7 @@ enum DefaultFalse: DefaultValue { static let value = false }
 enum DefaultTrue: DefaultValue { static let value = true }
 enum DefaultHDRStops: DefaultValue { static let value = 2.0 }
 enum DefaultNoSections: DefaultValue { static let value: [String] = [] }
+enum DefaultNoHeals: DefaultValue { static let value: [HealSpot] = [] }
 enum DefaultZero: DefaultValue { static let value = 0.0 }
 enum DefaultHundred: DefaultValue { static let value = 100.0 }
 enum DefaultZone: DefaultValue { static let value = GradeZone() }
@@ -323,6 +335,9 @@ struct EditSettings: Codable, Equatable {
     // Sections switched off in the Edits sheet (their values are kept, they just don't apply)
     @Defaulted<DefaultNoSections> var disabled: [String]
 
+    // Heal: things removed with the AI eraser. They belong to this photo only (never pasted or saved in presets).
+    @Defaulted<DefaultNoHeals> var heals: [HealSpot]
+
     var hasCrop: Bool { cropL > 0 || cropT > 0 || cropR < 1 || cropB < 1 }
     var hasTransform: Bool { tVertical != 0 || tHorizontal != 0 || tAspect != 0 || tScale != 100 || tOffX != 0 || tOffY != 0 }
 
@@ -332,10 +347,12 @@ struct EditSettings: Codable, Equatable {
 // MARK: - Sections (Edits sheet: switch a tool's edits off / on, reset one tool)
 
 enum EditSection: String, CaseIterable, Identifiable {
-    case light = "Light", color = "Color", grade = "Grade", curve = "Curve", detail = "Detail", masks = "Masks", crop = "Crop"
+    case light = "Light", color = "Color", grade = "Grade", curve = "Curve", detail = "Detail", masks = "Masks", heal = "Heal", crop = "Crop"
     var id: String { rawValue }
     /// Crop can be reset but not switched off (masks and the crop frame are placed on the cropped photo).
     var canSwitchOff: Bool { self != .crop }
+    /// Heal patches are made for one photo's pixels, so they are never pasted onto another.
+    var canPaste: Bool { self != .heal }
     var icon: String {
         switch self {
         case .light: "sun.max"
@@ -344,6 +361,7 @@ enum EditSection: String, CaseIterable, Identifiable {
         case .curve: "point.topleft.down.curvedto.point.bottomright.up"
         case .detail: "triangle"
         case .masks: "circle.dashed.inset.filled"
+        case .heal: "bandage"
         case .crop: "crop.rotate"
         }
     }
@@ -381,6 +399,8 @@ extension EditSettings {
             noiseReduction = d.noiseReduction; colorNoise = d.colorNoise
         case .masks:
             masks = d.masks
+        case .heal:
+            heals = d.heals
         case .crop:
             take(.crop, from: d)
         }
@@ -408,6 +428,8 @@ extension EditSettings {
             noiseReduction = o.noiseReduction; colorNoise = o.colorNoise
         case .masks:
             masks = o.masks
+        case .heal:
+            heals = o.heals
         case .crop:
             straighten = o.straighten; quarterTurns = o.quarterTurns; cropAspect = o.cropAspect
             cropL = o.cropL; cropT = o.cropT; cropR = o.cropR; cropB = o.cropB
@@ -451,6 +473,7 @@ extension EditSettings {
         r.grading.balance = m(a.grading.balance, b.grading.balance)
         if t < 0.5 { r.blackAndWhite = a.blackAndWhite; r.curves = a.curves }
         r.masks = a.masks
+        r.heals = a.heals
         r.take(.crop, from: a)
         r.hdr = a.hdr; r.hdrStops = a.hdrStops
         r.disabled = a.disabled
