@@ -402,8 +402,9 @@ struct EditorView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     // not a button: it sits over the photo, where a press and hold must still show the original.
                     // The clipping warning is in More → View.
-                    HistogramView(data: vm.histogram).frame(width: vm.settings.hdr ? 124 : 90, height: 40)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(vm.clipWarning ? Theme.accent : Color.clear, lineWidth: 1.5))
+                    // Photomator-sized (owner, 2026-10-11; was 90 x 40): More → Histogram hides it
+                    HistogramView(data: vm.histogram).frame(width: vm.settings.hdr ? 190 : 156, height: 76)
+                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(vm.clipWarning ? Theme.accent : Color.clear, lineWidth: 1.5))
                         .accessibilityIdentifier("histogram")
                         .accessibilityValue(vm.clipWarning ? "clipping on" : "clipping off")
                     // RAW or not: a JPEG has no hidden highlight detail for Highlights or HDR to bring back
@@ -447,7 +448,7 @@ struct EditorView: View {
                     HStack(spacing: 6) { ProgressView().controlSize(.small).tint(.white); Text("Loading full resolution…").font(.caption) }
                         .padding(.horizontal, 12).padding(.vertical, 7)
                         .background(.ultraThinMaterial, in: Capsule())
-                        .frame(maxHeight: .infinity, alignment: .top).padding(.top, 56)
+                        .frame(maxHeight: .infinity, alignment: .top).padding(.top, 156)   // below the histogram
                 }
                 if vm.loadFailed { Text("This file couldn't be opened.").foregroundStyle(.secondary) }
             }

@@ -127,7 +127,7 @@ struct HealOverlay: View {
             }
             .padding(.horizontal, 11).padding(.vertical, 6)
             .background(.ultraThinMaterial, in: Capsule())
-            .position(x: xform.canvas.width / 2, y: max(xform.rect.minY, 0) + 70)
+            .position(x: xform.canvas.width / 2, y: max(xform.rect.minY, 0) + 160)   // below the histogram
             .allowsHitTesting(false)
             .accessibilityIdentifier("heal-busy")
         }

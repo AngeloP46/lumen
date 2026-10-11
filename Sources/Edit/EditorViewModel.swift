@@ -423,7 +423,7 @@ final class EditorViewModel: ObservableObject {
             histQueue.async {
                 let e = img.extent
                 guard !e.isEmpty, !e.isInfinite, max(e.width, e.height) > 0 else { return }
-                let k = 160 / max(e.width, e.height)
+                let k = 320 / max(e.width, e.height)   // enough real pixels for 128 smooth bins
                 let small = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
                 guard let cg = LumenGPU.context.createCGImage(small, from: small.extent, format: .RGBA8,
                                                               colorSpace: LumenGPU.displaySpace) else { return }

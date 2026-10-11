@@ -500,44 +500,62 @@ struct Chip: View {
 struct HistogramView: View {
     let data: HistogramData?
 
+    /// Photomator-style (owner's request 2026-10-11): brightness as a calm grey shape, red / green / blue as clean
+    /// lines over it, smooth curves, on a dark rounded panel. HDR keeps its zone on the right (one segment per stop).
     var body: some View {
         Canvas { ctx, size in
             guard let d = data else { return }
+            let inset: CGFloat = 4
+            let plot = CGRect(x: inset, y: inset, width: size.width - inset * 2, height: size.height - inset * 2)
             if let f = d.sdrFraction, d.hdrStops > 0 {
                 // HDR zone: one segment per stop above SDR white; what the screen can't show right now is dimmed
-                let x0 = size.width * CGFloat(f)
-                let seg = (size.width - x0) / CGFloat(d.hdrStops)
+                let x0 = plot.minX + plot.width * CGFloat(f)
+                let seg = (plot.maxX - x0) / CGFloat(d.hdrStops)
                 ctx.fill(Path(CGRect(x: x0, y: 0, width: size.width - x0, height: size.height)),
-                         with: .color(Color.orange.opacity(0.16)))
+                         with: .color(Color.orange.opacity(0.14)))
                 for i in 0..<Int(d.hdrStops.rounded()) {
                     let x = x0 + seg * CGFloat(i)
-                    ctx.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: size.height)), with: .color(Color.white.opacity(0.28)))
+                    ctx.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: size.height)), with: .color(Color.white.opacity(0.22)))
                 }
                 let shown = x0 + seg * CGFloat(min(d.screenStops, d.hdrStops))
-                if shown < size.width - 0.5 {
+                if shown < plot.maxX - 0.5 {
                     ctx.fill(Path(CGRect(x: shown, y: 0, width: size.width - shown, height: size.height)),
                              with: .color(Color.black.opacity(0.4)))
                 }
             }
-            func path(_ bins: [Float]) -> Path {
+            // a smooth curve through the bins (midpoint quadratic curves), closed along the bottom when filled
+            func curve(_ bins: [Float], closed: Bool) -> Path {
                 var p = Path()
-                p.move(to: CGPoint(x: 0, y: size.height))
-                for (i, v) in bins.enumerated() {
-                    let x = size.width * CGFloat(i) / CGFloat(bins.count - 1)
-                    p.addLine(to: CGPoint(x: x, y: size.height * (1 - CGFloat(v))))
+                guard bins.count > 1 else { return p }
+                let pts = bins.enumerated().map { i, v in
+                    CGPoint(x: plot.minX + plot.width * CGFloat(i) / CGFloat(bins.count - 1),
+                            y: plot.maxY - plot.height * CGFloat(min(max(v, 0), 1)))
                 }
-                p.addLine(to: CGPoint(x: size.width, y: size.height))
-                p.closeSubpath()
+                if closed { p.move(to: CGPoint(x: plot.minX, y: plot.maxY)); p.addLine(to: pts[0]) } else { p.move(to: pts[0]) }
+                for i in 1..<pts.count {
+                    let mid = CGPoint(x: (pts[i - 1].x + pts[i].x) / 2, y: (pts[i - 1].y + pts[i].y) / 2)
+                    p.addQuadCurve(to: mid, control: pts[i - 1])
+                }
+                p.addLine(to: pts[pts.count - 1])
+                if closed { p.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY)); p.closeSubpath() }
                 return p
             }
-            ctx.blendMode = .plusLighter
-            ctx.fill(path(d.r), with: .color(Color.red.opacity(0.6)))
-            ctx.fill(path(d.g), with: .color(Color.green.opacity(0.6)))
-            ctx.fill(path(d.b), with: .color(Color.blue.opacity(0.6)))
+            let luma = d.lumaShown ?? d.luma
+            ctx.fill(curve(luma, closed: true), with: .color(Color(white: 0.62).opacity(0.5)))
+            let channels: [([Float], Color)] = [(d.r, Color(red: 1, green: 0.32, blue: 0.3)),
+                                                (d.g, Color(red: 0.35, green: 0.9, blue: 0.4)),
+                                                (d.b, Color(red: 0.35, green: 0.6, blue: 1))]
+            for (bins, colour) in channels {
+                ctx.fill(curve(bins, closed: true), with: .color(colour.opacity(0.08)))
+            }
+            for (bins, colour) in channels {
+                ctx.stroke(curve(bins, closed: false), with: .color(colour.opacity(0.95)),
+                           style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+            }
         }
-        .background(Color.black.opacity(0.35))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.2), lineWidth: 0.5))
+        .background(Color(white: 0.07).opacity(0.78))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(0.12), lineWidth: 0.5))
     }
 }
 

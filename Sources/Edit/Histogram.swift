@@ -7,6 +7,8 @@ struct HistogramData {
     var g: [Float]
     var b: [Float]
     var luma: [Float]
+    /// The grey (brightness) shape drawn behind the colour lines: `luma`, or in HDR the same HDR scale as the colours.
+    var lumaShown: [Float]?
     /// Share of pixels brighter than SDR white (0...1); only set while HDR is on.
     var hdrShare: Float = 0
     /// HDR (Lightroom style): the left `sdrFraction` of the width is the usual SDR scale, the rest one segment per
@@ -20,10 +22,11 @@ struct HistogramData {
 }
 
 enum Histogram {
-    static let bins = 64
+    /// 128 bins from a 256 x 256 sample (2026-10-11, Photomator-style: smoother than the old 64 from 128 x 128).
+    static let bins = 128
 
     static func compute(_ cg: CGImage) -> HistogramData? {
-        let w = 128, h = 128
+        let w = 256, h = 256
         var bytes = [UInt8](repeating: 0, count: w * h * 4)
         let ok: Bool = bytes.withUnsafeMutableBytes { ptr in
             guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
@@ -64,7 +67,7 @@ enum Histogram {
         let e = img.extent
         guard e.width > 0, e.height > 0, e.width.isFinite, e.height.isFinite,
               let cs = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) else { return }
-        let k = 128 / max(e.width, e.height)
+        let k = 256 / max(e.width, e.height)
         let small = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
         let r = small.extent.integral
         let w = Int(r.width), ht = Int(r.height)
@@ -79,12 +82,13 @@ enum Histogram {
             let x = v <= 1 ? sdrFraction * enc(max(v, 0)) : sdrFraction + (1 - sdrFraction) * min(log2(v) / st, 1)
             return min(max(Int(x * Float(bins)), 0), bins - 1)
         }
-        var cr = [Float](repeating: 0, count: bins), cg = cr, cb = cr
+        var cr = [Float](repeating: 0, count: bins), cg = cr, cb = cr, cl = cr
         var brightest = [Float](); brightest.reserveCapacity(w * ht)
         var over = 0
         for i in stride(from: 0, to: buf.count, by: 4) {
             let rv = buf[i], gv = buf[i + 1], bv = buf[i + 2]
             cr[bin(rv)] += 1; cg[bin(gv)] += 1; cb[bin(bv)] += 1
+            cl[bin(0.2290 * rv + 0.6917 * gv + 0.0793 * bv)] += 1   // brightness in Display P3
             let m = max(rv, gv, bv)
             brightest.append(m)
             if m > 1.02 { over += 1 }
@@ -94,7 +98,7 @@ enum Histogram {
         func norm(_ a: [Float]) -> [Float] { a.map { min(1, ($0 / peak).squareRoot()) } }
         brightest.sort()
         let top = brightest.isEmpty ? 0 : brightest[min(brightest.count - 1, Int(Float(brightest.count) * 0.999))]
-        h.r = norm(cr); h.g = norm(cg); h.b = norm(cb)
+        h.r = norm(cr); h.g = norm(cg); h.b = norm(cb); h.lumaShown = norm(cl)
         h.sdrFraction = sdrFraction
         h.hdrStops = st
         h.screenStops = Float(min(max(screenStops, 0), stops))
