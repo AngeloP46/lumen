@@ -12,7 +12,7 @@ Read this first. It records what exists, how it's built and shipped, and what to
 ## The user and their setup
 - Windows 11 PC, **no Mac** (may rent one later but doesn't want to spend until needed). Cannot compile iOS code locally; all builds happen on GitHub Actions.
 - Phone: **iPhone 17 Pro Max** (iOS 27). Camera: **Sony A9** (ARW RAW). Shoots ProRAW on the phone too.
-- Explicitly NOT wanted: healing/spot removal, lens corrections, Upright/geometry, AI denoise, Generative Remove, cloud sync.
+- Explicitly NOT wanted: lens corrections, AI denoise, Generative Remove/extend, cloud sync. (Heal was added at the owner's request on 2026-10-11; perspective sliders were ticked in the overnight report.)
 - Explain things in plain steps. Never ask them to run terminal commands; do it for them. They must type their own passwords / 2FA codes and approve GitHub device-code logins themselves.
 - Priorities they stated: smooth editing (Lightroom-like), a Lightroom-mobile style UI that wastes no screen space, masks that really work (subject, sky, luminance range, colour range, brush, gradients, add/subtract/intersect), no red overlay once a mask is set up.
 
@@ -95,6 +95,14 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - **Masks tidy-up** (0.1.131, owner's request): new-mask grid grouped like Lightroom (`typeGrid`: Auto = Subject/People/Background/Sky/Landscape on row 1; Draw = Brush/Linear/Radial and Range = Colour/Luminance/Depth side by side on row 2). Landscape offers `ScenePart.landscapeParts` (no Sky: Sky is its own mask) and lists only parts found in the photo (2-column grid) + "Not in this photo: …". `EditorViewModel.emptyReason(_:)` (component / mask) → orange banner `mask-empty` with Remove mask, photo notice `mask-empty-photo`, ⚠︎ on the chip. Invert part / Invert mask = icons `invert-part` / `invert-mask` beside Add / subtract.
 - Next (agreed): real depth from iPhone Portrait photos for the Depth mask (Lightroom's approach), AI depth stays as the fallback for photos without depth data.
 - Owner wants masks as good as Lightroom's. Gaps noted: sky finder is classical (weakest), no tap-to-pick object mask (Vision gives instances), no people parts (face/skin/hair...), masks are computed at 1024 px so edges are soft at 100 %.
+
+## Heal (0.1.137, owner's request 2026-10-11)
+- `Tool.heal` (tool bar between Masks and Presets), `EditSection.heal` (`canPaste` false), `EditSettings.heals: [HealSpot]` (strokes + patch rect normalised top-left + `scale`).
+- `Sources/Edit/Heal.swift`: `makeHeal` = square around the stroke (2.4x, min 192 px) from the FULL-resolution decode with the earlier heals, scaled to 800x800, divided by its peak (HDR), LaMa (`mlboydaisuke/LaMa-CoreML`, inputs `image` + `mask` 800x800, output `output`; computeUnits .cpuAndGPU; ~216 MB, fetched by `.github/ci/get-heal-model.sh`), patch + soft mask written as PNGs by id in `HealStore.directory` (= Library/heals).
+- `EditSession.heals` is applied inside `decode` (`HealStore.apply`), so every path (preview, detail, export, thumbnails) shows heals; `renderCGImage(_:maxEdge:)`/`renderData` set it from the settings; the view model sets it on load and `reloadSource()` runs when effective heals change (undo, delete, switch off).
+- Heals are never pasted (library apply keeps each photo's own, editor Paste keeps own, Paste some hides Heal), never in presets; preset Strength keeps them.
+- Views: `HealOverlay` (one-finger paint, pins `heal-pin`, busy `heal-busy`), `HealPanel` (Size, Delete this fix, Clear all, `heal-note`). Hold-to-compare is off in Heal (finger paints); the original still shows heals (to do if the owner wants).
+- Engine test: stored patch replaces a red disc; model removes it (~10 s on the CI VM). Library/heals files are not cleaned up when a photo is removed yet.
 
 ## Status (2026-10-11 14:40: main = latest SideStore build, 65 UI tests + engine checks green)
 - Panel space (owner, 2026-10-11): in one-at-a-time (strip) layout the panel hugs its row (`panelPlan` snaps to `ToolSpec.compact` unless the handle is being dragged); section headings live in `ToolSpec.sections` and no longer raise the list threshold (`listMin` = header + one heading + 4 rows). In the strip, `PanelActions`' Reset is a 34 pt round icon (id still `pill-Reset`); the mask page's Reset is just "Reset". Radial turn knob sits just below the centre pin (thumb reach). UI test job limit is 45 min (the suite outgrew 30).
