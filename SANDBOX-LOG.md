@@ -38,6 +38,29 @@ files, SideStore feed — untouched.
    the engine test compiles a fixed file list, so it's unaffected by this draft (which is the
    point: the draft can't break the engine).
 
+## Build/test status (live on GitHub's Mac, 13 Oct)
+
+The `sandbox/` branch runs the repo's normal CI on every push, plus a new manual/branch
+workflow `app-store-sandbox.yml` that builds the WHOLE app with the App Store flag ON.
+Results at https://github.com/AngeloP46/lumen/actions (branch: sandbox):
+
+- **App Store sandbox compile check (flag ON, whole app incl. paywall/watermark/gate):**
+  first run FAILED with 5 real errors, all in the new draft files — fixed and re-pushed:
+  1. `LumenStore.swift`: `Transaction.expirationDate` is `Date?` in StoreKit 2 — now unwrapped.
+  2. `PaywallView.swift`: was missing `import StoreKit` for the `Product` type — added.
+  After the fixes: **PASSED** (run 38465796944). The draft app compiles in the App Store config.
+- **Build IPA (flag OFF — the SideStore configuration):** **PASSED** on the sandbox branch
+  (several runs). This proves the `#if APP_STORE` split leaves the SideStore build compiling
+  exactly as before. It built a throwaway IPA; it never uploaded to the SideStore feed
+  (that step only runs on main).
+- **UI tests / Engine test:** engine test didn't trigger (no engine files touched by the draft);
+  UI test run passed on an earlier push.
+
+**Not yet verified (needs Xcode on a real device/simulator beyond compile):** the watermark's
+look/placement, the paywall layout, and the StoreKit runtime behaviour (products load as empty
+until real products exist at Gate 4 — that's expected, the code degrades gracefully to a
+retry row). See open question 5.
+
 ## What to check first when building in the real repo
 
 1. Delete/review everything in `Sources/Store/`, `PaywallView.swift`, `LumaforgeMark.swift`,
