@@ -1,0 +1,55 @@
+# DRAFT — sandbox workflow. Manual-only (workflow_dispatch): it must NEVER run on push, so it
+# can't waste macOS minutes or interfere with the frozen SideStore pipeline (build.yml).
+# Purpose: prove the sandbox draft compiles in the App Store configuration (flag ON, new bundle
+# ID override) on GitHub's Mac. Signing/upload steps are documented but commented out — they
+# activate only at Gate 4 with real certificates (plan §2.2 / §6).
+name: App Store sandbox compile check
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: app-store-sandbox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-check:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AI models (depth, scene, heal)
+        run: |
+          bash .github/ci/get-depth-model.sh Models
+          bash .github/ci/get-seg-model.sh Models
+          bash .github/ci/get-heal-model.sh Models
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        # project.yml is FROZEN (SideStore pipeline reads it). The App Store configuration is
+        # applied entirely at build time: the compilation flag via SWIFT_ACTIVE_COMPILATION_CONDITIONS
+        # and the bundle ID via the PRODUCT_BUNDLE_IDENTIFIER override below.
+        run: xcodegen generate
+
+      - name: Build for simulator (APP_STORE flag ON, sandbox bundle ID)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Lumen.xcodeproj -scheme Lumen -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO ARCHS=arm64 \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS=APP_STORE \
+            PRODUCT_BUNDLE_IDENTIFIER=com.sandbox.lumaforge | tail -15
+
+      # --- Gate 4 (real pipeline, not this one) will do this instead, with real secrets: ---
+      # xcodebuild archive ... (same flags) -destination 'generic/platform=iOS'
+      #   PRODUCT_BUNDLE_IDENTIFIER=com.angelo.lumen  (final name TBD, plan §11.1)
+      #   PRODUCT_BUNDLE_IDENTIFIER=com.sandbox.lumaforge for sandbox testing
+      #   DEVELOPMENT_TEAM=<team> CODE_SIGN_IDENTITY="Apple Distribution"
+      #   PROVISIONING_PROFILE_SPECIFIER="Lumen App Store"
+      # then: export IPA (method: app-store) -> upload to App Store Connect (altool/Transporter)
+      # Certificates/profile: created in a web browser at developer.apple.com, stored here as
+      # encrypted secrets. No Mac needed locally (plan §6).
