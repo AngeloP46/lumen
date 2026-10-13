@@ -89,9 +89,11 @@ note, and a rejection-risk checklist. All DRAFT; nothing in it is live.
 Mac it downloads one public-domain sample per camera RAW from raw.pixls.us (Canon EOS R5
 CR3, Nikon D750 NEF, Fuji X-T4 RAF, Sony A7 ARW, 5D III DNG) and checks the engine opens,
 decodes (non-blank) and exports each to JPEG + HEIC + 16-bit TIFF at full resolution.
-First run: see Actions, workflow "RAW format matrix" (commit b729714). Still missing from the
-matrix: CR2 (needs an old-Canon sample) and ProRAW (needs a real iPhone ProRAW file — a
-real device is the only clean source).
+First run (run 38481146085, 14 Oct 00:16): **PASSED — "5/5 RAW formats decoded and exported"**.
+Canon R5 CR3, Nikon D750 NEF, Fuji X-T4 RAF, Sony A7 ARW and 5D III DNG all opened, decoded
+(non-blank) and exported to JPEG, HEIC and 16-bit TIFF at full resolution on GitHub's Mac.
+Still missing from the matrix: CR2 (needs an old-Canon sample) and ProRAW (needs a real
+iPhone ProRAW file — a real device is the only clean source).
 
 ## What to check first when building in the real repo
 
