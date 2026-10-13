@@ -464,14 +464,18 @@ struct EditorView: View {
                 CanvasView(model: vm.canvas, xform: xform, hdr: vm.settings.hdr)
                     .allowsHitTesting(false)
                 // DRAFT — sandbox: watermark on Pro-edited previews for free users (plan §5.1).
-                // One placement at a time; LumaforgeMarkPlacement.choice is Angelo's pick.
+                // Anchored to the photo's own frame (wmXform.rect), so it moves with the picture
+                // under pinch/pan and never sits behind the toolbar chrome. The mark is ~50 pt
+                // tall, so the centre is offset half-a-mark above/beside the photo edge.
 #if APP_STORE
                 if vm.settings.usesProFeatures && !LumenStore.shared.isPro {
+                    let wmXform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan, bottomAlign: alignBottom)
+                    let r = wmXform.rect
                     switch LumaforgeMarkPlacement.choice {
                     case .corner:
-                        LumaforgeMark().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(12)
+                        LumaforgeMark().offset(x: r.maxX - 90 - geo.size.width / 2, y: r.minY + 30 - geo.size.height / 2)
                     case .bottom:
-                        LumaforgeMark().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(12)
+                        LumaforgeMark().offset(x: r.midX - geo.size.width / 2, y: r.maxY - 30 - geo.size.height / 2)
                     }
                 }
 #endif
@@ -676,16 +680,6 @@ struct EditorView: View {
             // Export has its own button: it used to be the last entry of a long menu that could not always be scrolled.
             // DRAFT — sandbox: the export gate lives here (plan §4.1); flag-off builds run the same line as before.
             FloatButton(system: "square.and.arrow.up") { requestExport() }.accessibilityIdentifier("btn-export")
-#if APP_STORE
-            .overlay(alignment: .topTrailing) {
-                if vm.settings.usesProFeatures && !LumenStore.shared.isPro {
-                    Image(systemName: "crown.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.orange)
-                        .offset(x: 10, y: -10)
-                }
-            }
-#endif
             Menu {
                 // Short, flat, most-used first. Nothing in here changes while the menu is open.
                 Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
