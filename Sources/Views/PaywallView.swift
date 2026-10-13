@@ -3,6 +3,7 @@
 // (Apple requirement — the free tier must stay functional).
 import SwiftUI
 #if APP_STORE
+import StoreKit
 
 /// Shown only at the export gate when a Pro feature is active and the user is not Pro.
 /// Content per plan §4.4: what Pro unlocks, both prices from the loaded Products (never

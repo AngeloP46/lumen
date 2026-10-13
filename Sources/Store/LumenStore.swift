@@ -102,9 +102,10 @@ final class LumenStore: ObservableObject {
         for await result in Transaction.currentEntitlements {
             guard case .verified(let t) = result,
                   t.productID == Self.monthlyID || t.productID == Self.annualID,
-                  t.expirationDate > Date() else { continue }
-            let isTrial = t.productID == Self.monthlyID && t.expirationDate.timeIntervalSinceNow < 8 * 86400
-            if best == nil || t.expirationDate > best!.expiry { best = (t.expirationDate, isTrial) }
+                  let exp = t.expirationDate,   // Date? in StoreKit 2
+                  exp > Date() else { continue }
+            let isTrial = t.productID == Self.monthlyID && exp.timeIntervalSinceNow < 8 * 86400
+            if best == nil || exp > best!.expiry { best = (exp, isTrial) }
         }
         status = best == nil ? .free : (best!.isTrial ? .trialing : .pro)
     }
