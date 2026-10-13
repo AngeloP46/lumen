@@ -6,6 +6,11 @@
 name: App Store sandbox compile check
 
 on:
+  # Runs automatically on every push to the sandbox branch (and can be triggered by hand).
+  # It can NEVER touch main: the SideStore feed (build.yml) publishes from main only,
+  # and this workflow builds nothing for the device — just a compile check.
+  push:
+    branches: [sandbox]
   workflow_dispatch:
 
 concurrency:
