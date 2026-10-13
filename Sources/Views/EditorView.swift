@@ -57,6 +57,10 @@ struct EditorView: View {
     @State private var tool: Tool? = Tool(rawValue: DemoMode.value("-lumenDemoTool") ?? "") ?? .light
     @State private var chromeHidden = false
     @State private var showExportChoices = false
+    // DRAFT — sandbox: App Store export gate (plan §4.1). Flag-off builds never see this.
+#if APP_STORE
+    @State private var showProPaywall = false
+#endif
     @State private var showEdits = false
     @State private var showPasteSome = false
     @State private var wbMark: CGPoint?
@@ -169,6 +173,12 @@ struct EditorView: View {
         .sheet(isPresented: $showExportChoices) {
             ExportOptionsSheet(count: 1, hdrAvailable: vm.settings.hdr) { vm.export($0) }
         }
+        // DRAFT — sandbox: paywall sheet for the export gate (App Store builds only)
+#if APP_STORE
+        .sheet(isPresented: $showProPaywall) {
+            PaywallView(store: LumenStore.shared)
+        }
+#endif
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .sheet(isPresented: $showEdits) { EditsSheet(vm: vm) }
         .sheet(isPresented: $showPasteSome) {
@@ -419,6 +429,18 @@ struct EditorView: View {
         }
     }
 
+    // DRAFT — sandbox: the export gate (plan §4.1). Free users with a Pro feature active
+    // see the paywall instead of the export options; everyone else is unchanged.
+    private func requestExport() {
+#if APP_STORE
+        if vm.settings.usesProFeatures && !LumenStore.shared.isPro {
+            showProPaywall = true
+            return
+        }
+#endif
+        showExportChoices = true
+    }
+
     private var photoArea: some View {
         GeometryReader { geo in
             let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan, bottomAlign: alignBottom)
@@ -427,6 +449,18 @@ struct EditorView: View {
                 Color.black
                 CanvasView(model: vm.canvas, xform: xform, hdr: vm.settings.hdr)
                     .allowsHitTesting(false)
+                // DRAFT — sandbox: watermark on Pro-edited previews for free users (plan §5.1).
+                // One placement at a time; LumaforgeMarkPlacement.choice is Angelo's pick.
+#if APP_STORE
+                if vm.settings.usesProFeatures && !LumenStore.shared.isPro {
+                    switch LumaforgeMarkPlacement.choice {
+                    case .corner:
+                        LumaforgeMark().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(12)
+                    case .bottom:
+                        LumaforgeMark().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(12)
+                    }
+                }
+#endif
                 if vm.imageSize != .zero {
                     gestureLayer(xform)
                     if tool == .crop { CropOverlay(vm: vm, xform: xform) }
@@ -626,7 +660,18 @@ struct EditorView: View {
             FloatButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }.accessibilityIdentifier("btn-undo")
             FloatButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }.accessibilityIdentifier("btn-redo")
             // Export has its own button: it used to be the last entry of a long menu that could not always be scrolled.
-            FloatButton(system: "square.and.arrow.up") { showExportChoices = true }.accessibilityIdentifier("btn-export")
+            // DRAFT — sandbox: the export gate lives here (plan §4.1); flag-off builds run the same line as before.
+            FloatButton(system: "square.and.arrow.up") { requestExport() }.accessibilityIdentifier("btn-export")
+#if APP_STORE
+            .overlay(alignment: .topTrailing) {
+                if vm.settings.usesProFeatures && !LumenStore.shared.isPro {
+                    Image(systemName: "crown.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.orange)
+                        .offset(x: 10, y: -10)
+                }
+            }
+#endif
             Menu {
                 // Short, flat, most-used first. Nothing in here changes while the menu is open.
                 Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
