@@ -47,6 +47,24 @@ an isolated sandbox in the meantime.
    push. Do not print or copy the remote URL (it contains the token).
 4. Angelo created the token at github.com/settings/tokens; if it's revoked/expired, re-pointing
    the sandbox remote needs a fresh token (see SANDBOX-BRIEF for the rules).
+5. **App Store draft built and tested (this session):** store, paywall, export gate, watermark
+   — all behind `#if APP_STORE`, all in new files (plus 4 small hooks in EditorView). The
+   App Store build compiles clean, and the workflow now also boots a simulator and captures
+   three screenshots on every push (artifact `app-store-shots`): free edit, Pro edit with
+   watermark, and the paywall.
+6. **Watermark reworked** after Angelo saw the first shots: it was small and top-right, behind
+   the toolbar icons. Now it's big, bottom-centre **on the photo** (follows zoom/pan), with a
+   shadow so it reads on bright skies. Angelo to give the final OK on look/placement.
+7. **App Store listing assets drafted:** `docs/APPSTORE-ASSETS.md` — name, subtitle,
+   description, keywords, privacy, age rating, screenshot plan, subscription setup checklist,
+   rejection-risk checklist. All DRAFT for Gate 4.
+8. **RAW format matrix test written:** new `Tests/rawmatrix/` + `.github/workflows/raw-matrix.yml`
+   (both brand-new files, no frozen files touched). Downloads one public-domain sample of each
+   camera RAW (Canon R5 CR3, Nikon D750 NEF, Fuji X-T4 RAF, Sony A7 ARW, 5D III DNG) from
+   raw.pixls.us and checks the engine opens, decodes and exports each (JPEG/HEIC/16-bit TIFF).
+   This is the Gate 2 proof; first run results pending in the Actions tab (workflow
+   "RAW format matrix"). CR2 and ProRAW still need samples — ProRAW especially may need a real
+   iPhone sample (see open questions).
 
 ## What to do next (in order)
 
@@ -54,6 +72,8 @@ an isolated sandbox in the meantime.
    `Lumen-Sandbox\SANDBOX-LOG.md`, check `git log` in `Lumen-Sandbox`, and look at the Actions
    tab of the sandbox branch (browser: https://github.com/AngeloP46/lumen/actions — branch
    `sandbox`). Report: what was drafted, whether the engine test passes, open questions.
+   Key artifacts: `app-store-shots` (the 3 App Store screenshots) and `raw-matrix` (RESULT.txt
+   of the RAW format test).
 2. **When Claude's usage is back (~15 Oct):** give him the hand-off message below.
 3. **Gate 3 (Angelo, free):** landing page + waitlist + ~2 weeks of before/after clips before
    any money is spent (plan §7).
@@ -75,6 +95,15 @@ an isolated sandbox in the meantime.
 > Angelo decides the items in §11 of the plan; present options, don't decide for him.
 >
 > When done: RAW test results, what you kept from the sandbox draft, and what's left before Gate 3.
+
+> New this time: `docs/APPSTORE-ASSETS.md` in the sandbox branch is a full draft of the App
+> Store listing (name/subtitle/description/keywords/privacy/screenshot plan/subscription setup
+> checklist/rejection checklist) — review it and fold it into App Store Connect at Gate 4.
+> The `app-store-sandbox.yml` workflow also captures 3 real screenshots on every push
+> (artifact `app-store-shots`); use them as the base for the final App Store screenshots
+> (compose them into phone frames with headlines — see the screenshot plan in the doc).
+> `raw-matrix.yml` + `Tests/rawmatrix/` are a working RAW format matrix (CR3/NEF/RAF/ARW/DNG)
+> — check its Actions results; extend it to CR2 and ProRAW (needs a real iPhone ProRAW sample)
 
 ## How updates are tracked (no extra file needed)
 

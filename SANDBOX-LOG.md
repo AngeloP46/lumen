@@ -69,6 +69,30 @@ Demo hooks added (CI-only, all `#if APP_STORE`): `DemoMode.paywall` / `DemoMode.
 Demo.swift, used by EditorView.applyDemo — they do nothing in normal use. Watermark got an
 accessibility ID (`lumaforge-mark`) for future UI tests.
 
+**Angelo reviewed the first shots (13 Oct):** paywall renders correctly — the "loading"
+rows are just the two products not existing yet (expected until Gate 4). The watermark, in
+contrast, was wrong: small, top-right, behind the toolbar icons. **Fixed (run
+38474050863, passed):** big (28pt glyph, 24pt text), bottom-centre ON the photo, 0.3 opacity,
+shadow, `.ultraThinMaterial` capsule. It's anchored to `ViewXform.rect` so it follows
+zoom/pan. The crown badge on the export button was removed (it sat over the icons).
+New shots: artifact `app-store-shots` on that run (02-pro-watermark.png). **Angelo to confirm
+the new look/placement is acceptable** — the corner placement still exists
+(`LumaforgeMarkPlacement.choice`) if he prefers it.
+
+**App Store listing assets drafted (13 Oct):** `docs/APPSTORE-ASSETS.md` — name, subtitle
+candidates, description, keywords, privacy label, age rating, 6-screenshot plan, App Preview
+plan, the full subscription setup checklist for Gate 4, product-ID single-source-of-truth
+note, and a rejection-risk checklist. All DRAFT; nothing in it is live.
+
+**RAW format matrix (13 Oct):** new `Tests/rawmatrix/main.swift` +
+`.github/workflows/raw-matrix.yml` — both brand-new files, nothing frozen touched. On GitHub's
+Mac it downloads one public-domain sample per camera RAW from raw.pixls.us (Canon EOS R5
+CR3, Nikon D750 NEF, Fuji X-T4 RAF, Sony A7 ARW, 5D III DNG) and checks the engine opens,
+decodes (non-blank) and exports each to JPEG + HEIC + 16-bit TIFF at full resolution.
+First run: see Actions, workflow "RAW format matrix" (commit b729714). Still missing from the
+matrix: CR2 (needs an old-Canon sample) and ProRAW (needs a real iPhone ProRAW file — a
+real device is the only clean source).
+
 ## What to check first when building in the real repo
 
 1. Delete/review everything in `Sources/Store/`, `PaywallView.swift`, `LumaforgeMark.swift`,
@@ -78,4 +102,5 @@ accessibility ID (`lumaforge-mark`) for future UI tests.
    sets it on the command line, which should work).
 3. The stub path (`#else` in LumenStore) must be what SideStore builds compile — verify a
    SideStore pipeline run still produces a normal IPA (brief rule 1's safety check).
-4. RAW test matrix is still outstanding (plan Gate 2) — that's a real-repo task, not draftable here.
+4. RAW test matrix: now DRAFTED as `Tests/rawmatrix/` + `raw-matrix.yml` (CR3/NEF/RAF/ARW/
+   DNG) — check its first Actions run, then extend to CR2 and ProRAW in the real repo.
