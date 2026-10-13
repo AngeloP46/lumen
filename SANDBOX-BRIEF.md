@@ -4,20 +4,41 @@ You are working in a **disposable draft copy** of the Lumen repo. Read this befo
 
 ## What this folder is
 
-- `C:\Users\pc user\Downloads\GP work\Lumen-Sandbox` — a clone of the real repo
-  (`...\GP work\Lumen`), with the GitHub remote **removed**.
-- Your job: **draft** the App Store code described in `docs/APPSTORE-PLAN.md` (read it fully first).
-- When the main developer (Claude, on GitHub) comes back in ~48h, he will review your draft,
-  fix it, and rebuild it in the real repo. **Nothing you write here is final, and nothing here
-  must be perfect — but it must be honest, well-commented, and clearly marked as a draft.**
+- `C:\Users\pc user\Downloads\GP work\Lumen-Sandbox` — a copy of the real repo
+  (`github.com/AngeloP46/lumen`), working on the branch **`sandbox/`** only.
+- Your job: **draft** the App Store code described in `docs/APPSTORE-PLAN.md` (read it fully first),
+  and **push your commits to the `sandbox/` branch** so the repo's automatic test suite runs on
+  your work (the engine test compiles the engine and renders a real Sony A9 ARW; the results come
+  back as preview images on GitHub).
+- When the main developer (Claude) comes back in ~48h, he will review the `sandbox/` branch,
+  fix it, and rebuild it in the real repo. **Nothing you write here is final — but it must be
+  honest, well-commented, and clearly marked as a draft.**
+
+**How to check the test results:** after pushing, the repo's "Engine test" workflow runs on the
+`sandbox/` branch automatically. Results are at the GitHub repo → Actions tab (pass/fail), and
+rendered preview sheets are uploaded as a `test-previews` GitHub release and `engine-renders`
+artifacts. If a push makes the engine test fail, **fix and re-push** — that's the loop.
+If the test fails for reasons that pre-date you (check by looking at main's last run), note it in
+`SANDBOX-LOG.md` and don't chase it.
 
 ## Hard rules (breaking any of them wastes the main developer's day)
 
 1. **Never touch the SideStore pipeline or anything it reads.** Frozen files:
    `project.yml`, `.github/workflows/` (the existing SideStore workflow), the model-fetch
    scripts, and any file the current build depends on if you're unsure — leave it alone.
-2. **Do not run `git push` anywhere. There is no remote. Do not add one.**
-   Local commits are fine and encouraged (small, descriptive commits per logical piece).
+2. **Push rules — read carefully:**
+   - The remote `origin` points at the real repo and is **already authenticated** via a token
+     embedded in the remote URL. **Never read, print, copy or edit `.git/config`.** The token
+     only has permission on the `lumen` repo's *contents*; it cannot do anything else, but it
+     still must not be handled.
+   - Push **only** the `sandbox/` branch: `git push origin sandbox/` (or `git push -u origin
+     sandbox/` the first time). **Never push `main` or any other branch. Never delete or force-
+     push anything.**
+   - Small, descriptive commits per logical piece, pushed in batches (a few times a session is
+     fine; don't push after every file).
+   - The push triggers the repo's normal CI on the branch. **The SideStore feed is only ever
+     published from `main`**, so your pushes can't affect the owner's phone build — but keep
+     the frozen-files rule (rule 1) anyway.
 3. **New code = new files only** under `Sources/Store/`, `Sources/Views/PaywallView.swift`
    (or similar), plus a **new** workflow file `.github/workflows/app-store-sandbox.yml`
    (named `sandbox` on purpose — the real one gets a clean name later).
