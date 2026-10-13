@@ -29,6 +29,7 @@ struct LumaforgeMark: View {
         .background(.ultraThinMaterial, in: Capsule())
         .opacity(opacity)
         .allowsHitTesting(false)   // never blocks gestures
+        .accessibilityIdentifier("lumaforge-mark")
     }
 }
 

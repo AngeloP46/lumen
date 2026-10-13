@@ -383,6 +383,11 @@ struct EditorView: View {
             vm.settings.grading.highlights = GradeZone(hue: 40, sat: 45, lum: 5)
         }
         if DemoMode.value("-lumenDemoMix") != nil { vm.colorMix = true }
+        // DRAFT — sandbox (CI screenshots): put non-zero Pro values into the demo edits so the
+        // watermark and export gate are exercised without touching any real photo.
+#if APP_STORE
+        if DemoMode.proEdits { vm.settings.sharpness = 40; vm.settings.texture = 25 }
+#endif
         if let z = DemoMode.value("-lumenDemoZoom").flatMap(Double.init) { zoom = CGFloat(z) }
         if let r = DemoMode.value("-lumenDemoCrop").flatMap(Double.init) {
             Task { @MainActor in
@@ -395,6 +400,15 @@ struct EditorView: View {
             panelUser["shared"] = CGFloat(h)
         }
         sliderStyle = DemoMode.value("-lumenDemoSlider") ?? "auto"
+        // DRAFT — sandbox (CI screenshots): show the export-gate paywall a moment after launch.
+#if APP_STORE
+        if DemoMode.paywall {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                showProPaywall = true
+            }
+        }
+#endif
     }
 
     // MARK: Canvas

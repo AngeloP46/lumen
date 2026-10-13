@@ -60,6 +60,49 @@ jobs:
           name: build-log
           path: build.log
 
+      # --- App Store UI screenshots (only if the compile above passed) ---
+      - name: Sample photos
+        run: |
+          mkdir -p demo
+          bash .github/ci/get.sh demo/1-a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW" 10000000
+          bash .github/ci/get.sh demo/2-cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000" 100000
+          ls -la demo
+
+      - name: Boot simulator and install
+        run: |
+          UDID=$(xcrun simctl list devices available | grep -E "iPhone 16 Pro Max" | head -1 | grep -oE '[0-9A-F-]{36}')
+          echo "UDID=$UDID" >> $GITHUB_ENV
+          xcrun simctl boot $UDID
+          xcrun simctl bootstatus $UDID -b
+          xcrun simctl install $UDID build/Build/Products/Release-iphonesimulator/Lumen.app
+          CONTAINER=$(xcrun simctl get_app_container $UDID com.sandbox.lumaforge data)
+          mkdir -p "$CONTAINER/Documents/demo"
+          cp demo/* "$CONTAINER/Documents/demo/"
+          echo "DEMO=$CONTAINER/Documents/demo" >> $GITHUB_ENV
+
+      - name: App Store screenshots
+        run: |
+          mkdir -p shots
+          shot() { # name, args...
+            name=$1; shift
+            WAIT=${WAIT:-14}
+            xcrun simctl terminate $UDID com.sandbox.lumaforge 2>/dev/null || true
+            xcrun simctl launch $UDID com.sandbox.lumaforge -lumenDemoDir "$DEMO" "$@"
+            sleep $WAIT
+            xcrun simctl io $UDID screenshot shots/$name.png
+          }
+          # free edit (Light only): NO watermark, NO crown on the export button
+          shot 01-free-light -lumenDemoOpen 0 -lumenDemoTool Light -lumenDemoEdit 1
+          # Pro edit (Detail values via the demo flag): watermark visible + crown badge
+          WAIT=20 shot 02-pro-watermark -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoPro 1
+          # the export gate: paywall sheet (products empty until Gate 4 — the retry row is expected)
+          WAIT=20 shot 03-paywall -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoPro 1 -lumenDemoPaywall 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-store-shots
+          path: shots
+
       # --- Gate 4 (real pipeline, not this one) will do this instead, with real secrets: ---
       # xcodebuild archive ... (same flags) -destination 'generic/platform=iOS'
       #   PRODUCT_BUNDLE_IDENTIFIER=com.angelo.lumen  (final name TBD, plan §11.1)
