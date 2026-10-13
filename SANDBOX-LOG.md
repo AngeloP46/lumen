@@ -56,10 +56,18 @@ Results at https://github.com/AngeloP46/lumen/actions (branch: sandbox):
 - **UI tests / Engine test:** engine test didn't trigger (no engine files touched by the draft);
   UI test run passed on an earlier push.
 
-**Not yet verified (needs Xcode on a real device/simulator beyond compile):** the watermark's
-look/placement, the paywall layout, and the StoreKit runtime behaviour (products load as empty
-until real products exist at Gate 4 — that's expected, the code degrades gracefully to a
-retry row). See open question 5.
+**App Store screenshots (run 38468284395, 13 Oct, passed):** the workflow now also boots a
+simulator after a clean build and captures 3 shots (artifact `app-store-shots`, viewable at the
+run's artifacts page):
+- `01-free-light`: free edits only — watermark must be ABSENT (verify visually).
+- `02-pro-watermark`: Detail values via the new `-lumenDemoPro 1` demo flag — watermark +
+  crown badge must be PRESENT (verify visually).
+- `03-paywall`: `-lumenDemoPaywall 1` demo flag presents the sheet — **file size was oddly
+  small (185 KB vs 4.5 MB); Angelo to confirm the sheet actually rendered.** If it didn't,
+  the 3 s sleep in applyDemo or the sheet presentation needs adjusting.
+Demo hooks added (CI-only, all `#if APP_STORE`): `DemoMode.paywall` / `DemoMode.proEdits` in
+Demo.swift, used by EditorView.applyDemo — they do nothing in normal use. Watermark got an
+accessibility ID (`lumaforge-mark`) for future UI tests.
 
 ## What to check first when building in the real repo
 
