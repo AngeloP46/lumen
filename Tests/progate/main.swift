@@ -44,5 +44,65 @@ if !mixed.contains(where: { $0.usesProFeatures }) { failures += 1; print("FAIL: 
 if [EditSettings(), EditSettings()].contains(where: { $0.usesProFeatures }) {
     failures += 1; print("FAIL: free batch")
 }
+for preset in Preset.all {
+    for amount in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        expect("free built-in \(preset.name) strength \(amount)", pro: false) {
+            var look = EditSettings(); preset.apply(&look)
+            $0 = EditSettings.blend(EditSettings(), look, amount)
+            $0.exposure = 0.7; $0.cropL = 0.1; $0.saturation = 8
+        }
+    }
+    expect("\(preset.name) cannot exempt extra detail", pro: true) {
+        preset.apply(&$0); $0.texture = 17
+    }
+    expect("\(preset.name) cannot exempt HDR", pro: true) {
+        preset.apply(&$0); $0.hdr = true
+    }
+    expect("\(preset.name) cannot exempt masks", pro: true) {
+        preset.apply(&$0); var mask = Mask.make(.linear); mask.adjust.exposure = 1; $0.masks = [mask]
+    }
+    expect("\(preset.name) cannot exempt heal", pro: true) {
+        preset.apply(&$0); $0.heals = [HealSpot(strokes: [], x: 0, y: 0, w: 0.2, h: 0.2)]
+    }
+}
+expect("custom advanced preset is not free", pro: true) {
+    $0.texture = 17; $0.grading.shadows = GradeZone(hue: 130, sat: 22, lum: 3)
+}
+expect("preset followed by advanced curve is Pro", pro: true) {
+    Preset.all[1].apply(&$0); $0.curves.master = [CurvePoint(x: 0, y: 0.1), CurvePoint(x: 1, y: 1)]
+}
+expect("preset followed by independent grading change is Pro", pro: true) {
+    Preset.all[4].apply(&$0); $0.grading.shadows.hue = 220
+}
+expect("preset followed by vignette tuning is Pro", pro: true) {
+    Preset.all[4].apply(&$0); $0.vignetteFeather = 20
+}
+expect("preset cannot mix unrelated advanced sections", pro: true) {
+    Preset.all[1].apply(&$0); var cinema = EditSettings(); Preset.all[4].apply(&cinema); $0.grading = cinema.grading
+}
+expect("free preset survives sidecar reload", pro: false) {
+    Preset.all[1].apply(&$0)
+    let encoded = try! JSONEncoder().encode($0)
+    $0 = try! JSONDecoder().decode(EditSettings.self, from: encoded)
+}
+expect("pasted extra edits remain Pro", pro: true) {
+    Preset.all[1].apply(&$0); var copied = EditSettings(); copied.texture = 17; $0.take(.detail, from: copied)
+}
+var freeLook = EditSettings(); Preset.all[1].apply(&freeLook)
+if [freeLook, pro].contains(where: { $0.usesProFeatures }) == false {
+    failures += 1; print("FAIL: free preset in mixed Pro batch")
+}
+for preset in Preset.all {
+    expect("switch free looks then reduce \(preset.name) strength", pro: false) {
+        var before = EditSettings(); Preset.all[1].apply(&before)
+        var after = EditSettings(); preset.apply(&after)
+        $0 = EditSettings.blend(before.builtinPresetStrengthBase, after, 0.25)
+    }
+}
+expect("preset strength cannot launder existing Pro edits", pro: true) {
+    var before = EditSettings(); before.texture = 17
+    var after = EditSettings(); Preset.all[1].apply(&after)
+    $0 = EditSettings.blend(before.builtinPresetStrengthBase, after, 0.5)
+}
 print("Pro policy failures: \(failures)")
 exit(failures == 0 ? 0 : 1)

@@ -814,6 +814,11 @@ final class EditorViewModel: ObservableObject {
         var s = EditSettings()
         p.apply(&s)
         apply(preset: s)
+#if APP_STORE
+        if let record = presetRecord {
+            presetRecord = PresetRecord(before: record.before.builtinPresetStrengthBase, after: record.after)
+        }
+#endif
     }
 
     func loadPresetThumbs(user: [UserPreset]) {
