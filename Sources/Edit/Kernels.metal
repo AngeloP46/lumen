@@ -404,9 +404,12 @@ float4 lumenMaskMul(sample_t a, sample_t b) {
 
 // Clipping warning: channels at or above p.x (white) show red, everything at or below p.y (black) shows blue
 float4 lumenClip(sample_t s, float4 p) {
-    float mx = max(s.r, max(s.g, s.b));
-    if (mx >= p.x) return float4(1.0, 0.08, 0.08, 1.0);
-    if (mx <= p.y) return float4(0.1, 0.4, 1.0, 1.0);
+    // Empty canvas is transparent, not clipped black photo content.
+    if (s.a <= 0.0) return float4(0.0);
+    float3 rgb = s.rgb / s.a;
+    float mx = max(rgb.r, max(rgb.g, rgb.b));
+    if (mx >= p.x) return float4(1.0, 0.08, 0.08, 1.0) * s.a;
+    if (mx <= p.y) return float4(0.1, 0.4, 1.0, 1.0) * s.a;
     return s;
 }
 

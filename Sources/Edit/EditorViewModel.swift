@@ -130,6 +130,9 @@ final class EditorViewModel: ObservableObject {
         self.store = store
         applyingHistory = true
         var loaded = store.editorSettings(for: item)
+        let history = store.history(for: item, current: loaded)
+        undoStack = history.undo
+        redoStack = history.redo
         // brush strokes painted before strokes kept their own softness: fix them at the softness they show now,
         // so moving the Feather slider never changes strokes already on the photo
         for mi in loaded.masks.indices {
@@ -230,8 +233,8 @@ final class EditorViewModel: ObservableObject {
             if undoStack.isEmpty || Date().timeIntervalSince(lastChange) > 0.6 {
                 undoStack.append(old)
                 if undoStack.count > 100 { undoStack.removeFirst() }
-                redoStack.removeAll()
             }
+            redoStack.removeAll()
             lastChange = Date()
         }
         scheduleSave()
@@ -244,8 +247,9 @@ final class EditorViewModel: ObservableObject {
     private func scheduleSave() {
         saveWork?.cancel()
         let s = settings, item = item
+        let history = LibraryStore.EditHistory(current: s, undo: undoStack, redo: redoStack)
         let work = DispatchWorkItem { [weak store] in
-            Task { @MainActor in store?.save(s, for: item) }
+            Task { @MainActor in store?.save(s, for: item, history: history) }
         }
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
@@ -253,7 +257,7 @@ final class EditorViewModel: ObservableObject {
 
     func flushSave() {
         saveWork?.cancel()
-        store?.save(settings, for: item)
+        store?.save(settings, for: item, history: LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack))
     }
 
     // MARK: Rendering
@@ -308,7 +312,7 @@ final class EditorViewModel: ObservableObject {
         }
         if clipWarning && !showOriginal, let clip = LumenKernels.shared?.clip {
             let white = s.hdr && hdrScreenStops > 0 ? exp2(hdrScreenStops) * 0.995 : 0.999
-            img = clip.apply(extent: img.extent, arguments: [img, CIVector(x: white, y: 0.0007, z: 0, w: 0)]) ?? img
+            img = (clip.apply(extent: img.extent, arguments: [img, CIVector(x: white, y: 0.0007, z: 0, w: 0)]) ?? img).cropped(to: img.extent)
         }
         // sized from the preview so the shape stays right (crop, rotation, original) while the 100% view is showing
         if base.extent.size != imageSize { imageSize = base.extent.size }
@@ -477,7 +481,7 @@ final class EditorViewModel: ObservableObject {
         lastChange = .distantPast
     }
 
-    func reset() { settings = EditSettings() }
+    func reset() { lastChange = .distantPast; settings = EditSettings() }
 
     func auto() {
         guard let session, let source else { return }
@@ -500,6 +504,7 @@ final class EditorViewModel: ObservableObject {
 
     /// Auto button: apply Auto, or (when it is on) put back the values from before it.
     func toggleAuto() {
+        lastChange = .distantPast
         if autoActive, let r = autoRecord {
             var s = settings
             let b = r.before
@@ -538,6 +543,7 @@ final class EditorViewModel: ObservableObject {
     // MARK: Presets
 
     func apply(preset edits: EditSettings) {
+        lastChange = .distantPast
         var s = edits
         s.masks = settings.masks
         s.heals = settings.heals
@@ -771,6 +777,7 @@ final class EditorViewModel: ObservableObject {
 
     /// Pastes only the chosen tools from the copied edits.
     func paste(_ sections: Set<EditSection>, from c: EditSettings) {
+        lastChange = .distantPast
         var s = settings
         for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: c) }
         settings = s

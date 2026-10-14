@@ -217,8 +217,43 @@ final class LibraryStore: ObservableObject {
     /// CI only: as if the photo had never been opened.
     func forgetEdits(_ item: LibraryItem) { try? FileManager.default.removeItem(at: editURL(item)) }
 
-    func save(_ s: EditSettings, for item: LibraryItem) {
-        if let data = try? JSONEncoder().encode(s) { try? data.write(to: editURL(item), options: .atomic) }
+    struct EditHistory: Codable {
+        var current: EditSettings
+        var undo: [EditSettings]
+        var redo: [EditSettings]
+    }
+
+    func history(for item: LibraryItem, current: EditSettings) -> EditHistory {
+        guard let data = try? Data(contentsOf: editURL(item)),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let value = json["_undoHistory"],
+              let encoded = try? JSONSerialization.data(withJSONObject: value),
+              var history = try? JSONDecoder().decode(EditHistory.self, from: encoded),
+              history.current == current else { return EditHistory(current: current, undo: [], redo: []) }
+        history.undo = Array(history.undo.suffix(100))
+        history.redo = Array(history.redo.suffix(100))
+        return history
+    }
+
+    func save(_ s: EditSettings, for item: LibraryItem, history supplied: EditHistory? = nil) {
+        let previous = settings(for: item)
+        var history = supplied ?? self.history(for: item, current: previous)
+        // Library paste/batch changes are undoable too; editor saves already contain their history.
+        if supplied == nil && s != previous {
+            history.undo.append(previous)
+            history.redo.removeAll()
+        }
+        history.current = s
+        history.undo = Array(history.undo.suffix(100))
+        history.redo = Array(history.redo.suffix(100))
+        guard let settingsData = try? JSONEncoder().encode(s),
+              var json = (try? JSONSerialization.jsonObject(with: settingsData)) as? [String: Any],
+              let historyData = try? JSONEncoder().encode(history),
+              let historyJSON = try? JSONSerialization.jsonObject(with: historyData) else { return }
+        json["_undoHistory"] = historyJSON
+        if let data = try? JSONSerialization.data(withJSONObject: json) {
+            try? data.write(to: editURL(item), options: .atomic)
+        }
     }
 
     func delete(_ list: [LibraryItem]) {
