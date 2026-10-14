@@ -83,6 +83,7 @@ jobs:
 
       # --- App Store UI screenshots (only if the compile above passed) ---
       - name: Sample photos
+        if: ${{ success() && !inputs.checks_only }}
         run: |
           mkdir -p demo
           bash .github/ci/get.sh demo/1-a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW" 10000000
@@ -90,6 +91,7 @@ jobs:
           ls -la demo
 
       - name: Boot simulator and install
+        if: ${{ success() && !inputs.checks_only }}
         run: |
           UDID=$(xcrun simctl list devices available | grep -E "iPhone 16 Pro Max" | head -1 | grep -oE '[0-9A-F-]{36}')
           echo "UDID=$UDID" >> $GITHUB_ENV
@@ -133,6 +135,7 @@ jobs:
           ls -la shots
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
+        if: ${{ success() && !inputs.checks_only }}
         with:
           name: app-store-shots
           path: shots

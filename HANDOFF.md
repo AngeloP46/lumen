@@ -12,6 +12,8 @@ Security-only SideStore publication 38627206272 succeeded; feed 0.1.200/build 20
 size/hash/URL matched release. Security build/Heal/OFF-ON checks already passed.
 Phone checks: RAW/HDR subject edges and performance, refinement brush feel, info layout.
 Auto Level remains image-based horizon/edge analysis; no camera roll assumption.
+checks_only sandbox runs now skip sample downloads, simulator boot and screenshot
+artifact setup after the two compile checks, avoiding unnecessary work.
 
 ## Security changes — 14 October 2026
 
