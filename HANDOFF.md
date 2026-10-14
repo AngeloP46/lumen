@@ -1,6 +1,17 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
-## Shared editor improvements — 14 October, checks running
+## Shared editor improvements — 14 October, validation passed
+
+Final shared source: main feef0e4, sandbox d09da21. All required validation passed:
+final IPA 38602637294, combined focused UI 38602633151, depth sliders 38599011360,
+full engine 38600705716 (969 checks), focused Lens Blur/Sony ARW preview+JPEG export
+38602642007 (32 checks). Screenshots checked for toolbar readability/panel overlap.
+Sandbox policy and both OFF/ON compile steps passed in 38600345922; its optional
+duplicate screenshot capture was cancelled, so do not describe the whole run as green.
+Older failed cases were fixed (no-op pixels, depth-cache slider interruption, refinement
+endpoints/missing-depth export, preserving each photo's refinement when pasting).
+Ready for personal main publication, without any Store changes; check SideStore feed.
+Both clones carry the final shared source. Real-phone quality/speed still needs feedback.
 
 Angelo authorized improvements for both the personal SideStore app and sandbox.
 Shared commit 9ac404a (sandbox cherry-pick 6a05836) preserves the last pinch anchor
