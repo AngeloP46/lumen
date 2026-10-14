@@ -1,19 +1,29 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
-## Current shared revisions — 14 October
-Lens Blur and photo-information revisions mirrored from main work branch (PR #2).
-Subject-instance protection and subject depth distribution, first-use 8, progressive
-far blur, calibrated distance, full depth feather travel, inline linked-mask refinement,
-and optional transient slider preview implemented. Endpoint graphic matches the depth
-feather effect; activation bookkeeping does not mark untouched photos edited.
-Standard metadata info button added
-for all camera brands; no Store/payment logic changed. Focused checks pending.
-Security-only SideStore publication 38627206272 succeeded; feed 0.1.200/build 200,
-size/hash/URL matched release. Security build/Heal/OFF-ON checks already passed.
-Phone checks: RAW/HDR subject edges and performance, refinement brush feel, info layout.
-Auto Level remains image-based horizon/edge analysis; no camera roll assumption.
-checks_only sandbox runs now skip sample downloads, simulator boot and screenshot
-artifact setup after the two compile checks, avoiding unnecessary work.
+## Current shared revisions — complete, 14 October
+Shared Lens Blur/photo information merged to personal main through protected PR #2
+(main 34b72c3), mirrored here; sandbox Store code unchanged. Current SideStore is
+security-only 0.1.200. New editor release is NOT published: automatic approval review
+required Angelo's explicit publication instruction. Personal distribution stays unlocked.
+
+Final app source d383f7e (test revision e9d997b): engine/metadata 38631365097 passed
+79 checks, including nine standard camera-make fixtures and Sony RAW preview/JPEG export;
+focused UI 38631369309 passed one combined test with zero failures, screenshots checked;
+IPA 38631360377 and PR/readiness 38632032581 passed. Sandbox policy and OFF/ON builds
+passed in 38631373218. Shared source parity checked; no Store files changed.
+
+Whole/selected-instance subject protection and subject depth distribution, first-use 8,
+progressive far blur, calibrated distance, full depth feather travel/graphic, inline
+linked-mask refinement, transient optional slider preview and standard metadata info
+button implemented. Saved zero/off preserved; activation does not mark untouched photos
+edited. Read ../Lumen/PRODUCT-BRIEF.md: iOS/RAW/all popular brands, cheaper Lightroom
+alternative; personal app free/unlocked and sandbox charging decisions separate.
+
+Things to verify: owner-approved SideStore publication; phone RAW/ProRAW subject edges,
+brush feel, HDR and speed. Touch tests use synthetic depth/subject coverage, not AI proof.
+Troubleshooting: manual distance/range/brush fallback if no subject; missing EXIF stays
+missing. Auto Level remains image-based horizon/edge analysis, not camera roll data.
+checks_only now skips samples, simulator boot and screenshot artifact setup.
 
 ## Security changes — 14 October 2026
 
@@ -47,10 +57,8 @@ Public unrestricted SideStore distribution remains unchanged for the owner's upd
 feed; distribution before selling Pro is still a business decision. GitHub account
 two-factor authentication was not verifiable through the current API token.
 
-Lens Blur follow-up is a separate outstanding task: whole-subject focus, first-use
-amount 8, progressive far blur, usable distance range, full Near/Far depth controls,
-inline refinement in Lens Blur, transient red selection preview with off toggle.
-Do not claim those revisions are included in this security change.
+Lens Blur revisions followed the security update; see the completed status above.
+They were not included in security-only SideStore 0.1.200.
 
 
 ## Shared editor improvements — 14 October, published to SideStore
