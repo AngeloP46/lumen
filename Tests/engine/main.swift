@@ -293,6 +293,15 @@ if let file = files.first, let session = EditSession(url: file),
     settings.masks = [mask]; settings.lensBlur.maskID = mask.id
     check(values(session.applyLensBlur(pattern, settings: settings, source: src), background) == values(pattern, background),
           "Lens Blur ignored an editable mask's zero opacity")
+    var depthRefinement = Mask.make(.depth)
+    settings.masks = [depthRefinement]; settings.lensBlur.maskID = depthRefinement.id
+    check(session.lensBlurMask(settings, source: noDepth) == nil,
+          "Refined depth blur must report missing depth instead of silently exporting unblurred")
+    depthRefinement.components[0].amount = 0
+    settings.masks = [depthRefinement]
+    check(session.lensBlurMask(settings, source: noDepth) != nil,
+          "Inactive depth component must not require depth")
+    settings.masks = []
     settings.lensBlur.maskID = nil
     let scale = CGAffineTransform(scaleX: 2, y: 2)
     let large = source(pattern.transformed(by: scale))
@@ -315,6 +324,32 @@ if let file = files.first, let session = EditSession(url: file),
     check(roundTrip == settings, "Lens Blur did not survive sidecar round trip")
     check(!EditSection.lensBlur.canPaste, "Photo-specific Lens Blur should not be pasted to another photo")
     if let cg = smallRender(output, width: 256) { saveJPEG(cg, "lens-blur-synthetic.jpg") }
+}
+
+// Narrow follow-up after the full engine passed: new blur cases plus a real Sony camera RAW/export.
+if args.contains("--lens-blur") {
+    check(checkCount >= 20, "Focused Lens Blur assertions did not run")
+    guard let raw = files.first(where: { $0.pathExtension.lowercased() == "arw" }),
+          let session = EditSession(url: raw),
+          let source = session.makeSource(maxEdge: 1200, materialize: true) else {
+        check(false, "Focused blur check requires the Sony ARW sample"); finishChecks()
+    }
+    var s = EditSettings(); s.lensBlur.amount = 65
+    session.prepareAutoMasks(s, source: source)
+    check(source.depthField != nil, "Sony ARW depth estimation failed")
+    if let d = source.depthField { s.lensBlur.focusDistance = Double(d.value(atNormalized: 0.5, 0.65)) }
+    check(session.lensBlurMask(s, source: source) != nil, "Sony ARW blur map unavailable")
+    if let before = session.renderCGImage(EditSettings(), source: source),
+       let after = session.renderCGImage(s, source: source),
+       let composite = sheet([("Sony ARW original", before), ("Lens Blur", after)]) {
+        saveJPEG(composite, "lens-blur-sony-preview.jpg")
+    } else { check(false, "Sony ARW blur preview failed") }
+    if let data = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: 512, includeHDR: false),
+       let reopened = CIImage(data: data) {
+        check(max(reopened.extent.width, reopened.extent.height) == 512, "Blurred ARW JPEG export dimensions changed")
+        try? data.write(to: outDir.appendingPathComponent("lens-blur-sony-export.jpg"))
+    } else { check(false, "Sony ARW Lens Blur export failed") }
+    finishChecks()
 }
 
 var opened = 0

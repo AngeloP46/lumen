@@ -1,6 +1,11 @@
 name: Engine test
 on:
   workflow_dispatch:
+    inputs:
+      only:
+        description: 'lens-blur runs focused blur/RAW checks; empty runs the full engine'
+        required: false
+        default: ''
   push:
     paths:
       - 'Sources/Edit/**'
@@ -54,6 +59,8 @@ jobs:
             Sources/Edit/Histogram.swift \
             Tests/engine/main.swift
       - name: Run
+        env:
+          ENGINE_TEST_ONLY: ${{ github.event.inputs.only }}
         # The test's own exit status is the job's status. Only a crash (anything above 1) gets the lldb backtrace,
         # and the backtrace never changes the result: exit 1 = a check failed, other non-zero = it crashed.
         run: |
@@ -63,7 +70,9 @@ jobs:
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           export LUMEN_PEOPLE_SAMPLE="$PWD/people/bus.jpg"
           export LUMEN_TREES_SAMPLE="$PWD/people/building.jpg"
-          ./out/engine-test out/k.metallib samples out/render
+          EXTRA=""
+          if [ "$ENGINE_TEST_ONLY" = "lens-blur" ]; then EXTRA="--lens-blur"; fi
+          ./out/engine-test out/k.metallib samples out/render $EXTRA
           code=$?
           echo "engine-test exit code: $code"
           if [ "$code" -gt 1 ]; then

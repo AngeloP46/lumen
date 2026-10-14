@@ -185,6 +185,14 @@ final class LumenUITests: XCTestCase {
         el("lens-blur-refine").tap(); sleep(2)
         XCTAssertTrue(el("lum-bar").exists, "refine opens the background's depth range")
         shot("lens-blur-refinement")
+        el("tool-Lens Blur").tap(); sleep(1)
+        let beforeRefinedDrag = Double(valueOf("reset-Blur amount")) ?? 0
+        let refinedSlider = el("slider-Blur amount")
+        refinedSlider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: refinedSlider.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+        sleep(1)
+        XCTAssertGreaterThan(Double(valueOf("reset-Blur amount")) ?? 0, beforeRefinedDrag + 10,
+                             "refinement must not interrupt the Blur amount gesture")
         el("editor-tools").swipeLeft(); sleep(1)
         XCTAssertTrue(el("tool-Presets").isHittable, "scrolling reveals the last tool")
         el("editor-tools").swipeRight(); el("editor-tools").swipeRight(); sleep(1)

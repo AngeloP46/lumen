@@ -77,6 +77,9 @@ extension EditSession {
         let blur = s.lensBlur
         guard blur.amount > 0 else { return nil }
         if let id = blur.maskID, let mask = s.masks.first(where: { $0.id == id }) {
+            if mask.amount <= 0 { return Self.constant(0, source.extent) }
+            if mask.components.contains(where: { $0.kind == .depth && $0.amount > 0 }),
+               source.cachedMask(Self.aiDepth) == nil { return nil }
             return maskImage(mask, source: source, gain: exp2(s.exposure))
         }
         guard let depth = source.cachedMask(Self.aiDepth), let kernel = LumenKernels.shared?.rangeMask else { return nil }

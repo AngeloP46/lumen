@@ -477,6 +477,7 @@ final class EditorViewModel: ObservableObject {
         m.components[0].lumHigh = 1
         m.components[0].lumLowFeather = settings.lensBlur.focusWidth
         m.components[0].lumHighFeather = 0
+        if m.components[0].lumLow >= 0.999 { m.components[0].amount = 0 }
         lastChange = .distantPast
         var s = settings
         s.masks.append(m)
@@ -487,7 +488,19 @@ final class EditorViewModel: ObservableObject {
 
     private func prepareAutoMasksIfNeeded() {
         guard let session, let source, !autoMaskBusy else { return }
-        let needs = ((lensBlurEditing || settings.lensBlur.amount > 0) && !source.hasTried(EditSession.aiDepth)) || settings.masks.contains { m in m.components.contains { $0.kind.needsAnalysis } }
+        let needs = ((lensBlurEditing || settings.lensBlur.amount > 0) && !source.hasTried(EditSession.aiDepth)) || settings.masks.contains { m in
+            m.components.contains { c in
+                switch c.kind {
+                case .subject, .background: return !source.hasTried(EditSession.aiSubject)
+                case .sky: return !source.hasTried(EditSession.aiSky)
+                case .people: return !source.hasTried(EditSession.aiPeople)
+                case .depth: return !source.hasTried(EditSession.aiDepth)
+                case .landscape:
+                    return !source.hasTried(EditSession.aiScene) || (!c.scene.isEmpty && !source.hasTried(EditSession.sceneKey(c.scene.sorted())))
+                default: return false
+                }
+            }
+        }
         guard needs else { return }
         let askedBlur = settings.lensBlur
         var snapshot = settings
@@ -831,6 +844,10 @@ final class EditorViewModel: ObservableObject {
         lastChange = .distantPast
         var s = settings
         for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: c) }
+        if sections.contains(.masks), let id = settings.lensBlur.maskID,
+           let ownFocus = settings.masks.first(where: { $0.id == id }) {
+            s.masks.removeAll { $0.id == id }; s.masks.append(ownFocus)
+        }
         settings = s
     }
 
