@@ -11,11 +11,12 @@ Final app source d383f7e; test revision e9d997b. Passed: engine/metadata 3863136
 38631360377, PR build/readiness 38632032581, sandbox policy/OFF-ON 38631373218.
 Screenshots/renders inspected. No full UI suite was run. Personal SideStore is unlocked.
 
-New shared editor release is NOT published. Automatic approval review rejected the
-external SideStore deployment because explicit publication instruction was missing.
-Owner approval is required before dispatching build.yml on main. Then verify the feed
-version/build/URL/size/hash before reporting ready. Do not repeat completed tests unless
-source changes. Real-phone RAW/HDR subject quality and speed remain owner checks.
+Angelo approved publication; SideStore 0.1.207/build 207 is now published and verified.
+Run 38634930064 succeeded on main fbe5b7a; com.example.lumen, Lumen-207.ipa,
+322324910 bytes, SHA256 4d5b0b1faa801f21a87ce2c4401e87135783ce9041b535dd556c0b0eaede94c6.
+Feed version/build/URL/size/hash matched the release. It includes the shared revisions.
+No repeated tests needed for this publication of unchanged checked source.
+Real-phone RAW/HDR subject quality and speed remain owner checks.
 
 Sandbox is on sandbox; payment and watermark code remain separate. Its checks_only
 workflow now skips sample downloads/simulator boot/screenshot setup. Existing untracked
