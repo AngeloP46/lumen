@@ -1,5 +1,19 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## Lens Blur phone feedback follow-up — 14 October
+Owner reported amount still 0 and unclear subject selection on 0.1.207. PR #5:
+old untouched zero/default settings migrate once on explicit tool entry to amount 8;
+new explicit zero/reset choices stay off. Selecting a new subject re-enables amount 8
+when off. Highlighted picking button, selection status and four-second red background
+confirmation; manual eye can show/hide selection. Main Lens Blur page now uses the
+same depth bar/presets/Near edge/Far edge controls as Masks. Brushes remain inline.
+Shared fixes mirrored into sandbox; personal SideStore stays unlocked. Owner explicitly
+requested publication ASAP after focused checks. Checks pending; latest feed 0.1.207.
+Phone verification: old photos start at 8, subject selection feedback, depth/brush feel.
+Troubleshooting: old fully-default saved zeros could not be distinguished from unused
+settings; migrate those once, preserve custom-focus zeros and all new explicit zeros.
+
+
 ## Current shared revisions — complete, 14 October
 Shared Lens Blur/photo information merged to personal main through protected PR #2
 (main 34b72c3), mirrored here; sandbox Store code unchanged. Angelo approved publication: SideStore 0.1.207/build 207 is published, fully unlocked.
