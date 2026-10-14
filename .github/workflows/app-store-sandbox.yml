@@ -92,26 +92,22 @@ jobs:
             sleep $W
             xcrun simctl io $UDID screenshot shots/$name.png
           }
-          # The hero: a free Light edit, no watermark (proves the free tier is real).
-          W=18 shot 01-free-light -lumenDemoOpen 0 -lumenDemoTool Light -lumenDemoEdit 1
-          # Grade: colour wheels tinted (a real Pro edit).
-          W=18 shot 02-grade -lumenDemoOpen 0 -lumenDemoTool Grade -lumenDemoGrade 1
-          # Curve: a lifted S-curve visible on the graph.
-          W=18 shot 03-curve -lumenDemoOpen 0 -lumenDemoTool Curve -lumenDemoCurve 1
-          # Detail: sliders pushed (sharpness/texture/clarity/vignette/grain).
-          W=18 shot 04-detail -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoDetail2 1
-          # Masks: an AI sky mask applied, overlay on the photo.
-          W=35 shot 05-masks -lumenDemoOpen 0 -lumenDemoTool Masks -lumenDemoMask sky
-          # Heal: demo people found on the photo (boxes), the Remove-people flow.
-          W=30 shot 06-heal -lumenDemoOpen 0 -lumenDemoTool Heal -lumenDemoPeople 1
-          # Export control: the format/quality/size/HDR sheet.
-          W=20 shot 07-export -lumenDemoOpen 0 -lumenDemoTool Light -lumenDemoEdit 1 -lumenDemoExport 1
-          # Batch edit: library in selection mode with photos checked + the export bar.
-          W=20 shot 08-batch -lumenDemoBatch 1
-          # THE watermark: a free user's Pro edit (Detail) — the new solid badge on the photo.
+          # App Store listing shots: ALL captured clean (-lumenDemoNoWM suppresses the watermark
+          # even on Pro edits), because a watermark in the ad images would look like a defect.
+          # 05-masks / 06-heal use CI stand-ins (no AI in the simulator) — internal reference only,
+          # NOT for the listing (Angelo, 14 Oct).
+          W=18 shot 01-free-light -lumenDemoOpen 0 -lumenDemoTool Light -lumenDemoEdit 1 -lumenDemoNoWM
+          W=18 shot 02-grade -lumenDemoOpen 0 -lumenDemoTool Grade -lumenDemoGrade 1 -lumenDemoNoWM
+          W=18 shot 03-curve -lumenDemoOpen 0 -lumenDemoTool Curve -lumenDemoCurve 1 -lumenDemoNoWM
+          W=18 shot 04-detail -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoDetail2 1 -lumenDemoNoWM
+          W=35 shot 05-masks -lumenDemoOpen 0 -lumenDemoTool Masks -lumenDemoMask sky -lumenDemoNoWM
+          W=30 shot 06-heal -lumenDemoOpen 0 -lumenDemoTool Heal -lumenDemoPeople 1 -lumenDemoNoWM
+          W=20 shot 07-export -lumenDemoOpen 0 -lumenDemoTool Light -lumenDemoEdit 1 -lumenDemoExport 1 -lumenDemoNoWM
+          W=20 shot 08-batch -lumenDemoBatch 1 -lumenDemoNoWM
+          # THE watermark: a free user's Pro edit (Detail) — the tiled diagonal protection mark.
           W=20 shot 09-watermark -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoPro 1
           # The paywall: what a free user sees when they try to export a Pro edit.
-          W=20 shot 10-paywall -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoPro 1 -lumenDemoPaywall 1
+          W=20 shot 10-paywall -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoPro 1 -lumenDemoPaywall 1 -lumenDemoNoWM
           ls -la shots
 
       - uses: actions/upload-artifact@v4

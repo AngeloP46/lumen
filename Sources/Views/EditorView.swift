@@ -490,19 +490,17 @@ struct EditorView: View {
                 CanvasView(model: vm.canvas, xform: xform, hdr: vm.settings.hdr)
                     .allowsHitTesting(false)
                 // DRAFT — sandbox: watermark on Pro-edited previews for free users (plan §5.1).
-                // Anchored to the photo's own frame (wmXform.rect), so it moves with the picture
-                // under pinch/pan and never sits behind the toolbar chrome. The mark is ~50 pt
-                // tall, so the centre is offset half-a-mark above/beside the photo edge.
+                // A tiled diagonal pattern (the classic "SAMPLE" protection look, 14 Oct) stretched
+                // over the photo's own frame, so it moves with the picture under pinch/pan and is
+                // clipped to the photo, not the screen.
 #if APP_STORE
-                if vm.settings.usesProFeatures && !LumenStore.shared.isPro {
+                if vm.settings.usesProFeatures && !LumenStore.shared.isPro && !DemoMode.noWM {
                     let wmXform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan, bottomAlign: alignBottom)
                     let r = wmXform.rect
-                    switch LumaforgeMarkPlacement.choice {
-                    case .corner:
-                        LumaforgeMark().offset(x: r.maxX - 90 - geo.size.width / 2, y: r.minY + 30 - geo.size.height / 2)
-                    case .bottom:
-                        LumaforgeMark().offset(x: r.midX - geo.size.width / 2, y: r.maxY - 30 - geo.size.height / 2)
-                    }
+                    LumaforgeMark()
+                        .frame(width: r.width, height: r.height)
+                        .offset(x: r.midX - geo.size.width / 2, y: r.midY - geo.size.height / 2)
+                        .clipped()
                 }
 #endif
                 if vm.imageSize != .zero {
