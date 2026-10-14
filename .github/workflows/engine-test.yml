@@ -18,14 +18,17 @@ concurrency:
   group: engine-test-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: macos-15
-    permissions:
-      contents: write   # uploads the preview sheets to the `test-previews` release
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
+        with:
+          persist-credentials: false
       - name: Fetch sample photos
         run: |
           mkdir -p samples
@@ -39,10 +42,10 @@ jobs:
           bash .github/ci/get.sh people/bus.jpg "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/assets/bus.jpg" 50000
           # a tree against a pale sky beside a white building (sky seen through trees)
           bash .github/ci/get.sh people/building.jpg "https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/building.jpg" 50000
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 pinned
         with:
-          path: Models
-          key: models-depth-v2s-f16-detr-seg-f16-lama-1
+          path: Models/.verified-packages
+          key: models-verified-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/ci/model-lock.json') }}
       - name: AI models (depth, scene, heal)
         run: |
           bash .github/ci/get-depth-model.sh Models
@@ -81,16 +84,7 @@ jobs:
             echo "::endgroup::"
           fi
           exit "$code"
-      - name: Publish preview sheets (test-previews release)
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          ls out/render/previews/*.jpg >/dev/null 2>&1 || exit 0
-          gh release view test-previews >/dev/null 2>&1 || gh release create test-previews \
-            --title "Engine test previews" --notes "Preview sheets from the latest engine test run." --prerelease
-          gh release upload test-previews out/render/previews/*.jpg --clobber
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
         if: always()
         with:
           name: engine-renders

@@ -9,6 +9,13 @@ final class LumenUITests: XCTestCase {
         continueAfterFailure = true
     }
 
+    func testHealDeletionPrivacy() {
+        launchLibrary(extra: ["-lumenDemoHealDeletion", "1"])
+        let log = (try? String(contentsOfFile: logPath, encoding: .utf8)) ?? ""
+        XCTAssertFalse(log.contains("heal deletion FAIL"), log)
+        XCTAssertEqual(log.components(separatedBy: "heal deletion PASS").count - 1, 8, log)
+    }
+
     // MARK: helpers
 
     func launch(open: Int, tool: String, extra: [String] = []) {

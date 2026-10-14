@@ -1,5 +1,44 @@
 # Lumen – project notes for Claude
 
+## Security changes — 14 October 2026
+
+GitHub main is now protected: pull requests required, Release readiness from GitHub
+Actions required, branches must be current, rules apply to admins, force pushes and
+branch deletion blocked. Zero additional human approvals avoids locking out the sole
+owner. NEVER temporarily disable protection or use --admin to merge failed checks.
+Secret scanning and push protection enabled; sandbox origin cleaned, GitHub CLI uses
+system keyring. Angelo confirmed revoking the old LLM token. Git access reverified.
+
+Both clones now pin build actions, XcodeGen and model revisions/file hashes. Build
+and test jobs have read-only tokens and checkout does not retain credentials.
+Only the isolated main publish job may write releases; it rejects stale main builds.
+Engine renders are run artifacts, not a release upload from a write-enabled test job.
+Heal deletion removes current/history/owned patches, preserves retained references,
+and waits for active export/thumbnail readers. Late writes/saves are blocked.
+Legacy orphan patches absent from every sidecar cannot safely be attributed; corrupt
+retained sidecars cause a cleanup warning rather than destructive cleanup.
+
+Validation pending in GitHub Actions: one personal IPA build, focused simulator
+testHealDeletionPrivacy (8 checks), and sandbox APP_STORE OFF/ON compilation.
+Six model-security tests and local workflow policy checks already pass.
+SideStore still 0.1.197 until a checked main build is published. No payment changes.
+
+New workflow: use a work branch + PR, run relevant checks, merge the checked PR via
+GitHub. Notes-only PRs skip the Mac build and still run Release readiness. A [skip ci]
+commit requires manual build.yml on that exact branch before merging; after merge
+with skipped CI, manually dispatch build.yml on main to publish the update.
+Do not force-push main or use the older direct-push instructions below.
+
+Public unrestricted SideStore distribution remains unchanged for the owner's update
+feed; distribution before selling Pro is still a business decision. GitHub account
+two-factor authentication was not verifiable through the current API token.
+
+Lens Blur follow-up is a separate outstanding task: whole-subject focus, first-use
+amount 8, progressive far blur, usable distance range, full Near/Far depth controls,
+inline refinement in Lens Blur, transient red selection preview with off toggle.
+Do not claim those revisions are included in this security change.
+
+
 Read this first. It records what exists, how it's built and shipped, and what to do next.
 
 ## Housekeeping (do this every session)
