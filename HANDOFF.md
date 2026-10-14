@@ -2,9 +2,9 @@
 
 ## Current shared revisions — complete, 14 October
 Shared Lens Blur/photo information merged to personal main through protected PR #2
-(main 34b72c3), mirrored here; sandbox Store code unchanged. Current SideStore is
-security-only 0.1.200. New editor release is NOT published: automatic approval review
-required Angelo's explicit publication instruction. Personal distribution stays unlocked.
+(main 34b72c3), mirrored here; sandbox Store code unchanged. Angelo approved publication: SideStore 0.1.207/build 207 is published, fully unlocked.
+Run 38634930064 succeeded on main fbe5b7a; feed URL/size/hash matched Lumen-207.ipa
+(322324910 bytes; SHA256 4d5b0b1faa801f21a87ce2c4401e87135783ce9041b535dd556c0b0eaede94c6).
 
 Final app source d383f7e (test revision e9d997b): engine/metadata 38631365097 passed
 79 checks, including nine standard camera-make fixtures and Sony RAW preview/JPEG export;
@@ -19,7 +19,7 @@ button implemented. Saved zero/off preserved; activation does not mark untouched
 edited. Read ../Lumen/PRODUCT-BRIEF.md: iOS/RAW/all popular brands, cheaper Lightroom
 alternative; personal app free/unlocked and sandbox charging decisions separate.
 
-Things to verify: owner-approved SideStore publication; phone RAW/ProRAW subject edges,
+Things to verify: update to 0.1.207, then phone RAW/ProRAW subject edges,
 brush feel, HDR and speed. Touch tests use synthetic depth/subject coverage, not AI proof.
 Troubleshooting: manual distance/range/brush fallback if no subject; missing EXIF stays
 missing. Auto Level remains image-based horizon/edge analysis, not camera roll data.
