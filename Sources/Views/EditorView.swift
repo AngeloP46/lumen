@@ -60,6 +60,8 @@ struct EditorView: View {
     // DRAFT — sandbox: App Store export gate (plan §4.1). Flag-off builds never see this.
 #if APP_STORE
     @State private var showProPaywall = false
+    @ObservedObject private var proStore = LumenStore.shared
+    @Environment(\.scenePhase) private var scenePhase
 #endif
     @State private var showEdits = false
     @State private var showPasteSome = false
@@ -171,12 +173,28 @@ struct EditorView: View {
             if !h { lastHoldEnd = Date() }
         }
         .sheet(isPresented: $showExportChoices) {
-            ExportOptionsSheet(count: 1, hdrAvailable: vm.settings.hdr) { vm.export($0) }
+            ExportOptionsSheet(count: 1, hdrAvailable: vm.settings.hdr) { options in
+#if APP_STORE
+                Task {
+                    await proStore.refreshStatus()
+                    if vm.settings.usesProFeatures && !proStore.isPro {
+                        showExportChoices = false
+                        showProPaywall = true
+                    } else { vm.export(options) }
+                }
+#else
+                vm.export(options)
+#endif
+            }
         }
         // DRAFT — sandbox: paywall sheet for the export gate (App Store builds only)
 #if APP_STORE
         .sheet(isPresented: $showProPaywall) {
-            PaywallView(store: LumenStore.shared)
+            PaywallView(store: proStore)
+        }
+        .task { await proStore.refreshStatus() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await proStore.refreshStatus() } }
         }
 #endif
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
@@ -473,12 +491,15 @@ struct EditorView: View {
     // see the paywall instead of the export options; everyone else is unchanged.
     private func requestExport() {
 #if APP_STORE
-        if vm.settings.usesProFeatures && !LumenStore.shared.isPro {
-            showProPaywall = true
-            return
+        Task {
+            await proStore.refreshStatus()
+            if vm.settings.usesProFeatures && !proStore.isPro {
+                showProPaywall = true
+            } else { showExportChoices = true }
         }
-#endif
+#else
         showExportChoices = true
+#endif
     }
 
     private var photoArea: some View {
@@ -494,7 +515,7 @@ struct EditorView: View {
                 // over the photo's own frame, so it moves with the picture under pinch/pan and is
                 // clipped to the photo, not the screen.
 #if APP_STORE
-                if vm.settings.usesProFeatures && !LumenStore.shared.isPro && !DemoMode.noWM {
+                if vm.settings.usesProFeatures && !proStore.isPro && !DemoMode.noWM {
                     let wmXform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan, bottomAlign: alignBottom)
                     let r = wmXform.rect
                     LumaforgeMark()

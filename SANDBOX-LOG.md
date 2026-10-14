@@ -129,3 +129,22 @@ iPhone ProRAW file — a real device is the only clean source).
    SideStore pipeline run still produces a normal IPA (brief rule 1's safety check).
 4. RAW test matrix: now DRAFTED as `Tests/rawmatrix/` + `raw-matrix.yml` (CR3/NEF/RAF/ARW/
    DNG) — check its first Actions run, then extend to CR2 and ProRAW in the real repo.
+
+## Codex review fixes — 14 Oct 2026
+
+Authorized by Angelo after source review. Changed Store/LumenStore.swift (verified offer
+classification, eligibility, grace-safe entitlements, expiry refresh, restore errors),
+Store/ProGate.swift (neutral grading/masks/sharpen controls), Views/EditorView.swift (observed
+store, refreshed UI gate and export callback), Views/LibraryView.swift (batch paywall and
+refresh), Edit/EditorViewModel.swift and Library/LibraryStore.swift (defence at actual export
+entry points). Every runtime change is APP_STORE-only; SideStore paths preserved.
+
+Changed PaywallView.swift to show actual eligible monthly trial and billing terms, dismiss
+after paid access, expose AppPrivacyView.swift and standard Apple EULA. AppPrivacyView is a
+new bundled policy; public App Store metadata URL still needs publication.
+
+Added Tests/progate/main.swift (free/Pro states, disabled sections and mixed batch cases).
+app-store-sandbox.yml now runs it and builds flag OFF as well as ON. Existing SideStore
+project.yml/build.yml/model-fetch scripts untouched. Strengthened Tests/rawmatrix/main.swift
+with exposure edit, exact sample-extension coverage, reopened exports/dimensions/TIFF depth.
+CR2 and ProRAW remain explicitly untested. Compilation and runtime results pending GitHub CI.

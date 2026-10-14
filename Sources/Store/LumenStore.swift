@@ -1,7 +1,7 @@
-// DRAFT — sandbox, review required: not compiled in Xcode (no Xcode on the dev PC).
-// Verify StoreKit 2 API usage, the trial heuristic in refreshStatus(), and that the stub
-// path compiles for the SideStore build (flag off).
+// DRAFT — sandbox, review required: exercise purchase/restore, offer eligibility and billing
+// grace with StoreKit testing. Flag-off builds retain the always-Pro SideStore stub.
 import Foundation
+import Combine
 #if APP_STORE
 import StoreKit
 
@@ -20,6 +20,7 @@ final class LumenStore: ObservableObject {
     @Published private(set) var status: ProStatus = .free
     @Published private(set) var monthly: Product?
     @Published private(set) var annual: Product?
+    @Published private(set) var monthlyTrialEligible = false
     @Published var isBusy = false
     @Published var errorMessage: String?
 
@@ -31,6 +32,7 @@ final class LumenStore: ObservableObject {
     var isPro: Bool { status != .free }
 
     private var updatesTask: Task<Void, Never>?
+    private var expiryTask: Task<Void, Never>?
 
     private init() {
         loadProducts()
@@ -49,14 +51,16 @@ final class LumenStore: ObservableObject {
                 let all = try await Product.products(for: [Self.monthlyID, Self.annualID])
                 for p in all where p.id == Self.monthlyID { monthly = p }
                 for p in all where p.id == Self.annualID { annual = p }
+                await refreshTrialEligibility()
             } catch {
                 // No products yet (unconfigured account, no network, sandbox build) — stay free, no crash.
-                print("LumenStore: product load failed: \(error)")
+                errorMessage = "Prices couldn't be loaded. Check your connection and try again."
             }
         }
     }
 
     func purchase(_ product: Product) async {
+        guard !isBusy else { return }
         isBusy = true
         errorMessage = nil
         defer { isBusy = false }
@@ -83,31 +87,60 @@ final class LumenStore: ObservableObject {
 
     /// Apple requirement: restore must work for subscriptions (AppStore.sync + entitlements).
     func restore() async {
+        guard !isBusy else { return }
         isBusy = true
+        errorMessage = nil
         defer { isBusy = false }
-        try? await AppStore.sync()
-        await refreshStatus()
+        do {
+            try await AppStore.sync()
+            await refreshStatus()
+            if !isPro { errorMessage = "No active Pro subscription was found for this Apple Account." }
+        } catch {
+            errorMessage = "Purchases couldn't be restored. Please try again."
+        }
     }
 
     private func apply(_ t: Transaction) async {
-        do { try await t.finish() } catch { print("LumenStore: finish failed: \(error)") }
         await refreshStatus()
+        await t.finish()
     }
 
-    /// Reads the current entitlements.
-    /// TRIAL HEURISTIC (review required): a monthly purchase expiring within ~8 days is treated
-    /// as the 7-day trial. Cleaner: check `t.purchaseInformation`/offer info — Claude to confirm.
-    private func refreshStatus() async {
-        var best: (expiry: Date, isTrial: Bool)?
+    /// StoreKit includes billing-grace-period subscriptions in currentEntitlements.
+    /// Do not reject those because the original transaction's expiration is in the past.
+    func refreshStatus() async {
+        var hasAccess = false
+        var hasPaidAccess = false
+        var nextExpiry: Date?
         for await result in Transaction.currentEntitlements {
             guard case .verified(let t) = result,
                   t.productID == Self.monthlyID || t.productID == Self.annualID,
-                  let exp = t.expirationDate,   // Date? in StoreKit 2
-                  exp > Date() else { continue }
-            let isTrial = t.productID == Self.monthlyID && exp.timeIntervalSinceNow < 8 * 86400
-            if best == nil || exp > best!.expiry { best = (exp, isTrial) }
+                  t.revocationDate == nil, !t.isUpgraded else { continue }
+            hasAccess = true
+            if t.offer?.paymentMode != .freeTrial { hasPaidAccess = true }
+            if let exp = t.expirationDate, exp > Date() {
+                nextExpiry = min(nextExpiry ?? exp, exp)
+            }
         }
-        status = best == nil ? .free : (best!.isTrial ? .trialing : .pro)
+        status = !hasAccess ? .free : (hasPaidAccess ? .pro : .trialing)
+        expiryTask?.cancel()
+        if let nextExpiry {
+            let delay = max(1, nextExpiry.timeIntervalSinceNow + 1)
+            expiryTask = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+                catch { return }
+                await self?.refreshStatus()
+            }
+        }
+        await refreshTrialEligibility()
+    }
+
+    private func refreshTrialEligibility() async {
+        guard let subscription = monthly?.subscription,
+              subscription.introductoryOffer?.paymentMode == .freeTrial else {
+            monthlyTrialEligible = false
+            return
+        }
+        monthlyTrialEligible = await subscription.isEligibleForIntroOffer
     }
 }
 

@@ -1037,6 +1037,12 @@ final class EditorViewModel: ObservableObject {
     // MARK: Export
 
     func export(_ o: ExportOptions) {
+#if APP_STORE
+        guard LumenStore.shared.isPro || !settings.usesProFeatures else {
+            message = "This photo uses Pro edits. Unlock Pro or turn off those edits before exporting."
+            return
+        }
+#endif
         guard let session, !isExporting else { return }
         isExporting = true
         let s = settings

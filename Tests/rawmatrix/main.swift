@@ -1,9 +1,9 @@
 // Headless RAW format matrix: `raw-matrix <metallib> <inputDir> <outDir>`
 //
 // One sample per camera RAW format (Canon CR3, Nikon NEF, Fuji RAF, Sony ARW, Adobe DNG).
-// For each: the engine must open it, decode it, and export it to JPEG. This is the Gate 2
-// "every camera" proof — the engine's decode path is exactly what the app uses (CIRAWFilter
-// on the GPU), so a pass here means the app opens and edits that format.
+// For each: open, apply an exposure edit, decode and reopen JPEG/HEIC/16-bit TIFF exports.
+// This is sample coverage, not proof of every camera model. CR2 and iPhone ProRAW remain
+// a separate launch gate until genuine samples are added and verified.
 //
 // DRAFT — sandbox only. Not part of the SideStore build.
 import CoreImage
@@ -63,22 +63,47 @@ for f in files {
     let avg = avgBrightness(cg)
     check(avg > 0.03 && avg < 0.97, "\(name): decoded image looks blank or full-white (avg brightness \(String(format: "%.3f", avg)))")
 
+    var edited = EditSettings()
+    edited.exposure = 1
+    guard let editedPreview = session.renderCGImage(edited, maxEdge: 600) else {
+        check(false, "\(name): edited preview failed")
+        continue
+    }
+    check(avgBrightness(editedPreview) > avg + 0.01, "\(name): exposure edit did not visibly brighten the preview")
+    guard let fullSource = session.makeSource(maxEdge: nil, materialize: false) else {
+        check(false, "\(name): full-resolution source failed")
+        continue
+    }
+    let fullExtent = session.develop(edited, source: fullSource, geometry: true).extent
+
     // 3. export at full resolution — JPEG, HEIC and 16-bit TIFF, the app's three export formats
     for (fmt, minKB) in [(ExportFormat.jpeg, 20), (ExportFormat.heic, 20), (ExportFormat.tiff, 500)] {
-        guard let data = session.renderData(EditSettings(), format: fmt, quality: 0.9) else {
+        guard let data = session.renderData(edited, format: fmt, quality: 0.9) else {
             check(false, "\(name): \(fmt.rawValue) export returned nil")
             continue
         }
         check(data.count > minKB * 1024, "\(name): \(fmt.rawValue) export is suspiciously small (\(data.count / 1024) KB)")
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil),
+              let reopened = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+            check(false, "\(name): \(fmt.rawValue) export could not be reopened")
+            continue
+        }
+        check(reopened.width == Int(fullExtent.width) && reopened.height == Int(fullExtent.height),
+              "\(name): \(fmt.rawValue) dimensions differ from full-size render")
+        check(abs(avgBrightness(reopened) - avgBrightness(editedPreview)) < 0.05,
+              "\(name): \(fmt.rawValue) exported edit differs from preview")
+        if fmt == .tiff {
+            check(reopened.bitsPerComponent == 16, "\(name): TIFF is not 16 bits per component")
+        }
         print("   \(fmt.rawValue) full-size export: \(data.count / 1024) KB")
     }
     passCount += 1
 }
 
-let found = files.map { $0.pathExtension.lowercased() }.filter { wanted.contains($0) }
-check(found.count == wanted.count, "expected one sample per format (\(wanted.count)), found \(found.count): \(found.sorted())")
+let found = Set(files.map { $0.pathExtension.lowercased() }.filter { wanted.contains($0) })
+check(found == Set(wanted), "missing RAW sample formats: \(Set(wanted).subtracting(found).sorted())")
 let summary = failures.isEmpty
-    ? "PASS: \(passCount)/\(passCount) RAW formats decoded and exported"
+    ? "PASS: \(found.count) sample formats opened, edited and exported. CR2 and iPhone ProRAW NOT covered."
     : "FAILED: \(failures.count) problems\n" + failures.map { "  - " + $0 }.joined(separator: "\n")
 print("==== RAW MATRIX SUMMARY ====")
 print(summary)

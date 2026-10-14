@@ -248,6 +248,12 @@ final class LibraryStore: ObservableObject {
 
     /// Exports every photo in `list` one after another in the background, then offers them in `batchResult`.
     func export(_ list: [LibraryItem], options o: ExportOptions) {
+#if APP_STORE
+        guard LumenStore.shared.isPro || !list.contains(where: { settings(for: $0).usesProFeatures }) else {
+            lastError = "This selection includes Pro edits. Unlock Pro or turn off those edits before exporting."
+            return
+        }
+#endif
         guard batchProgress == nil, !list.isEmpty else { return }
         batchProgress = (0, list.count)
         let jobs = list.map { (url: fileURL($0), edits: settings(for: $0), name: $0.displayName) }

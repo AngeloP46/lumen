@@ -15,16 +15,15 @@ extension EditSettings {
     /// Respects the Edits-sheet switches: a turned-off section keeps its values but doesn't
     /// apply them, so it doesn't count.
     var usesProFeatures: Bool {
-        let d = EditSettings()
-        if isOn(.curve) && curves != d.curves { return true }
-        if isOn(.grade) && grading != d.grading { return true }
+        if isOn(.curve) && !curves.isNeutral { return true }
+        if isOn(.grade) && !grading.isNeutral { return true }
         if isOn(.detail) {
             let detailActive = texture != 0 || clarity != 0 || dehaze != 0
                 || vignette != 0 || grain != 0
-                || sharpness != 0 || sharpenMasking != 0 || noiseReduction != 0 || colorNoise != 0
+                || sharpness != 0 || noiseReduction != 0 || colorNoise != 0
             if detailActive { return true }
         }
-        if isOn(.masks) && !masks.isEmpty { return true }
+        if isOn(.masks) && masks.contains(where: { !$0.adjust.isNeutral && $0.amount > 0 && !$0.components.isEmpty }) { return true }
         if isOn(.heal) && !heals.isEmpty { return true }
         // HDR is photo-wide (not part of any section) — always Pro.
         if hdr { return true }

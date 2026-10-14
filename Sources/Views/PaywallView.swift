@@ -11,6 +11,7 @@ import StoreKit
 struct PaywallView: View {
     @ObservedObject var store: LumenStore
     @Environment(\.dismiss) private var dismiss
+    @State private var showPrivacy = false
 
     var body: some View {
         NavigationStack {
@@ -27,17 +28,12 @@ struct PaywallView: View {
                         .multilineTextAlignment(.center)
 
                     VStack(spacing: 12) {
-                        row(store.annual, price: store.annual?.displayPrice,
-                            note: "7 days free, then renews", primary: true)
-                        row(store.monthly, price: store.monthly?.displayPrice,
-                            note: "7 days free, then renews")
+                        row(store.annual, primary: true)
+                        row(store.monthly)
                     }
 
-                    if store.status == .free {
-                        Text("Start with 7 days free. Cancel any time in Settings.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Subscriptions renew automatically unless cancelled. Manage or cancel in your Apple Account subscription settings.")
+                        .font(.caption).foregroundStyle(.secondary)
                     if store.isBusy {
                         ProgressView()
                     }
@@ -48,6 +44,11 @@ struct PaywallView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                    HStack {
+                        Button("Privacy Policy") { showPrivacy = true }
+                        Link("Terms of Use", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
+                    }
+                    .font(.footnote)
                 }
                 .padding(24)
             }
@@ -58,26 +59,28 @@ struct PaywallView: View {
                     Button("Keep editing free") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Restore") { Task { await store.restore() } }
+                    Button("Restore") { Task { await store.restore() } }.disabled(store.isBusy)
                 }
             }
         }
         .presentationDetents([.large])
+        .sheet(isPresented: $showPrivacy) { AppPrivacyView() }
+        .onChange(of: store.isPro) { _, isPro in if isPro { dismiss() } }
     }
 
     @ViewBuilder
-    private func row(_ product: Product?, price: String?, note: String, primary: Bool = false) -> some View {
-        if let product, let price {
+    private func row(_ product: Product?, primary: Bool = false) -> some View {
+        if let product {
             Button {
                 Task { await store.purchase(product) }
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(product.displayName).font(.body.weight(.semibold))
-                        Text(note).font(.caption).foregroundStyle(.secondary)
+                        Text(note(for: product)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text(price).font(.body.weight(.semibold))
+                    Text(product.displayPrice).font(.body.weight(.semibold))
                 }
                 .padding(16)
                 .background(primary ? Color.orange : Color(.secondarySystemBackground))
@@ -95,6 +98,29 @@ struct PaywallView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
+    }
+
+    private func note(for product: Product) -> String {
+        guard let subscription = product.subscription else { return "" }
+        let billing = periodText(subscription.subscriptionPeriod)
+        if product.id == LumenStore.monthlyID, store.monthlyTrialEligible,
+           let offer = subscription.introductoryOffer, offer.paymentMode == .freeTrial {
+            return "\(periodText(offer.period, count: offer.numberOfPeriods)) free, then \(product.displayPrice) every \(billing). Renews automatically."
+        }
+        return "\(product.displayPrice) every \(billing). Renews automatically."
+    }
+
+    private func periodText(_ period: Product.SubscriptionPeriod, count: Int = 1) -> String {
+        let value = period.value * count
+        let unit: String
+        switch period.unit {
+        case .day: unit = "day"
+        case .week: unit = "week"
+        case .month: unit = "month"
+        case .year: unit = "year"
+        @unknown default: return "subscription period"
+        }
+        return "\(value) \(unit)\(value == 1 ? "" : "s")"
     }
 }
 #endif

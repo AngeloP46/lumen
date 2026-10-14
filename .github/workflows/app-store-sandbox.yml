@@ -1,5 +1,5 @@
-# DRAFT — sandbox workflow. Manual-only (workflow_dispatch): it must NEVER run on push, so it
-# can't waste macOS minutes or interfere with the frozen SideStore pipeline (build.yml).
+# DRAFT — sandbox workflow, runs on sandbox pushes and manual dispatch.
+# Does not publish SideStore or App Store builds.
 # Purpose: prove the sandbox draft compiles in the App Store configuration (flag ON, new bundle
 # ID override) on GitHub's Mac. Signing/upload steps are documented but commented out — they
 # activate only at Gate 4 with real certificates (plan §2.2 / §6).
@@ -38,6 +38,17 @@ jobs:
         # applied entirely at build time: the compilation flag via SWIFT_ACTIVE_COMPILATION_CONDITIONS
         # and the bundle ID via the PRODUCT_BUNDLE_IDENTIFIER override below.
         run: xcodegen generate
+
+      - name: Export policy regression checks
+        run: |
+          swiftc -D APP_STORE Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Store/ProGate.swift Tests/progate/main.swift -o /tmp/lumen-progate
+          /tmp/lumen-progate
+
+      - name: Build for simulator (APP_STORE flag OFF)
+        run: |
+          xcodebuild -project Lumen.xcodeproj -scheme Lumen -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build-sidestore \
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO ARCHS=arm64 > build-sidestore.log 2>&1 || { tail -80 build-sidestore.log; exit 1; }
 
       - name: Build for simulator (APP_STORE flag ON, sandbox bundle ID)
         run: |

@@ -1,5 +1,24 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## Latest update — Codex fixes, 14 Oct 2026
+
+Angelo authorized addressing the review findings. Local fixes supersede the older issue lists
+below: batch and single export now both enforce Pro at the UI and underlying export entry
+points; editor observes subscription state; offer eligibility/real trial information replace
+hardcoded promises and expiry heuristics; grace entitlements are retained; foreground and
+expiry refreshes added; restore errors are shown; neutral grading/masks/sharpen controls no
+longer count as Pro. Added an in-app privacy notice and Apple's standard Terms link.
+
+Added export-policy regression checks and a flag-OFF simulator build to the sandbox compile
+workflow. Strengthened RAW checks to apply an edit and reopen output, checking dimensions and
+16-bit TIFF. CR2 and genuine iPhone ProRAW samples still missing. No main changes or SideStore
+publication. Build/testing results will be recorded here when available.
+
+Still unresolved: publish an app-specific privacy URL for App Store metadata (current website
+notice is waitlist-only); final pricing/name; whether advanced built-in presets should require
+Pro export; real StoreKit purchase/restore/grace testing; real phone watermark appearance.
+Do not treat source review or simulator compilation as proof of working purchases.
+
 **Last updated:** 14 Oct 2026 (by PC ASSISTANT, chat with Angelo)
 
 ## One-line summary
