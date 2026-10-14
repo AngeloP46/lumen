@@ -324,11 +324,14 @@ if let file = files.first, let session = EditSession(url: file),
     check(roundTrip == settings, "Lens Blur did not survive sidecar round trip")
     check(!EditSection.lensBlur.canPaste, "Photo-specific Lens Blur should not be pasted to another photo")
     let rampSource = source(pattern)
-    let depthRamp = CIImage(color: CIColor(red: 0.6, green: 0.6, blue: 0.6)).cropped(to: extent)
+    func dataDepth(_ value: Float) -> CIImage {
+        EditSession.depthImage(DepthField(width: 8, height: 8, values: Array(repeating: value, count: 64), histogram: []), extent: extent)
+    }
+    let depthRamp = dataDepth(0.6)
     rampSource.storeMask(EditSession.aiDepth, depthRamp)
     var rampSettings = EditSettings(); rampSettings.lensBlur.amount = 100
     let middleMap = session.lensBlurMask(rampSettings, source: rampSource)!
-    rampSource.storeMask(EditSession.aiDepth, EditSession.constant(0.9, extent))
+    rampSource.storeMask(EditSession.aiDepth, dataDepth(0.9))
     let farMap = session.lensBlurMask(rampSettings, source: rampSource)!
     check(values(farMap, background)[0] > values(middleMap, background)[0] + 0.3,
           "Far blur must keep increasing past the old short feather ramp")
@@ -344,7 +347,7 @@ if let file = files.first, let session = EditSession(url: file),
     var resetBlur = EditSettings(); resetBlur.reset(.lensBlur)
     check(resetBlur.lensBlur.activated && resetBlur.lensBlur.amount == 0, "Reset must remember the user's off choice")
     if let rangeKernel = LumenKernels.shared?.rangeMask {
-        let nearDepth = EditSession.constant(0.2, extent), farDepth = EditSession.constant(0.8, extent)
+        let nearDepth = dataDepth(0.2), farDepth = dataDepth(0.8)
         let nearSoft = rangeKernel.apply(extent: extent, arguments: [nearDepth, CIVector(x: 0, y: 0.35, z: 1, w: 0)])!
         let farSoft = rangeKernel.apply(extent: extent, arguments: [farDepth, CIVector(x: 0.65, y: 1, z: 0, w: 1)])!
         check(values(nearSoft, background)[0] < 0.2, "Near endpoint feather must affect the depth mask")
