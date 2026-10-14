@@ -37,7 +37,8 @@ two-factor authentication was not verifiable through the current API token.
 
 ## Status — Lens Blur revisions and photo information, 14 October
 Shared revisions implemented on lens-blur-revisions (PR #2), mirrored into sandbox;
-focused CI pending. Subject/selected Vision instance protection, whole-subject depth
+initial engine/metadata run 38629491122 passed 75 checks; final focused checks pending.
+Subject/selected Vision instance protection, whole-subject depth
 percentiles, first explicit activation amount 8 with saved zero preserved, progressive
 far blur, photo-calibrated distance travel, full Near/Far feather controls, inline
 linked mask refinement and transient red slider preview with saved off preference.
@@ -53,6 +54,9 @@ Troubleshooting: subject detection failure offers distance/range/brush fallback.
 Auto Level reads image horizons/edges (Vision then edge voting), not camera roll
 metadata. Some cameras store proprietary tilt; no universal still-photo tag is used.
 Photo information reads original metadata and never edits dates or source files.
+Read PRODUCT-BRIEF.md for the camera-independent iOS/RAW audience and pricing direction.
+Simulator Lens touch tests use marked synthetic depth/subject fixtures; real subject
+quality remains a phone check, not an inference from UI test success.
 
 
 Read this first. It records what exists, how it's built and shipped, and what to do next.
