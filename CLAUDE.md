@@ -37,7 +37,9 @@ two-factor authentication was not verifiable through the current API token.
 
 ## Status — Lens Blur revisions and photo information, 14 October
 Shared revisions implemented on lens-blur-revisions (PR #2), mirrored into sandbox;
-initial engine/metadata run 38629491122 passed 75 checks; final focused checks pending.
+final engine/metadata run 38631365097 passed 79 checks; final UI/sandbox checks pending.
+Personal IPA build 38631360377 passed at frozen source e9d997b (app code d383f7e);
+Sony RAW comparison/export inspected. Required PR-associated build is being refreshed.
 Subject/selected Vision instance protection, whole-subject depth
 percentiles, first explicit activation amount 8 with saved zero preserved, progressive
 far blur, photo-calibrated distance travel, full Near/Far feather controls, inline
