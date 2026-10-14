@@ -126,6 +126,12 @@ struct LibraryView: View {
                 if let n = DemoMode.value("-lumenDemoOpen"), let i = Int(n), store.items.indices.contains(i) {
                     path = [store.items[i]]
                 }
+                // CI screenshot: enter selection mode with photos checked, so the batch-export bar shows.
+                if DemoMode.value("-lumenDemoBatch") != nil {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    selecting = true
+                    selection = Set(store.items.prefix(4).map(\.id))
+                }
             }
             .toolbar { toolbar }
             // The picker must live outside the Menu: inside it, the picker is torn down as the menu closes.

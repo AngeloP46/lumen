@@ -400,8 +400,34 @@ struct EditorView: View {
             panelUser["shared"] = CGFloat(h)
         }
         sliderStyle = DemoMode.value("-lumenDemoSlider") ?? "auto"
-        // DRAFT — sandbox (CI screenshots): show the export-gate paywall a moment after launch.
+        // DRAFT — sandbox (CI screenshots): pre-build the interesting state per tool so each App Store
+        // screenshot shows a real edit, not a neutral photo. Nothing here runs in normal use.
 #if APP_STORE
+        if DemoMode.value("-lumenDemoCurve") != nil {
+            vm.settings.curves.set(0, [CurvePoint(x: 0, y: 0.06), CurvePoint(x: 0.3, y: 0.27),
+                                       CurvePoint(x: 0.7, y: 0.74), CurvePoint(x: 1, y: 0.96)])
+        }
+        if DemoMode.value("-lumenDemoGrade") != nil {
+            vm.settings.grading.shadows = GradeZone(hue: 210, sat: 48, lum: -6)
+            vm.settings.grading.midtones = GradeZone(hue: 45, sat: 38, lum: 4)
+            vm.settings.grading.highlights = GradeZone(hue: 25, sat: 42, lum: 8)
+        }
+        if DemoMode.value("-lumenDemoDetail2") != nil {
+            vm.settings.sharpness = 45; vm.settings.texture = 30; vm.settings.clarity = 18
+            vm.settings.vignette = -18; vm.settings.grain = 10
+        }
+        if DemoMode.value("-lumenDemoExport") != nil {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                showExportChoices = true
+            }
+        }
+        if tool == .heal && DemoMode.value("-lumenDemoPeople") != nil {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 7_000_000_000)
+                vm.findPeople()
+            }
+        }
         if DemoMode.paywall {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
