@@ -86,19 +86,23 @@ check at most; 4+ is expected to pass)
 ## 9. Support URL / marketing URL [GATE 4] Angelo's website (Gate 3 landing page doubles as
 the support page — one URL serves both).
 
-## 10. Screenshot plan (6.7" required; 6.5"/5.5" optional) [IN PROGRESS — see below]
+## 10. Screenshot plan (6.7" required; 6.5"/5.5" optional) [READY — real captures on every push]
 
-App Store screenshots are not raw captures: each is the real simulator shot composited
-inside a phone frame with a one-line headline. Plan:
-1. **Library** — "Your camera's RAW, ready to edit" (library screen, ARW thumbnails)
-2. **Light** — "Full Lightroom-style light control"
-3. **Curves** — "Pro curves, on device"
-4. **AI mask** — "AI masks: subject, sky, depth" (mask overlay visible)
-5. **Heal** — "Erase people and objects" (heal tool)
-6. **Pro/price** — "Free to start. Pro when you need it." (paywall)
+The `app-store-sandbox.yml` workflow now captures 10 real simulator screenshots of the app
+on every push to `sandbox` (artifact `app-store-shots`). These are the actual app screens with
+real edits pre-loaded, not mockups: 01 free Light edit, 02 Grade, 03 Curve, 04 Detail, 05 Masks
+(AI sky mask), 06 Heal (people found), 07 Export options sheet, 08 Batch selection, 09 the
+watermark (free user, Pro edit), 10 the paywall.
 
-Generated from the `app-store-shots` GitHub artifact (real app, real photos) — composited
-by the sandbox CI or by hand at Gate 4.
+App Store screenshots are not raw captures: each is one of these composited inside a phone
+frame with a one-line headline (672×480, 6.7"; 6.5" and 5.5" are the same images). Proposed
+order and headlines for the final 6:
+1. **01 free-light** — "Edit any RAW, free"
+2. **03-curve** — "Full manual control"
+3. **05-masks** — "AI masks: sky, subject, depth"
+4. **06-heal** — "Remove people and objects"
+5. **08-batch** — "Batch export your whole roll"
+6. **10-paywall** — "Free to start. Pro when you need it."
 
 ## 11. App Preview video (optional, 15–30 s) [GATE 4]
 
