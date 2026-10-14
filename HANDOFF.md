@@ -20,6 +20,23 @@ Do not treat source review or simulator compilation as proof of working purchase
 
 **Last updated:** 14 Oct 2026 (Codex fixes, validation and relocation authorized by Angelo)
 
+
+## Landing page V5 — 14 October update
+
+Angelo asked for the landing-page copy pass after the app fixes. Updated the canonical
+landing-page/index.html and thanks.html with direct descriptions of the real app, examples
+and founder story. Removed generic slogans/contrasts, one-tap removal wording, and vague
+value claims. Free basic/preset export wording reflects Angelo's latest decision.
+
+Design/CSS, screenshots, videos, script.js, pricing options, form attributes/fields, consent
+and privacy notice preserved. Revised hero wraps onto two lines; other structure unchanged.
+Browser checked at 1440x1000 and 390x844: all page images loaded, no horizontal overflow,
+pricing selection and comparison slider worked. No signup submitted. No Netlify deployment.
+
+Source: C:\Users\pc user\Projects\app development\landing-page
+Deliverable: C:\Users\pc user\Projects\app development\deliverables\lumen-landing-v5-clear-copy.zip
+Rollback: deliverables\lumen-landing-v4-backup.zip; original download also preserved.
+The ZIP has index.html at its root and contains all 26 files.
 ## One-line summary
 
 Lumen (free RAW photo editor for iPhone, `github.com/AngeloP46/lumen`) is being prepared for
