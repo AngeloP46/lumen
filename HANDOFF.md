@@ -94,7 +94,10 @@ an isolated sandbox in the meantime.
    `sandbox`). Report: what was drafted, whether the engine test passes, open questions.
    Key artifacts: `app-store-shots` (the 10 App Store screenshots — see timeline item 9) and
    `raw-matrix` (RESULT.txt of the RAW format test).
-2. **When Claude's usage is back (~15 Oct):** give him the hand-off message below.
+2. **When Claude's usage is back (~15 Oct):** copy the ONE section at the end of this file,
+   "THE HANDOFF FOR CLAUDE — copy everything between the lines", and paste it into his chat.
+   That single message contains everything: what to read, in what order, the known issues,
+   and the rules. No other files need to be pasted.
 3. **Gate 3 (Angelo, free):** landing page + waitlist + ~2 weeks of before/after clips before
    any money is spent (plan §7).
 4. **Gate 4 (Angelo, ~$99):** developer account, App Store Connect setup (plan §6), final name,
@@ -128,34 +131,53 @@ order (all on the `sandbox/` branch, nothing merged to main, SideStore untouched
 Marketing assets are being prepared separately; listing set = shots 01, 02, 03, 04, 07, 08,
 10 from the `app-store-shots` artifact (all real, all clean).
 
-## Message to give Claude when he's back (paste in his chat)
+## THE HANDOFF FOR CLAUDE — copy everything between the lines, paste it once
 
-> Read `docs/APPSTORE-PLAN.md` in the repo before doing anything. It's a researched launch plan
-> — treat it as the source of truth for the App Store route.
->
-> A local LLM drafted App Store code while you were offline: review the **`sandbox/` branch** on
-> GitHub (https://github.com/AngeloP46/lumen/tree/sandbox) and `SANDBOX-LOG.md` there. Treat
-> everything as unreviewed draft — verify, fix, and rebuild it properly in the main repo.
->
-> Then continue at **Gate 2**: the RAW test matrix (CR2, CR3, NEF, RAF, ARW, DNG, ProRAW —
-> open/edit/export) is a hard requirement before we move on. The SideStore pipeline and
-> `project.yml` stay frozen; all App Store work is additive, in new files, behind the build flag.
-> Angelo decides the items in §11 of the plan; present options, don't decide for him.
->
-> When done: RAW test results, what you kept from the sandbox draft, and what's left before Gate 3.
+---
 
-> New this time: `docs/APPSTORE-ASSETS.md` in the sandbox branch is a full draft of the App
-> Store listing (name/subtitle/description/keywords/privacy/screenshot plan/subscription setup
-> checklist/rejection checklist) — review it and fold it into App Store Connect at Gate 4.
-> The `app-store-sandbox.yml` workflow captures **10 real simulator screenshots** on every push
-> (artifact `app-store-shots`): 01 free light, 02 grade, 03 curve, 04 detail, 05 masks (CI
-> stand-in — not for the listing), 06 heal (CI stand-in — not for the listing), 07 export
-> sheet, 08 batch, 09 watermark, 10 paywall. Shots 01–08 and 10 are captured clean via the
-> `-lumenDemoNoWM` flag (Angelo: no watermark in ad images). Compose the listing images from
-> 01, 02, 03, 04, 07, 08, 10 (order + headlines in the doc). The watermark is now a tiled
-> diagonal pattern (`LumaforgeMark.swift`, a `Canvas`) — review its opacity/spacing on device.
-> `raw-matrix.yml` + `Tests/rawmatrix/` are a working RAW format matrix (CR3/NEF/RAF/ARW/DNG)
-> — check its Actions results; extend it to CR2 and ProRAW (needs a real iPhone ProRAW sample)
+**Context.** You drafted nothing for the App Store yourself — a capable local LLM did it on
+the **`sandbox/` branch** of this repo while you were offline: https://github.com/AngeloP46/lumen/tree/sandbox
+Latest sandbox commit: 9dde7c2 (14 Oct 2026). Treat ALL of it as unreviewed draft. Read in
+this order — that's the whole handoff, nothing else is needed:
+
+1. `docs/APPSTORE-PLAN.md` (main branch) — the launch plan, source of truth, §11 = locked decisions.
+2. `HANDOFF.md` (sandbox branch) — status, timeline, "Review focus" section = known issues.
+3. `SANDBOX-LOG.md` (sandbox branch) — every file written/changed, open questions 1–9.
+4. `docs/APPSTORE-ASSETS.md` (sandbox branch) — draft App Store listing (name, description,
+   keywords, screenshot plan, subscription setup + rejection-risk checklists).
+5. Code: search the sandbox branch for `DRAFT — sandbox` — that marks every file that's new.
+   Key ones: `Sources/Store/LumenStore.swift`, `Sources/Store/ProGate.swift`,
+   `Sources/Views/PaywallView.swift`, `Sources/Views/LumaforgeMark.swift`, and the
+   `#if APP_STORE` hooks in `EditorView.swift` / `LibraryView.swift` / `Demo.swift`.
+
+**Known issues to fix (confirmed by review on 14 Oct, in priority order):**
+1. `PaywallView.swift`: "7 days free, then renews" is shown under BOTH products, but the trial
+   is monthly-only (plan §173). Fix the annual row.
+2. `LibraryView.swift` batch export (`store.export(list:options:)`) has NO Pro gate — free
+   users can batch-export Pro-edited photos clean. Add the same gate as `requestExport()`.
+3. `LumenStore.refreshStatus()`: trial detection is a heuristic (expiry < 8 days) — verify
+   against StoreKit 2.
+4. Watermark (`LumaforgeMark.swift`, tiled diagonal Canvas, 45 % opacity) is preview-only:
+   confirm the exported file stays clean (current intent) and tune look on a real device.
+5. RAW matrix (`raw-matrix.yml`, `Tests/rawmatrix/`): CR3/NEF/RAF/ARW/DNG all pass (5/5);
+   extend to CR2 + iPhone ProRAW when samples are available.
+
+**Hard rules:** never touch `project.yml` or `build.yml` (SideStore pipeline is frozen; the
+SideStore app must stay paywall-free and watermark-free); never push to `main`; all App Store
+work stays additive behind the `APP_STORE` compile condition; Angelo decides §11 items —
+present options, don't decide. Current stage: Gate 2 (RAW matrix is the hard gate). Angelo is
+validating demand via marketing this week — no new features until he says go.
+
+**Screenshots:** `app-store-sandbox.yml` (sandbox branch) captures 10 real simulator shots on
+every push (artifact `app-store-shots`): 01 free light, 02 grade, 03 curve, 04 detail, 05 masks,
+06 heal, 07 export sheet, 08 batch, 09 watermark, 10 paywall. 05/06 are CI stand-ins (no AI in
+simulator) — NOT listing material. Listing set = 01, 02, 03, 04, 07, 08, 10, all captured
+watermark-free via the `-lumenDemoNoWM` launch flag (CI-only, no effect on normal use).
+
+**Report back:** what you kept/fixed/discarded from the draft, RAW matrix status, and what's
+left before Gate 3 (landing page + waitlist).
+
+---
 
 ## How updates are tracked (no extra file needed)
 
