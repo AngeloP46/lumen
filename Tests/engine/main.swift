@@ -359,12 +359,12 @@ if let image = CGImageSourceCreateWithURL(files[0] as CFURL, nil).flatMap({ CGIm
             check(CGImageDestinationFinalize(destination), "Metadata fixture failed")
             let info = PhotoInformation.read(url)
             check(info.camera == "\(make) Example camera" && info.lens.contains("35 mm") && info.lens.contains("24-70"), "Camera/lens EXIF failed for \(make)")
-            check(info.shutter == "1/800 sec" && info.aperture == "ƒ/2.8" && info.iso == "100", "Exposure EXIF failed for \(make)")
-            check(info.date == "3 October 2026 · 11:01:30" && info.dimensions.contains("MP"), "Date/dimensions EXIF failed for \(make)")
+            check(info.shutter == "1/800 sec" && info.aperture == "\u{0192}/2.8" && info.iso == "100", "Exposure EXIF failed for \(make)")
+            check(info.date == "3 October 2026 \u{00B7} 11:01:30" && info.dimensions.contains("MP"), "Date/dimensions EXIF failed for \(make)")
         }
     }
     let missing = PhotoInformation.read(outDir.appendingPathComponent("missing-photo.jpg"))
-    check(missing.camera == "Not recorded" && missing.shutter == "—", "Missing metadata invented camera settings")
+    check(missing.camera == "Not recorded" && missing.shutter == "\u{2014}", "Missing metadata invented camera settings")
     try? FileManager.default.removeItem(at: outDir.appendingPathComponent("metadata-fixture.jpg"))
 }
 
