@@ -47,7 +47,8 @@ size/shutter/aperture/ISO across brands; missing metadata is shown honestly.
 Personal SideStore remains fully unlocked; sandbox Store code stays separate.
 
 Things to verify: focused engine/metadata and UI checks, sandbox OFF/ON compilation,
-then protected merge/publication. Phone subject boundaries and RAW/HDR speed remain
+including endpoint graphic/preview-off checks, then protected merge/publication.
+Phone subject boundaries and RAW/HDR speed remain
 owner checks. Old saved Lens Blur objects preserve zero rather than guessing intent.
 
 Troubleshooting: subject detection failure offers distance/range/brush fallback.
