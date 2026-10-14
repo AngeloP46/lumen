@@ -38,9 +38,11 @@ two-factor authentication was not verifiable through the current API token.
 ## Status — shared revisions complete, 14 October
 Lens Blur and photo information merged through protected PR #2 as 34b72c3.
 Shared source is in sandbox too; Store code remains separate. Personal main/SideStore
-is fully unlocked. Current phone feed is security-only 0.1.200. The new shared editor
-release has NOT been published: automatic approval review required Angelo's explicit
-instruction for the external SideStore deployment. Do not claim it is on the phone.
+is fully unlocked. Angelo approved publication on 14 October. SideStore 0.1.207
+(build 207) is published: run 38634930064 succeeded on main fbe5b7a. Feed bundle ID,
+download URL, size (322324910 bytes) and SHA256 matched the released Lumen-207.ipa:
+4d5b0b1faa801f21a87ce2c4401e87135783ce9041b535dd556c0b0eaede94c6.
+This includes the security fixes, Lens Blur revisions and photo-information button.
 
 Implemented: whole detected/selected-instance subject protection and subject depth
 percentiles; first-use amount 8 with saved zero/off preserved; progressive far blur;
@@ -57,8 +59,7 @@ saved-zero reopen, info sheet and both Near/Far endpoints. Screenshots/renders i
 Personal IPA 38631360377 and protected PR/readiness 38632032581 passed. Sandbox
 38631373218 passed policy and APP_STORE OFF/ON compilation; compile-only skips shots.
 
-Things to verify: once Angelo authorizes publication, dispatch build.yml on current
-main and verify feed version/build/URL/size/hash. Then check representative camera
+Things to verify: update to 0.1.207 in SideStore, then check representative camera
 RAW/ProRAW subject edges, brush feel, HDR/export appearance and performance on phone.
 
 Troubleshooting: missing subjects offer distance/range/brush fallback. Old saved
