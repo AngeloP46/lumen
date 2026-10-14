@@ -18,6 +18,38 @@ final class LumenUITests: XCTestCase {
 
     // MARK: helpers
 
+    func testLensBlurRevisionsAndPhotoInfo() {
+        launch(open: 0, tool: "Lens Blur", extra: ["-lumenDemoLensDepth", "1"])
+        XCTAssertTrue(el("lens-blur-focus").waitForExistence(timeout: 40))
+        XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 8, accuracy: 0.1)
+        XCTAssertTrue(el("btn-info").isHittable)
+        el("btn-info").tap()
+        XCTAssertTrue(app.staticTexts["Photo information"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Shutter"].exists)
+        XCTAssertTrue(app.staticTexts["Aperture"].exists)
+        XCTAssertTrue(app.staticTexts["ISO"].exists)
+        shot("photo-information")
+        el("photo-info-done").tap()
+        let handle = el("panel-handle")
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 0, dy: -220)))
+        XCTAssertTrue(el("lens-blur-preview").exists)
+        el("lens-blur-refine").tap()
+        XCTAssertTrue(el("lens-blur-refine-done").waitForExistence(timeout: 10))
+        XCTAssertTrue(el("lum-bar").exists)
+        shot("lens-blur-inline-refinement")
+        el("lens-blur-refine-done").tap()
+        XCTAssertTrue(el("slider-Blur amount").exists)
+        el("reset-Blur amount").tap()
+        XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 0, accuracy: 0.1)
+        sleep(2)
+        app.terminate()
+        app.launchArguments.removeAll { $0 == "-lumenDemoFresh" }
+        app.launch()
+        XCTAssertTrue(el("slider-Blur amount").waitForExistence(timeout: 30))
+        XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 0, accuracy: 0.1, "Saved zero must survive reopening")
+    }
+
     func launch(open: Int, tool: String, extra: [String] = []) {
         app = XCUIApplication()
         let env = ProcessInfo.processInfo.environment

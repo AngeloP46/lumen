@@ -9,6 +9,10 @@ import CoreML
 /// number of overlapping masks cost almost nothing at render time.
 extension EditSession {
     static let aiSubject = "subject"
+    static func subjectKey(_ point: Pt?) -> String {
+        guard let point else { return aiSubject }
+        return "subject:\(point.x):\(point.y)"
+    }
     static let aiSky = "sky"
     static let aiPeople = "people"
     static let aiDepth = "depth"
@@ -110,7 +114,7 @@ extension EditSession {
         case .brush:
             img = brushImage(c, source: source) ?? zero
         case .subject:
-            img = source.cachedMask(Self.aiSubject) ?? zero
+            img = source.cachedMask(Self.subjectKey(c.subjectPoint)) ?? zero
         case .background:
             // everything that is not the subject; when no subject was found, that is the whole photo
             if let subject = source.cachedMask(Self.aiSubject) {
@@ -270,10 +274,25 @@ extension EditSession {
 
     // MARK: Automatic masks (subject, sky)
 
+    /// Measure the whole selected subject, rather than trusting one depth pixel on an edge.
+    func lensSubjectRange(_ source: ImageSource, point: Pt?) -> ClosedRange<Double>? {
+        guard let d = source.depthField, let subject = source.cachedMask(Self.subjectKey(point)) else { return nil }
+        let small = Self.fit(subject, to: CGRect(x: 0, y: 0, width: d.width, height: d.height))
+        var px = [Float](repeating: 0, count: d.width * d.height * 4)
+        ctx.render(small, toBitmap: &px, rowBytes: d.width * 16, bounds: small.extent, format: .RGBAf, colorSpace: nil)
+        let depths = d.values.enumerated().compactMap { i, v -> Double? in
+            px[i * 4] > 0.7 && v.isFinite ? Double(v) : nil
+        }.sorted()
+        guard depths.count >= 8 else { return nil }
+        return depths[(depths.count - 1) / 50]...depths[(depths.count - 1) * 49 / 50]
+    }
+
     /// Computes any automatic masks `s` needs and caches them on `source`. Call off the main thread.
     @discardableResult
     func prepareAutoMasks(_ s: EditSettings, source: ImageSource) -> Bool {
-        var needSubject = false, needSky = false, needPeople = false
+        var needSubject = s.effective.lensBlur.amount > 0, needSky = false, needPeople = false
+        var subjectPoints = s.masks.flatMap(\.components).filter { $0.kind == .subject }.compactMap(\.subjectPoint)
+        if let p = s.lensBlur.subjectPoint { subjectPoints.append(p) }
         var needDepth = s.effective.lensBlur.amount > 0
         var sceneSets: Set<[String]> = []
         for m in s.masks {
@@ -288,6 +307,10 @@ extension EditSession {
         var computed = false
         if needSubject, !source.hasTried(Self.aiSubject) {
             source.storeMask(Self.aiSubject, refined(computeSubject(source), source: source))
+            computed = true
+        }
+        for p in Set(subjectPoints) where !source.hasTried(Self.subjectKey(p)) {
+            source.storeMask(Self.subjectKey(p), refined(computeSubject(source, at: p), source: source))
             computed = true
         }
         // the scene model (one run) serves both the Sky mask and every Landscape part
@@ -811,7 +834,7 @@ extension EditSession {
     }
 
     /// Apple's on-device foreground segmentation (Vision, iOS 17+).
-    private func computeSubject(_ source: ImageSource) -> CIImage? {
+    private func computeSubject(_ source: ImageSource, at point: Pt? = nil) -> CIImage? {
         let ext = source.extent
         let k = min(1, 1024 / max(ext.width, ext.height))
         let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
@@ -820,8 +843,26 @@ extension EditSession {
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
         let request = VNGenerateForegroundInstanceMaskRequest()
         do { try handler.perform([request]) } catch { return nil }
-        guard let obs = request.results?.first,
-              let buffer = try? obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler)
+        guard let obs = request.results?.first else { return nil }
+        var instances = obs.allInstances
+        if let point {
+            let labels = obs.instanceMask
+            CVPixelBufferLockBaseAddress(labels, .readOnly)
+            let w = CVPixelBufferGetWidth(labels), h = CVPixelBufferGetHeight(labels)
+            let x = min(max(Int(point.x * Double(w)), 0), w - 1)
+            let y = min(max(Int(point.y * Double(h)), 0), h - 1)
+            let row = CVPixelBufferGetBaseAddress(labels)!.advanced(by: y * CVPixelBufferGetBytesPerRow(labels))
+            let format = CVPixelBufferGetPixelFormatType(labels)
+            let label: Int
+            if format == kCVPixelFormatType_OneComponent8 { label = Int(row.assumingMemoryBound(to: UInt8.self)[x]) }
+            else if format == kCVPixelFormatType_OneComponent32Float { label = Int(row.assumingMemoryBound(to: Float.self)[x]) }
+            else { CVPixelBufferUnlockBaseAddress(labels, .readOnly); return nil }
+            CVPixelBufferUnlockBaseAddress(labels, .readOnly)
+            guard label > 0, instances.contains(label) else { return nil }
+            instances = IndexSet(integer: label)
+        }
+        guard !instances.isEmpty,
+              let buffer = try? obs.generateScaledMaskForImage(forInstances: instances, from: handler)
         else { return nil }
         var ci = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
         ci = Self.blur(ci, 1.2, ci.extent)

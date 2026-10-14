@@ -214,6 +214,7 @@ struct MaskComponent: Codable, Equatable, Identifiable, Hashable {
     var tolerance = 0.18              // colour range
     var scene: [String] = []          // landscape: which ScenePart raw values it selects
     var amount: Double = 100          // this part's own opacity, % (a half-strength Subtract only takes half away)
+    var subjectPoint: Pt? = nil       // optional selected Vision instance; nil protects all detected subjects
 
     static func make(_ kind: MaskKind, op: MaskOp = .add) -> MaskComponent {
         var c = MaskComponent(kind: kind, op: op)
@@ -250,6 +251,21 @@ struct LensBlurSettings: Codable, Equatable {
     var focusWidth: Double = 0.12
     /// Optional editable mask: depth plus painted Add/Subtract refinements.
     var maskID: UUID? = nil
+    var subjectPoint: Pt? = nil
+    var activated = false
+
+    init() {}
+    private enum CodingKeys: String, CodingKey { case amount, focusDistance, focusWidth, maskID, subjectPoint, activated }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        amount = try c.decodeIfPresent(Double.self, forKey: .amount) ?? 0
+        focusDistance = try c.decodeIfPresent(Double.self, forKey: .focusDistance) ?? 0.3
+        focusWidth = try c.decodeIfPresent(Double.self, forKey: .focusWidth) ?? 0.12
+        maskID = try c.decodeIfPresent(UUID.self, forKey: .maskID)
+        subjectPoint = try c.decodeIfPresent(Pt.self, forKey: .subjectPoint)
+        // A saved old Lens Blur object is already a user choice, including zero.
+        activated = try c.decodeIfPresent(Bool.self, forKey: .activated) ?? true
+    }
 }
 
 // MARK: - Keys that may be missing in older files
@@ -420,6 +436,7 @@ extension EditSettings {
             heals = d.heals
         case .lensBlur:
             lensBlur = d.lensBlur
+            lensBlur.activated = true
         case .crop:
             take(.crop, from: d)
         }

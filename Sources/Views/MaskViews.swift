@@ -10,12 +10,13 @@ struct LabeledSlider: View {
     var neutral: Double?
     var labelWidth: CGFloat = 84
     var axID = ""
+    var onActive: ((Bool) -> Void)?
 
     /// Same look and behaviour as the rows on the Light / Color / Detail pages (it is the same row).
     var body: some View {
         let item = ParamItem(id: axID.isEmpty ? title : axID, title: title, value: $value, range: range,
                              decimals: decimals, neutral: neutral)
-        SliderRow(item: item, height: 40, labelWidth: max(labelWidth, 84), inset: 0) {
+        SliderRow(item: item, height: 40, labelWidth: max(labelWidth, 84), inset: 0, onActive: onActive) {
             value = neutral ?? (range.contains(0) ? 0 : range.lowerBound)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
@@ -37,6 +38,7 @@ struct LumRangeEditor: View {
     var depth = false
 
     @State private var active: Int?   // 0 / 1 = band start / end, 2 / 3 = dark / light soft edge
+    @State private var featherStart = 0.0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -53,16 +55,16 @@ struct LumRangeEditor: View {
                     preset("Whites", 0.88, 1, 0.10, 0)
                 }
             }
-            LabeledSlider(title: depth ? "Near edge" : "Dark edge", value: soft($lowFeather, limit: { low }), range: 0...50, neutral: 0, labelWidth: 66)
-                .opacity(low <= 0.001 ? 0.35 : 1).allowsHitTesting(low > 0.001)
-            LabeledSlider(title: depth ? "Far edge" : "Light edge", value: soft($highFeather, limit: { 1 - high }), range: 0...50, neutral: 0, labelWidth: 66)
-                .opacity(high >= 0.999 ? 0.35 : 1).allowsHitTesting(high < 0.999)
+            LabeledSlider(title: depth ? "Near edge" : "Dark edge", value: soft($lowFeather, limit: { low }), range: 0...(depth ? 100 : 50), neutral: 0, labelWidth: 66)
+                .opacity(!depth && low <= 0.001 ? 0.35 : 1).allowsHitTesting(depth || low > 0.001)
+            LabeledSlider(title: depth ? "Far edge" : "Light edge", value: soft($highFeather, limit: { 1 - high }), range: 0...(depth ? 100 : 50), neutral: 0, labelWidth: 66)
+                .opacity(!depth && high >= 0.999 ? 0.35 : 1).allowsHitTesting(depth || high < 0.999)
         }
     }
 
     /// Feather stored as 0...0.5, shown as 0...50 %. Depth feather may extend beyond the available depth values.
     private func soft(_ b: Binding<Double>, limit: @escaping () -> Double) -> Binding<Double> {
-        Binding(get: { b.wrappedValue * 100 }, set: { b.wrappedValue = min(max($0 / 100, 0), depth ? 0.5 : max(limit(), 0)) })
+        Binding(get: { b.wrappedValue * 100 }, set: { b.wrappedValue = min(max($0 / 100, 0), depth ? 1 : max(limit(), 0)) })
     }
 
     private func preset(_ title: String, _ lo: Double, _ hi: Double, _ lf: Double, _ hf: Double) -> some View {
@@ -146,6 +148,7 @@ struct LumRangeEditor: View {
                         let a = wantSoft ? 2 : 0, b = a + 1
                         let da = abs(ends[a].x - st.x), db = abs(ends[b].x - st.x)
                         if abs(da - db) < 1 { active = st.x < ends[a].x ? a : b } else { active = da < db ? a : b }
+                        featherStart = active == 2 ? lowFeather : highFeather
                     }
                     let v = Double(min(max(g.location.x / w, 0), 1))
                     switch active ?? 3 {
@@ -156,9 +159,9 @@ struct LumRangeEditor: View {
                         high = max(v, low + 0.02)
                         if !depth { highFeather = min(highFeather, 1 - high) }
                     case 2:
-                        lowFeather = min(max(low - v, 0), min(0.5, low))
+                        lowFeather = depth ? min(max(featherStart - Double(g.translation.width / w), 0), 1) : min(max(low - v, 0), min(0.5, low))
                     default:
-                        highFeather = min(max(v - high, 0), min(0.5, 1 - high))
+                        highFeather = depth ? min(max(featherStart + Double(g.translation.width / w), 0), 1) : min(max(v - high, 0), min(0.5, 1 - high))
                     }
                 }
                 .onEnded { _ in active = nil })
@@ -171,12 +174,15 @@ struct LumRangeEditor: View {
 
 struct MaskPanel: View {
     @ObservedObject var vm: EditorViewModel
+    var lensOnly = false
     @State private var adding = false
     @State private var sel = "Exposure"
 
     var body: some View {
         VStack(spacing: 4) {
-            if vm.settings.masks.isEmpty || adding {
+            if lensOnly, let m = vm.selectedMask {
+                ScrollView { shapeControls(m).padding(.horizontal, 14).padding(.bottom, 8) }
+            } else if vm.settings.masks.isEmpty || adding {
                 typeGrid
             } else if let m = vm.selectedMask {
                 header(m)

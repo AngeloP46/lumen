@@ -1,5 +1,16 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## Current shared revisions � 14 October
+Lens Blur and photo-information revisions mirrored from main work branch (PR #2).
+Subject-instance protection and subject depth distribution, first-use 8, progressive
+far blur, calibrated distance, full depth feather travel, inline linked-mask refinement,
+and optional transient slider preview implemented. Standard metadata info button added
+for all camera brands; no Store/payment logic changed. Focused checks pending.
+Security-only SideStore publication 38627206272 succeeded; feed 0.1.200/build 200,
+size/hash/URL matched release. Security build/Heal/OFF-ON checks already passed.
+Phone checks: RAW/HDR subject edges and performance, refinement brush feel, info layout.
+Auto Level remains image-based horizon/edge analysis; no camera roll assumption.
+
 ## Security changes — 14 October 2026
 
 GitHub main is now protected: pull requests required, Release readiness from GitHub
@@ -18,10 +29,9 @@ and waits for active export/thumbnail readers. Late writes/saves are blocked.
 Legacy orphan patches absent from every sidecar cannot safely be attributed; corrupt
 retained sidecars cause a cleanup warning rather than destructive cleanup.
 
-Validation pending in GitHub Actions: one personal IPA build, focused simulator
-testHealDeletionPrivacy (8 checks), and sandbox APP_STORE OFF/ON compilation.
-Six model-security tests and local workflow policy checks already pass.
-SideStore still 0.1.197 until a checked main build is published. No payment changes.
+Security build, Heal deletion (8 cases), sandbox OFF/ON and protected PR checks passed.
+SideStore security-only 0.1.200 publication succeeded and feed metadata verified.
+No payment changes.
 
 New workflow: use a work branch + PR, run relevant checks, merge the checked PR via
 GitHub. Notes-only PRs skip the Mac build and still run Release readiness. A [skip ci]
