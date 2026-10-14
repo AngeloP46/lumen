@@ -323,7 +323,65 @@ if let file = files.first, let session = EditSession(url: file),
     let roundTrip = try! JSONDecoder().decode(EditSettings.self, from: JSONEncoder().encode(settings))
     check(roundTrip == settings, "Lens Blur did not survive sidecar round trip")
     check(!EditSection.lensBlur.canPaste, "Photo-specific Lens Blur should not be pasted to another photo")
+    let rampSource = source(pattern)
+    func dataDepth(_ value: Float) -> CIImage {
+        EditSession.depthImage(DepthField(width: 8, height: 8, values: Array(repeating: value, count: 64), histogram: []), extent: extent)
+    }
+    let depthRamp = dataDepth(0.6)
+    rampSource.storeMask(EditSession.aiDepth, depthRamp)
+    var rampSettings = EditSettings(); rampSettings.lensBlur.amount = 100
+    let middleMap = session.lensBlurMask(rampSettings, source: rampSource)!
+    rampSource.storeMask(EditSession.aiDepth, dataDepth(0.9))
+    let farMap = session.lensBlurMask(rampSettings, source: rampSource)!
+    check(values(farMap, background)[0] > values(middleMap, background)[0] + 0.3,
+          "Far blur must keep increasing past the old short feather ramp")
+    rampSource.storeMask(EditSession.aiSubject, EditSession.constant(1, extent))
+    check(values(session.lensBlurMask(rampSettings, source: rampSource)!, background)[0] < 0.001,
+          "Detected subject must remain protected despite wrong far depth")
+    let tight = DepthField(width: 4, height: 2, values: [0.72, 0.74, 0.76, 0.78, 0.80, 0.82, 0.84, 0.86], histogram: [])
+    check(tight.usefulRange.lowerBound > 0.6 && tight.usefulRange.upperBound < 0.95,
+          "Distance slider should calibrate to this photo's depth distribution")
+    let oldBlur = try! JSONDecoder().decode(LensBlurSettings.self, from: Data("{\"amount\":0,\"focusDistance\":0.3,\"focusWidth\":0.12}".utf8))
+    check(oldBlur.activated && oldBlur.amount == 0, "Saved legacy zero must not activate blur")
+    check(!LensBlurSettings().activated && LensBlurSettings().amount == 0, "Untouched photos must start unchanged")
+    check(!EditSettings().hasEdits(.lensBlur), "Activation bookkeeping must not mark untouched photos edited")
+    var resetBlur = EditSettings(); resetBlur.reset(.lensBlur)
+    check(resetBlur.lensBlur.activated && resetBlur.lensBlur.amount == 0, "Reset must remember the user's off choice")
+    if let rangeKernel = LumenKernels.shared?.rangeMask {
+        let nearDepth = dataDepth(0.2), farDepth = dataDepth(0.8)
+        let nearSoft = rangeKernel.apply(extent: extent, arguments: [nearDepth, CIVector(x: 0, y: 0.35, z: 1, w: 0)])!
+        let farSoft = rangeKernel.apply(extent: extent, arguments: [farDepth, CIVector(x: 0.65, y: 1, z: 0, w: 1)])!
+        check(values(nearSoft, background)[0] < 0.2, "Near endpoint feather must affect the depth mask")
+        check(values(farSoft, background)[0] < 0.2, "Far endpoint feather must affect the depth mask")
+    }
+    rampSource.storeDepth(tight)
+    if let band = session.lensSubjectRange(rampSource, point: nil) {
+        check(band.lowerBound > 0.7 && band.upperBound > 0.8, "Focus range must measure the whole subject")
+    } else { check(false, "Subject depth distribution unavailable") }
+
     if let cg = smallRender(output, width: 256) { saveJPEG(cg, "lens-blur-synthetic.jpg") }
+}
+
+// Standard EXIF is independent of camera make. These fixtures test metadata extraction, not RAW decoding.
+if let image = CGImageSourceCreateWithURL(files[0] as CFURL, nil).flatMap({ CGImageSourceCreateImageAtIndex($0, 0, nil) }) {
+    for make in ["Sony", "Canon", "Nikon", "FUJIFILM", "Panasonic", "OM Digital Solutions", "PENTAX", "Leica", "Apple"] {
+        let url = outDir.appendingPathComponent("metadata-fixture.jpg")
+        if let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil) {
+            let exif: [CFString: Any] = [kCGImagePropertyExifLensModel: "24-70mm F2.8", kCGImagePropertyExifFocalLength: 35,
+                kCGImagePropertyExifExposureTime: 1.0 / 800, kCGImagePropertyExifFNumber: 2.8,
+                kCGImagePropertyExifISOSpeedRatings: [100], kCGImagePropertyExifDateTimeOriginal: "2026:10:03 11:01:30"]
+            let properties: [CFString: Any] = [kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFMake: make, kCGImagePropertyTIFFModel: "Example camera"], kCGImagePropertyExifDictionary: exif]
+            CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+            check(CGImageDestinationFinalize(destination), "Metadata fixture failed")
+            let info = PhotoInformation.read(url)
+            check(info.camera == "\(make) Example camera" && info.lens.contains("35 mm") && info.lens.contains("24-70"), "Camera/lens EXIF failed for \(make)")
+            check(info.shutter == "1/800 sec" && info.aperture == "\u{0192}/2.8" && info.iso == "100", "Exposure EXIF failed for \(make)")
+            check(info.date == "3 October 2026 \u{00B7} 11:01:30" && info.dimensions.contains("MP"), "Date/dimensions EXIF failed for \(make)")
+        }
+    }
+    let missing = PhotoInformation.read(outDir.appendingPathComponent("missing-photo.jpg"))
+    check(missing.camera == "Not recorded" && missing.shutter == "\u{2014}", "Missing metadata invented camera settings")
+    try? FileManager.default.removeItem(at: outDir.appendingPathComponent("metadata-fixture.jpg"))
 }
 
 // Narrow follow-up after the full engine passed: new blur cases plus a real Sony camera RAW/export.

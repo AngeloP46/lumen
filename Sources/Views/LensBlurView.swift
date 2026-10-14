@@ -5,6 +5,14 @@ struct LensBlurPanel: View {
     @ObservedObject var vm: EditorViewModel
     var refine: () -> Void
 
+    private var distance: Binding<Double> {
+        let range = vm.depthField?.usefulRange ?? 0...1
+        let span = max(range.upperBound - range.lowerBound, 0.001)
+        return Binding(get: { min(max((vm.settings.lensBlur.focusDistance - range.lowerBound) / span * 100, 0), 100) }, set: {
+            value(\.focusDistance).wrappedValue = range.lowerBound + $0 / 100 * span
+        })
+    }
+
     private func value(_ key: WritableKeyPath<LensBlurSettings, Double>, scale: Double = 1) -> Binding<Double> {
         Binding(get: { vm.settings.lensBlur[keyPath: key] * scale }, set: { newValue in
             var s = vm.settings
@@ -15,6 +23,20 @@ struct LensBlurPanel: View {
     }
 
     var body: some View {
+        if vm.lensBlurRefining {
+            VStack(spacing: 4) {
+                HStack {
+                    Text("Refine background").font(.headline)
+                    Spacer()
+                    IconButton(system: vm.overlayEnabled ? "eye" : "eye.slash", active: vm.overlayEnabled) {
+                        vm.overlayEnabled.toggle()
+                    }.accessibilityIdentifier("lens-blur-refine-eye")
+                    Button("Done") { vm.lensBlurRefining = false }
+                        .accessibilityIdentifier("lens-blur-refine-done")
+                }.frame(minHeight: 44).padding(.horizontal, 14)
+                MaskPanel(vm: vm, lensOnly: true)
+            }
+        } else {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 if vm.autoMaskBusy {
@@ -31,11 +53,11 @@ struct LensBlurPanel: View {
                     }
                     .accessibilityIdentifier("lens-blur-focus")
                 }
-                LabeledSlider(title: "Blur amount", value: value(\.amount), neutral: 0, labelWidth: 94)
+                LabeledSlider(title: "Blur amount", value: value(\.amount), neutral: 0, labelWidth: 94, onActive: { vm.lensSliderActive = $0 })
                     .disabled(vm.depthField == nil || vm.autoMaskBusy)
-                LabeledSlider(title: "Focus distance", value: value(\.focusDistance, scale: 100), neutral: 30, labelWidth: 94)
+                LabeledSlider(title: "Focus distance", value: distance, neutral: 30, labelWidth: 94, onActive: { vm.lensSliderActive = $0 })
                     .disabled(vm.depthField == nil || vm.autoMaskBusy)
-                LabeledSlider(title: "Focus range", value: value(\.focusWidth, scale: 100), range: 2...50, neutral: 12, labelWidth: 94)
+                LabeledSlider(title: "Focus range", value: value(\.focusWidth, scale: 100), range: 2...100, neutral: 12, labelWidth: 94, onActive: { vm.lensSliderActive = $0 })
                     .disabled(vm.depthField == nil || vm.autoMaskBusy)
                 HStack {
                     Button("Refine background", action: refine)
@@ -46,10 +68,13 @@ struct LensBlurPanel: View {
                         .accessibilityIdentifier("lens-blur-reset")
                 }
                 .font(.system(size: 13, weight: .medium)).frame(minHeight: 44)
-                Text("Keeps the focus distance sharp and softens what's behind it. Depth is estimated; refine the background around difficult edges.")
+                Toggle("Preview selection while sliding", isOn: $vm.lensPreviewEnabled)
+                    .font(.caption).accessibilityIdentifier("lens-blur-preview")
+                Text(vm.lensFocusMessage ?? "Protects detected subjects and gradually softens farther background. Distance is relative, not metres. Refine difficult edges with a brush.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 14).padding(.bottom, 8)
+        }
         }
     }
 }

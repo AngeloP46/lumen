@@ -32,6 +32,8 @@ struct LumenKernels {
     var clip: CIColorKernel?
     /// Band of a grey image (depth mask). Optional: a broken one only disables the Depth mask.
     var rangeMask: CIColorKernel?
+    var lensRamp: CIColorKernel?
+    var lensRefinedRamp: CIColorKernel?
     /// Edge refinement for AI masks (optional: without it masks keep their soft edges).
     var gfPack: CIColorKernel?, gfCoef: CIColorKernel?, gfApply: CIColorKernel?
     /// Sky seen through trees (optional: without them the sky mask is the scene model's alone).
@@ -56,7 +58,7 @@ struct LumenKernels {
                             accum: h, linearMask: i, radialMask: j, lumMask: l, colorMask: m, similarMask: n,
                             combine: o, maskFinish: p, maskMul: q, overlay: r,
                             gain: k("lumenGain"), gainLocal: k("lumenGainLocal"), applyGain: k("lumenApplyGain"),
-                            clip: k("lumenClip"), rangeMask: k("lumenRangeMask"),
+                            clip: k("lumenClip"), rangeMask: k("lumenRangeMask"), lensRamp: k("lumenLensRamp"), lensRefinedRamp: k("lumenLensRefinedRamp"),
                             gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
                             skyWeigh: k("lumenSkyWeigh"), leafWeigh: k("lumenLeafWeigh"), skyGaps: k("lumenSkyGaps"))
     }()
@@ -135,6 +137,15 @@ struct DepthField: Sendable {
     var values: [Float]
     /// 64 bins over 0...1, scaled so the tallest is 1 (drawn behind the depth range editor).
     var histogram: [Float]
+
+    /// Percentiles give the distance slider useful travel even when estimated depths occupy a narrow band.
+    var usefulRange: ClosedRange<Double> {
+        let sorted = values.filter { $0.isFinite }.sorted()
+        guard !sorted.isEmpty else { return 0...1 }
+        let low = Double(sorted[(sorted.count - 1) / 50])
+        let high = Double(sorted[(sorted.count - 1) * 49 / 50])
+        return max(0, low - 0.02)...min(1, max(high + 0.02, low + 0.04))
+    }
 
     /// Depth at a normalised point (x right, y down), averaged over a small neighbourhood.
     func value(atNormalized x: Double, _ y: Double) -> Float {

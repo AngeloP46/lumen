@@ -80,15 +80,17 @@ extension EditSession {
             if mask.amount <= 0 { return Self.constant(0, source.extent) }
             if mask.components.contains(where: { $0.kind == .depth && $0.amount > 0 }),
                source.cachedMask(Self.aiDepth) == nil { return nil }
-            return maskImage(mask, source: source, gain: exp2(s.exposure))
+            guard let selection = maskImage(mask, source: source, gain: exp2(s.exposure)) else { return nil }
+            if let depth = source.cachedMask(Self.aiDepth), let kernel = LumenKernels.shared?.lensRefinedRamp {
+                let edge = mask.components.first(where: { $0.kind == .depth }).map { $0.lumLow - $0.lumLowFeather } ?? blur.focusDistance
+                return kernel.apply(extent: source.extent, arguments: [depth, selection, CIVector(x: edge, y: 0, z: 0, w: 0)])
+            }
+            return selection
         }
-        guard let depth = source.cachedMask(Self.aiDepth), let kernel = LumenKernels.shared?.rangeMask else { return nil }
-        let width = min(max(blur.focusWidth, 0.02), 0.5)
-        let farEdge = min(max(blur.focusDistance, 0), 1) + width
-        // At the farthest plane there is no background left to blur. Avoid the range kernel's endpoint shortcut.
-        guard farEdge < 0.999 else { return Self.constant(0, source.extent) }
+        guard let depth = source.cachedMask(Self.aiDepth), let kernel = LumenKernels.shared?.lensRamp else { return nil }
+        let subject = source.cachedMask(Self.subjectKey(blur.subjectPoint)) ?? Self.constant(0, source.extent)
         return kernel.apply(extent: source.extent,
-                            arguments: [depth, CIVector(x: farEdge, y: 1, z: width, w: 0)])
+                            arguments: [depth, subject, CIVector(x: blur.focusDistance, y: blur.focusWidth, z: 0, w: 0)])
     }
 
     func applyLensBlur(_ input: CIImage, settings: EditSettings, source: ImageSource) -> CIImage {
@@ -97,7 +99,7 @@ extension EditSession {
         if let id = s.lensBlur.maskID, let editable = s.masks.first(where: { $0.id == id }) {
             guard editable.amount > 0 else { return input }
         } else {
-            let width = min(max(s.lensBlur.focusWidth, 0.02), 0.5)
+            let width = min(max(s.lensBlur.focusWidth, 0.02), 1)
             guard min(max(s.lensBlur.focusDistance, 0), 1) + width < 0.999 else { return input }
         }
         // A no-op must bypass Core Image's colour conversions, not just blend with a black mask.

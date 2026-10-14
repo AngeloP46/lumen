@@ -18,6 +18,52 @@ final class LumenUITests: XCTestCase {
 
     // MARK: helpers
 
+    func testLensBlurRevisionsAndPhotoInfo() {
+        launch(open: 0, tool: "Lens Blur", extra: ["-lumenDemoLensDepth", "1"])
+        XCTAssertTrue(el("lens-blur-focus").waitForExistence(timeout: 40))
+        XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 8, accuracy: 0.1)
+        XCTAssertTrue(el("btn-info").isHittable)
+        el("btn-info").tap()
+        XCTAssertTrue(app.staticTexts["Photo information"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Shutter"].exists)
+        XCTAssertTrue(app.staticTexts["Aperture"].exists)
+        XCTAssertTrue(app.staticTexts["ISO"].exists)
+        shot("photo-information")
+        el("photo-info-done").tap()
+        let handle = el("panel-handle")
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 0, dy: -220)))
+        XCTAssertTrue(el("lens-blur-preview").exists)
+        if valueOf("lens-blur-preview") == "0" { el("lens-blur-preview").tap() }
+        let amount = el("slider-Blur amount")
+        amount.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: amount.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+        XCTAssertTrue(events().contains { $0.contains("lens preview true") })
+        XCTAssertTrue(events().last(where: { $0.contains("lens preview ") })?.contains("false") == true,
+                      "Selection preview must clear on slider release")
+        el("lens-blur-preview").tap()
+        let before = events().filter { $0.contains("lens preview true") }.count
+        amount.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: amount.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)))
+        XCTAssertEqual(events().filter { $0.contains("lens preview true") }.count, before)
+        el("lens-blur-refine").tap()
+        XCTAssertTrue(el("lens-blur-refine-done").waitForExistence(timeout: 10))
+        XCTAssertTrue(el("lum-bar").exists)
+        shot("lens-blur-inline-refinement")
+        el("lens-blur-refine-done").tap()
+        XCTAssertTrue(el("slider-Blur amount").exists)
+        el("reset-Blur amount").tap()
+        XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 0, accuracy: 0.1)
+        sleep(2)
+        app.terminate()
+        if let i = app.launchArguments.firstIndex(of: "-lumenDemoFresh") { app.launchArguments.removeSubrange(i...i + 1) }
+        app.launch()
+        XCTAssertTrue(el("slider-Blur amount").waitForExistence(timeout: 30))
+        XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 0, accuracy: 0.1, "Saved zero must survive reopening")
+        app.terminate()
+        testDepthEdgeSlidersHaveFullTravel()
+    }
+
     func launch(open: Int, tool: String, extra: [String] = []) {
         app = XCUIApplication()
         let env = ProcessInfo.processInfo.environment
@@ -149,19 +195,22 @@ final class LumenUITests: XCTestCase {
         let grab = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         grab.press(forDuration: 0.1, thenDragTo: grab.withOffset(CGVector(dx: 0, dy: -260)))
         sleep(1)
-        let middle = app.buttons["Middle"].firstMatch
-        XCTAssertTrue(middle.waitForExistence(timeout: 10))
-        middle.tap(); sleep(1)
-        for name in ["Near edge", "Far edge"] {
-            let slider = el("slider-" + name)
-            if !slider.isHittable { el("slider-Near edge").swipeUp(); sleep(1) }
-            XCTAssertTrue(slider.isHittable, "depth edge slider must be reachable")
-            for _ in 0..<2 {
-                slider.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
-                    .press(forDuration: 0.1, thenDragTo: slider.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)))
+        for preset in ["Near", "Far"] {
+            let button = app.buttons[preset].firstMatch
+            if !button.isHittable { el("panel").swipeDown(); sleep(1) }
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+            button.tap(); sleep(1)
+            for name in ["Near edge", "Far edge"] {
+                let slider = el("slider-" + name)
+                if !slider.isHittable { el("slider-Near edge").swipeUp(); sleep(1) }
+                XCTAssertTrue(slider.isHittable, "depth endpoint feather must stay enabled")
+                for _ in 0..<3 {
+                    slider.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+                        .press(forDuration: 0.1, thenDragTo: slider.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)))
+                }
+                sleep(1)
+                XCTAssertEqual(valueOf("reset-" + name), "100", "endpoint feather must reach its full range")
             }
-            sleep(1)
-            XCTAssertEqual(valueOf("reset-" + name), "50", "edge feather must reach the full advertised slider range")
         }
         shot("depth-edges-full-travel")
     }
@@ -192,7 +241,7 @@ final class LumenUITests: XCTestCase {
         el("lens-blur-refine").tap(); sleep(2)
         XCTAssertTrue(el("lum-bar").exists, "refine opens the background's depth range")
         shot("lens-blur-refinement")
-        el("tool-Lens Blur").tap(); sleep(1)
+        el("lens-blur-refine-done").tap(); sleep(1)
         let beforeRefinedDrag = Double(valueOf("reset-Blur amount")) ?? 0
         let refinedSlider = el("slider-Blur amount")
         refinedSlider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))

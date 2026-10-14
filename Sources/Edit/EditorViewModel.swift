@@ -161,6 +161,12 @@ final class EditorViewModel: ObservableObject {
                 let field = DepthField(width: 64, height: 64, values: values, histogram: Array(repeating: 1, count: 64))
                 src.storeDepth(field)
                 src.storeMask(EditSession.aiDepth, EditSession.depthImage(field, extent: src.extent))
+                // Touch/layout checks use synthetic subject coverage too; they do not measure Vision quality.
+                let e = src.extent
+                let subject = EditSession.constant(1, CGRect(x: e.minX + e.width * 0.2, y: e.minY,
+                                                            width: e.width * 0.2, height: e.height))
+                    .composited(over: EditSession.constant(0, e))
+                src.storeMask(EditSession.aiSubject, subject)
             }
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -295,6 +301,14 @@ final class EditorViewModel: ObservableObject {
             let shown = img.extent
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure), settings: s, applyCrop: applyCrop)
                 .cropped(to: shown)
+        }
+        if lensBlurEditing && lensSliderActive && lensPreviewEnabled && !showOriginal {
+            var preview = s
+            preview.lensBlur.amount = max(preview.lensBlur.amount, 1)
+            if let selection = session.lensBlurMask(preview, source: active), let kernel = LumenKernels.shared?.overlay {
+                let shown = session.geometry(selection, s, applyCrop: applyCrop)
+                img = kernel.apply(extent: img.extent, arguments: [img, shown, CIVector(x: 1, y: 0.1, z: 0.12, w: 0.55)]) ?? img
+            }
         }
         // Remove people: red = will be removed, a faint white = stays
         if let people = peopleFound, !showOriginal {
@@ -447,11 +461,42 @@ final class EditorViewModel: ObservableObject {
     }
 
     @Published var lensBlurPicking = false
+    @Published var lensBlurRefining = false { didSet { maskEditing = lensBlurRefining; requestRender() } }
+    @Published var lensSliderActive = false {
+        didSet {
+            if DemoMode.isOn { DemoMode.log("lens preview \(lensSliderActive && lensPreviewEnabled)") }
+            requestRender()
+        }
+    }
+    @Published var lensPreviewEnabled = UserDefaults.standard.object(forKey: "lensPreviewEnabled") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(lensPreviewEnabled, forKey: "lensPreviewEnabled"); requestRender() }
+    }
+    @Published var lensFocusMessage: String?
+    private var lensFocusPending = false
+    private func finishLensFocus() {
+        guard lensFocusPending, let source, let session else { return }
+        lensFocusPending = false
+        if let range = session.lensSubjectRange(source, point: settings.lensBlur.subjectPoint) {
+            var s = settings
+            s.lensBlur.focusDistance = (range.lowerBound + range.upperBound) / 2
+            s.lensBlur.focusWidth = max(0.02, (range.upperBound - range.lowerBound) / 2 + 0.02)
+            settings = s
+            lensFocusMessage = "Whole subject protected. Distance is relative to this photo."
+        } else {
+            lensFocusMessage = "No subject found here. Use distance and range, or refine with a brush."
+        }
+    }
     private var lensBlurEditing = false
 
     func setLensBlurEditing(_ editing: Bool) {
         lensBlurEditing = editing
-        if editing { prepareAutoMasksIfNeeded() }
+        if editing {
+            if !settings.lensBlur.activated {
+                var s = settings; s.lensBlur.activated = true; s.lensBlur.amount = 8
+                settings = s; lensFocusPending = true
+            }
+            prepareAutoMasksIfNeeded()
+        } else { lensBlurRefining = false; lensSliderActive = false }
     }
 
     func pickLensFocus(at p: Pt) {
@@ -460,9 +505,15 @@ final class EditorViewModel: ObservableObject {
         lastChange = .distantPast
         var s = settings
         s.lensBlur.focusDistance = Double(distance)
+        s.lensBlur.subjectPoint = p
+        if DemoMode.isOn, DemoMode.value("-lumenDemoLensDepth") != nil, let source {
+            source.storeMask(EditSession.subjectKey(p), source.cachedMask(EditSession.aiSubject))
+        }
         // A focus change starts a fresh automatic range; existing brush refinements remain available in Masks.
         s.lensBlur.maskID = nil
         settings = s
+        lensFocusPending = true
+        prepareAutoMasksIfNeeded()
         lensBlurPicking = false
         if DemoMode.isOn { DemoMode.log("lens focus picked") }
     }
@@ -478,6 +529,9 @@ final class EditorViewModel: ObservableObject {
         m.components[0].lumLowFeather = settings.lensBlur.focusWidth
         m.components[0].lumHighFeather = 0
         if m.components[0].lumLow >= 0.999 { m.components[0].amount = 0 }
+        var subject = MaskComponent.make(.subject, op: .subtract)
+        subject.subjectPoint = settings.lensBlur.subjectPoint
+        m.components.append(subject)
         lastChange = .distantPast
         var s = settings
         s.masks.append(m)
@@ -488,10 +542,11 @@ final class EditorViewModel: ObservableObject {
 
     private func prepareAutoMasksIfNeeded() {
         guard let session, let source, !autoMaskBusy else { return }
-        let needs = ((lensBlurEditing || settings.lensBlur.amount > 0) && !source.hasTried(EditSession.aiDepth)) || settings.masks.contains { m in
+        let needs = ((lensBlurEditing || settings.lensBlur.amount > 0) && (!source.hasTried(EditSession.aiDepth) || !source.hasTried(EditSession.aiSubject) || !source.hasTried(EditSession.subjectKey(settings.lensBlur.subjectPoint)))) || settings.masks.contains { m in
             m.components.contains { c in
                 switch c.kind {
-                case .subject, .background: return !source.hasTried(EditSession.aiSubject)
+                case .subject: return !source.hasTried(EditSession.subjectKey(c.subjectPoint))
+                case .background: return !source.hasTried(EditSession.aiSubject)
                 case .sky: return !source.hasTried(EditSession.aiSky)
                 case .people: return !source.hasTried(EditSession.aiPeople)
                 case .depth: return !source.hasTried(EditSession.aiDepth)
@@ -501,7 +556,7 @@ final class EditorViewModel: ObservableObject {
                 }
             }
         }
-        guard needs else { return }
+        guard needs else { finishLensFocus(); return }
         let askedBlur = settings.lensBlur
         var snapshot = settings
         if lensBlurEditing { snapshot.lensBlur.amount = max(snapshot.lensBlur.amount, 1) }
@@ -516,6 +571,7 @@ final class EditorViewModel: ObservableObject {
                 guard let self else { return }
                 self.autoMaskBusy = false
                 self.autoMaskMissing = missing
+                if self.lensFocusPending, self.settings.lensBlur == askedBlur { self.finishLensFocus() }
                 self.syncDetailMasks()
                 self.requestRender()
                 // masks may have changed while we were busy
@@ -544,7 +600,12 @@ final class EditorViewModel: ObservableObject {
         lastChange = .distantPast
     }
 
-    func reset() { lastChange = .distantPast; settings = EditSettings() }
+    func reset() {
+        lastChange = .distantPast
+        var s = EditSettings()
+        s.lensBlur.activated = settings.lensBlur.activated
+        settings = s
+    }
 
     func auto() {
         guard let session, let source else { return }

@@ -18,10 +18,12 @@ and waits for active export/thumbnail readers. Late writes/saves are blocked.
 Legacy orphan patches absent from every sidecar cannot safely be attributed; corrupt
 retained sidecars cause a cleanup warning rather than destructive cleanup.
 
-Validation pending in GitHub Actions: one personal IPA build, focused simulator
-testHealDeletionPrivacy (8 checks), and sandbox APP_STORE OFF/ON compilation.
-Six model-security tests and local workflow policy checks already pass.
-SideStore still 0.1.197 until a checked main build is published. No payment changes.
+Security validation completed: personal IPA 38625860904; testHealDeletionPrivacy
+38625864692 (8 cases); sandbox OFF/ON 38625938312; PR readiness 38626612845.
+Security-only main publication 38627206272 passed. SideStore source.json verified
+as 0.1.200, build 200, com.example.lumen, Lumen-200.ipa, 322268814 bytes,
+SHA256 005fc7745dc657f03fa57d3d11390c7404a3408c6a98c8f96fe32df4bba94ce2.
+No payment changes.
 
 New workflow: use a work branch + PR, run relevant checks, merge the checked PR via
 GitHub. Notes-only PRs skip the Mac build and still run Release readiness. A [skip ci]
@@ -33,10 +35,31 @@ Public unrestricted SideStore distribution remains unchanged for the owner's upd
 feed; distribution before selling Pro is still a business decision. GitHub account
 two-factor authentication was not verifiable through the current API token.
 
-Lens Blur follow-up is a separate outstanding task: whole-subject focus, first-use
-amount 8, progressive far blur, usable distance range, full Near/Far depth controls,
-inline refinement in Lens Blur, transient red selection preview with off toggle.
-Do not claim those revisions are included in this security change.
+## Status — Lens Blur revisions and photo information, 14 October
+Shared revisions implemented on lens-blur-revisions (PR #2), mirrored into sandbox;
+final engine/metadata run 38631365097 passed 79 checks; final UI/sandbox checks pending.
+Personal IPA build 38631360377 passed at frozen source e9d997b (app code d383f7e);
+Sony RAW comparison/export inspected. Required PR-associated build is being refreshed.
+Subject/selected Vision instance protection, whole-subject depth
+percentiles, first explicit activation amount 8 with saved zero preserved, progressive
+far blur, photo-calibrated distance travel, full Near/Far feather controls, inline
+linked mask refinement and transient red slider preview with saved off preference.
+Top photo-information button reads standard EXIF/TIFF camera/lens/date/dimensions/
+size/shutter/aperture/ISO across brands; missing metadata is shown honestly.
+Personal SideStore remains fully unlocked; sandbox Store code stays separate.
+
+Things to verify: focused engine/metadata and UI checks, sandbox OFF/ON compilation,
+including endpoint graphic/preview-off checks, then protected merge/publication.
+Phone subject boundaries and RAW/HDR speed remain
+owner checks. Old saved Lens Blur objects preserve zero rather than guessing intent.
+
+Troubleshooting: subject detection failure offers distance/range/brush fallback.
+Auto Level reads image horizons/edges (Vision then edge voting), not camera roll
+metadata. Some cameras store proprietary tilt; no universal still-photo tag is used.
+Photo information reads original metadata and never edits dates or source files.
+Read PRODUCT-BRIEF.md for the camera-independent iOS/RAW audience and pricing direction.
+Simulator Lens touch tests use marked synthetic depth/subject fixtures; real subject
+quality remains a phone check, not an inference from UI test success.
 
 
 Read this first. It records what exists, how it's built and shipped, and what to do next.

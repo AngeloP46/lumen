@@ -353,6 +353,14 @@ float4 lumenLumMask(sample_t s, float4 p, float4 q) {
     return float4(v, v, v, 1.0);
 }
 
+// Relative depth behind the sharp band keeps growing all the way to the farthest plane.
+float4 lumenLensRamp(sample_t d, sample_t subject, float4 p) {
+    float edge = clamp(p.x + p.y, 0.0, 1.0);
+    float radius = clamp((d.r - edge) / max(1.0 - edge, 0.001), 0.0, 1.0);
+    radius *= 1.0 - clamp(subject.r, 0.0, 1.0);
+    return float4(radius, radius, radius, 1.0);
+}
+
 // Colour range: up to four OkLab samples (L, a, b, valid). t = (tolerance, softness, 0, 0)
 float4 lumenColorMask(sample_t s, float4 s0, float4 s1, float4 s2, float4 s3, float4 t, float4 q) {
     float3 lab = lmToLab(max(s.rgb * q.x, 0.0) / (1.0 + max(s.rgb * q.x, 0.0)));
@@ -416,10 +424,17 @@ float4 lumenClip(sample_t s, float4 p) {
 // Band of a grey value (depth mask): same shape as the luminance band. p = (low, high, low soft edge, high soft edge)
 float4 lumenRangeMask(sample_t s, float4 p) {
     float y = s.r;
-    float v = lmStep(p.x - max(p.z, 0.001), p.x, y) * (1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y));
-    if (p.x <= 0.001) v = (1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y));
-    if (p.y >= 0.999) v = lmStep(p.x - max(p.z, 0.001), p.x, y);
+    // At the ends, feather moves inward into the valid depth domain instead of becoming a no-op.
+    float lo = p.x <= 0.001 ? (p.z > 0.001 ? lmStep(0.0, p.z, y) : 1.0) : lmStep(p.x - max(p.z, 0.001), p.x, y);
+    float hi = p.y >= 0.999 ? (p.w > 0.001 ? 1.0 - lmStep(1.0 - p.w, 1.0, y) : 1.0) : 1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y);
+    float v = lo * hi;
     return float4(v, v, v, 1.0);
+}
+
+float4 lumenLensRefinedRamp(sample_t d, sample_t selection, float4 p) {
+    float radius = clamp((d.r - p.x) / max(1.0 - p.x, 0.001), 0.0, 1.0);
+    radius = max(radius, 0.15) * selection.r;
+    return float4(radius, radius, radius, 1.0);
 }
 
 // Edge refinement (guided filter, He et al.): the photo's brightness guides a soft mask onto the real edges.

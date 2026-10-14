@@ -59,6 +59,7 @@ struct EditorView: View {
     @State private var chromeHidden = false
     @State private var showExportChoices = false
     @State private var showEdits = false
+    @State private var showPhotoInfo = false
     @State private var showPasteSome = false
     @State private var wbMark: CGPoint?
 
@@ -176,6 +177,7 @@ struct EditorView: View {
         }
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .sheet(isPresented: $showEdits) { EditsSheet(vm: vm) }
+        .sheet(isPresented: $showPhotoInfo) { PhotoInfoView(item: item, url: store.fileURL(item)) }
         .sheet(isPresented: $showPasteSome) {
             if let c = store.clipboard { PasteSomeSheet(clip: c) { vm.paste($0, from: c) } }
         }
@@ -436,7 +438,7 @@ struct EditorView: View {
                 if vm.imageSize != .zero {
                     gestureLayer(xform)
                     if tool == .crop { CropOverlay(vm: vm, xform: xform) }
-                    if tool == .masks {
+                    if tool == .masks || (tool == .lensBlur && vm.lensBlurRefining) {
                         MaskOverlay(vm: vm, xform: xform, geo: SourceGeometry(source: vm.sourceSize, settings: vm.settings))
                             .allowsHitTesting(!vm.panMode)
                             // hidden (not removed, so a drag in progress survives) while the original is showing
@@ -625,7 +627,7 @@ struct EditorView: View {
     // MARK: Floating top buttons
 
     private var floatingBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             FloatButton(system: "chevron.left") { dismiss() }.accessibilityIdentifier("btn-back")
             // HDR is a photo-wide mode, so it sits up here rather than inside the Light page
             Button { vm.settings.hdr.toggle() } label: {
@@ -638,6 +640,8 @@ struct EditorView: View {
             .accessibilityIdentifier("pill-hdr")
             .accessibilityValue(vm.settings.hdr ? "on" : "off")
             Spacer()
+            FloatButton(system: "info.circle") { showPhotoInfo = true }
+                .accessibilityIdentifier("btn-info").accessibilityLabel("Photo information")
             // every tool's edits: switch one off to compare, reset one, or reset all
             FloatButton(system: "switch.2", active: !vm.settings.disabled.isEmpty) { showEdits = true }
                 .accessibilityIdentifier("btn-edits")
@@ -705,9 +709,9 @@ struct EditorView: View {
 
     // MARK: Gestures
 
-    private var canNavigate: Bool { tool != .masks && tool != .crop && tool != .heal && !vm.lensBlurPicking }
+    private var canNavigate: Bool { tool != .masks && tool != .crop && tool != .heal && !vm.lensBlurPicking && !vm.lensBlurRefining }
     // in Heal a resting finger is the start of a stroke, not a request to see the original
-    private var canCompare: Bool { tool != .crop && tool != .heal && !vm.lensBlurPicking && !(tool == .masks && vm.maskTab == .shape && vm.selectedMask != nil) }
+    private var canCompare: Bool { tool != .crop && tool != .heal && !vm.lensBlurPicking && !vm.lensBlurRefining && !(tool == .masks && vm.maskTab == .shape && vm.selectedMask != nil) }
     /// One finger pans a zoomed photo wherever it is not busy with something else (mask handles, brush, crop frame).
     private var canPan: Bool { tool != .crop }
     /// In Masks the photo can be made smaller than the screen, so a gradient or radial can reach far past its edges.
@@ -820,7 +824,7 @@ struct EditorView: View {
         case .began:
             if DemoMode.isOn { DemoMode.log(String(format: "pinch began spread %.0f tool %@", Double(spread), tool?.rawValue ?? "none")) }
             vm.pinching = true
-            if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
+            if tool == .masks || vm.lensBlurRefining { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
             if tool == .heal { vm.healCancel() }
             twoFinger = (zoom, pan, p, spread)
             pinchAnchor = p
@@ -876,7 +880,7 @@ struct EditorView: View {
                 guard twoFinger == nil, Date().timeIntervalSince(lastPinchEnd) > 0.3 else { return }
                 if pinchBase == nil {
                     pinchBase = (zoom, pan)
-                    if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
+                    if tool == .masks || vm.lensBlurRefining { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
                     if tool == .heal { vm.healCancel() }
                 }
                 if let b = pinchBase { setZoom(b.zoom * v.magnification, anchor: v.startLocation, from: b, xf) }
@@ -974,7 +978,7 @@ struct EditorView: View {
         case .curve: CurvePanel(vm: vm)
         case .detail: DetailPanel(vm: vm)
         case .lensBlur: LensBlurPanel(vm: vm) {
-            vm.refineLensBlur(); tool = .masks
+            vm.refineLensBlur(); vm.lensBlurRefining = true
         }
         case .masks: MaskPanel(vm: vm)
         case .heal: HealPanel(vm: vm)
