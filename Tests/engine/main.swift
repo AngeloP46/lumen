@@ -343,10 +343,22 @@ if let file = files.first, let session = EditSession(url: file),
           "Distance slider should calibrate to this photo's depth distribution")
     let oldBlur = try! JSONDecoder().decode(LensBlurSettings.self, from: Data("{\"amount\":0,\"focusDistance\":0.3,\"focusWidth\":0.12}".utf8))
     check(oldBlur.activated && oldBlur.amount == 0, "Saved legacy zero must not activate blur")
+    var upgraded = oldBlur
+    check(upgraded.beginEditing() && upgraded.amount == 8, "Old untouched zero must start at 8 when Lens Blur is opened")
+    upgraded.amount = 0
+    let savedOff = try! JSONDecoder().decode(LensBlurSettings.self, from: JSONEncoder().encode(upgraded))
+    var reopened = savedOff
+    check(!reopened.beginEditing() && reopened.amount == 0, "New explicit zero must survive migration/reopen")
+    var existingOff = oldBlur; existingOff.focusDistance = 0.4
+    check(!existingOff.beginEditing() && existingOff.amount == 0, "Previously adjusted zero must stay off")
+    var untouched = LensBlurSettings()
+    check(untouched.amount == 0 && untouched.beginEditing() && untouched.amount == 8, "New photos change only on explicit Lens Blur entry")
+
     check(!LensBlurSettings().activated && LensBlurSettings().amount == 0, "Untouched photos must start unchanged")
     check(!EditSettings().hasEdits(.lensBlur), "Activation bookkeeping must not mark untouched photos edited")
     var resetBlur = EditSettings(); resetBlur.reset(.lensBlur)
     check(resetBlur.lensBlur.activated && resetBlur.lensBlur.amount == 0, "Reset must remember the user's off choice")
+    check(!resetBlur.lensBlur.beginEditing() && resetBlur.lensBlur.amount == 0, "Explicit Reset must not restart at 8")
     if let rangeKernel = LumenKernels.shared?.rangeMask {
         let nearDepth = dataDepth(0.2), farDepth = dataDepth(0.8)
         let nearSoft = rangeKernel.apply(extent: extent, arguments: [nearDepth, CIVector(x: 0, y: 0.35, z: 1, w: 0)])!

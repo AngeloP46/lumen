@@ -36,6 +36,7 @@ struct LumRangeEditor: View {
     let histogram: [Float]?
     /// The same editor for the Depth mask: the bar runs near (left) to far (right).
     var depth = false
+    var onActive: ((Bool) -> Void)? = nil
 
     @State private var active: Int?   // 0 / 1 = band start / end, 2 / 3 = dark / light soft edge
     @State private var featherStart = 0.0
@@ -55,9 +56,9 @@ struct LumRangeEditor: View {
                     preset("Whites", 0.88, 1, 0.10, 0)
                 }
             }
-            LabeledSlider(title: depth ? "Near edge" : "Dark edge", value: soft($lowFeather, limit: { low }), range: 0...(depth ? 100 : 50), neutral: 0, labelWidth: 66)
+            LabeledSlider(title: depth ? "Near edge" : "Dark edge", value: soft($lowFeather, limit: { low }), range: 0...(depth ? 100 : 50), neutral: 0, labelWidth: 66, onActive: onActive)
                 .opacity(!depth && low <= 0.001 ? 0.35 : 1).allowsHitTesting(depth || low > 0.001)
-            LabeledSlider(title: depth ? "Far edge" : "Light edge", value: soft($highFeather, limit: { 1 - high }), range: 0...(depth ? 100 : 50), neutral: 0, labelWidth: 66)
+            LabeledSlider(title: depth ? "Far edge" : "Light edge", value: soft($highFeather, limit: { 1 - high }), range: 0...(depth ? 100 : 50), neutral: 0, labelWidth: 66, onActive: onActive)
                 .opacity(!depth && high >= 0.999 ? 0.35 : 1).allowsHitTesting(depth || high < 0.999)
         }
     }
@@ -69,7 +70,7 @@ struct LumRangeEditor: View {
 
     private func preset(_ title: String, _ lo: Double, _ hi: Double, _ lf: Double, _ hf: Double) -> some View {
         let on = abs(low - lo) < 0.02 && abs(high - hi) < 0.02
-        return Chip(title: title, selected: on) { low = lo; high = hi; lowFeather = lf; highFeather = hf }
+        return Chip(title: title, selected: on) { low = lo; high = hi; lowFeather = lf; highFeather = hf; onActive?(true); onActive?(false) }
     }
 
     private func depthCoverage(_ value: Double) -> Double {
@@ -169,6 +170,7 @@ struct LumRangeEditor: View {
                         let wantSoft = st.y > top + barH / 2
                         let a = wantSoft ? 2 : 0, b = a + 1
                         let da = abs(ends[a].x - st.x), db = abs(ends[b].x - st.x)
+                        onActive?(true)
                         if abs(da - db) < 1 { active = st.x < ends[a].x ? a : b } else { active = da < db ? a : b }
                         featherStart = active == 2 ? lowFeather : highFeather
                     }
@@ -186,7 +188,7 @@ struct LumRangeEditor: View {
                         highFeather = depth ? min(max(featherStart + (high >= 0.999 ? -1 : 1) * Double(g.translation.width / w), 0), 1) : min(max(v - high, 0), min(0.5, 1 - high))
                     }
                 }
-                .onEnded { _ in active = nil })
+                .onEnded { _ in active = nil; onActive?(false) })
         }
         .frame(height: 58)
     }

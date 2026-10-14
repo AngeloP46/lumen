@@ -1,27 +1,31 @@
 import SwiftUI
 
-/// A photo-specific focus tool. The existing Masks editor supplies optional brush/range corrections.
+/// The same depth band, feather rows and brush refinement used by Masks.
 struct LensBlurPanel: View {
     @ObservedObject var vm: EditorViewModel
     var refine: () -> Void
 
-    private var distance: Binding<Double> {
-        let range = vm.depthField?.usefulRange ?? 0...1
-        let span = max(range.upperBound - range.lowerBound, 0.001)
-        return Binding(get: { min(max((vm.settings.lensBlur.focusDistance - range.lowerBound) / span * 100, 0), 100) }, set: {
-            value(\.focusDistance).wrappedValue = range.lowerBound + $0 / 100 * span
+    private var depthComponent: MaskComponent {
+        if let id = vm.settings.lensBlur.maskID,
+           let c = vm.settings.masks.first(where: { $0.id == id })?.components.first(where: { $0.kind == .depth }) { return c }
+        var c = MaskComponent.make(.depth)
+        c.lumLow = min(vm.settings.lensBlur.focusDistance + vm.settings.lensBlur.focusWidth, 1)
+        c.lumHigh = 1; c.lumLowFeather = vm.settings.lensBlur.focusWidth; c.lumHighFeather = 0
+        return c
+    }
+    private func depthValue(_ key: WritableKeyPath<MaskComponent, Double>) -> Binding<Double> {
+        Binding(get: { depthComponent[keyPath: key] }, set: { value in
+            vm.refineLensBlur()
+            let c = depthComponent
+            vm.updateComponent(c.id) { $0[keyPath: key] = value; if $0.amount == 0 { $0.amount = 100 } }
         })
     }
-
-    private func value(_ key: WritableKeyPath<LensBlurSettings, Double>, scale: Double = 1) -> Binding<Double> {
-        Binding(get: { vm.settings.lensBlur[keyPath: key] * scale }, set: { newValue in
-            var s = vm.settings
-            s.lensBlur[keyPath: key] = newValue / scale
-            if key != \.amount { s.lensBlur.maskID = nil }
+    private var amount: Binding<Double> {
+        Binding(get: { vm.settings.lensBlur.amount }, set: { value in
+            var s = vm.settings; s.lensBlur.amount = value; s.lensBlur.activated = true; s.lensBlur.controlsVersion = 1
             vm.settings = s
         })
     }
-
     var body: some View {
         if vm.lensBlurRefining {
             VStack(spacing: 4) {
@@ -37,44 +41,54 @@ struct LensBlurPanel: View {
                 MaskPanel(vm: vm, lensOnly: true)
             }
         } else {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                if vm.autoMaskBusy {
-                    HStack { ProgressView().tint(.white); Text("Measuring depth…") }
-                        .font(.caption).accessibilityIdentifier("lens-blur-status")
-                } else if vm.depthField == nil {
-                    Text("Depth couldn't be estimated for this photo. Blur hasn't been applied.")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("lens-blur-status")
-                } else {
-                    Button { vm.lensBlurPicking.toggle() } label: {
-                        Label(vm.lensBlurPicking ? "Tap the subject in the photo" : "Pick focus", systemImage: "viewfinder")
-                            .frame(minHeight: 44)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Button { vm.lensBlurPicking.toggle(); vm.lensSelectionPreview = false } label: {
+                            Label(vm.lensBlurPicking ? "Tap subject in photo" : (vm.settings.lensBlur.subjectPoint == nil ? "Select subject" : "Change subject"), systemImage: "viewfinder")
+                                .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                                .foregroundStyle(.white)
+                                .background(vm.lensBlurPicking ? Theme.accent : Theme.chip, in: RoundedRectangle(cornerRadius: 10))
+                        }.accessibilityIdentifier("lens-blur-focus")
+                        IconButton(system: vm.lensSelectionPreview ? "eye.fill" : "eye", active: vm.lensSelectionPreview) {
+                            vm.toggleLensSelectionPreview()
+                        }.frame(width: 44, height: 44).accessibilityIdentifier("lens-blur-selection-eye")
+                            .accessibilityLabel("Show background selection").accessibilityValue(vm.lensSelectionPreview ? "shown" : "hidden")
+                    }.disabled(vm.depthField == nil || vm.autoMaskBusy)
+                    if vm.autoMaskBusy {
+                        HStack { ProgressView(); Text(vm.lensFocusMessage == "Selecting subject…" ? "Selecting subject…" : "Finding depth…") }.font(.caption)
+                    } else if vm.depthField == nil {
+                        Text("Depth couldn't be estimated. Blur hasn't been applied.").font(.caption).foregroundStyle(.secondary)
+                    } else if vm.lensBlurPicking {
+                        Text("Tap the subject you want to keep sharp.").font(.caption).foregroundStyle(Theme.accent)
+                            .accessibilityIdentifier("lens-focus-feedback")
+                    } else if let message = vm.lensFocusMessage {
+                        Label(message, systemImage: message.hasPrefix("Subject selected") ? "checkmark.circle.fill" : "info.circle")
+                            .font(.caption).foregroundStyle(Theme.accent).accessibilityIdentifier("lens-focus-feedback")
                     }
-                    .accessibilityIdentifier("lens-blur-focus")
-                }
-                LabeledSlider(title: "Blur amount", value: value(\.amount), neutral: 0, labelWidth: 94, onActive: { vm.lensSliderActive = $0 })
-                    .disabled(vm.depthField == nil || vm.autoMaskBusy)
-                LabeledSlider(title: "Focus distance", value: distance, neutral: 30, labelWidth: 94, onActive: { vm.lensSliderActive = $0 })
-                    .disabled(vm.depthField == nil || vm.autoMaskBusy)
-                LabeledSlider(title: "Focus range", value: value(\.focusWidth, scale: 100), range: 2...100, neutral: 12, labelWidth: 94, onActive: { vm.lensSliderActive = $0 })
-                    .disabled(vm.depthField == nil || vm.autoMaskBusy)
-                HStack {
-                    Button("Refine background", action: refine)
+                    if vm.settings.lensBlur.amount == 0 {
+                        Button("Enable blur at 8") { vm.enableLensBlur() }.font(.caption).frame(minHeight: 44)
+                            .accessibilityIdentifier("lens-blur-enable")
+                    }
+                    LabeledSlider(title: "Blur amount", value: amount, neutral: 0, labelWidth: 94, onActive: { vm.lensSliderActive = $0 })
                         .disabled(vm.depthField == nil || vm.autoMaskBusy)
-                        .accessibilityIdentifier("lens-blur-refine")
-                    Spacer()
-                    Button("Reset") { vm.settings.reset(.lensBlur); vm.lensBlurPicking = false }
-                        .accessibilityIdentifier("lens-blur-reset")
-                }
-                .font(.system(size: 13, weight: .medium)).frame(minHeight: 44)
-                Toggle("Preview selection while sliding", isOn: $vm.lensPreviewEnabled)
-                    .font(.caption).accessibilityIdentifier("lens-blur-preview")
-                Text(vm.lensFocusMessage ?? "Protects detected subjects and gradually softens farther background. Distance is relative, not metres. Refine difficult edges with a brush.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    LumRangeEditor(low: depthValue(\.lumLow), high: depthValue(\.lumHigh),
+                                   lowFeather: depthValue(\.lumLowFeather), highFeather: depthValue(\.lumHighFeather),
+                                   histogram: vm.depthField?.histogram, depth: true, onActive: { vm.lensSliderActive = $0 })
+                        .disabled(vm.depthField == nil || vm.autoMaskBusy)
+                    HStack {
+                        Button("Refine with brush", action: refine).accessibilityIdentifier("lens-blur-refine")
+                            .disabled(vm.depthField == nil || vm.autoMaskBusy)
+                        Spacer()
+                        Button("Reset") { vm.settings.reset(.lensBlur); vm.lensBlurPicking = false; vm.lensSelectionPreview = false }
+                            .accessibilityIdentifier("lens-blur-reset")
+                    }.font(.system(size: 13, weight: .medium)).frame(minHeight: 44)
+                    Toggle("Preview selection while sliding", isOn: $vm.lensPreviewEnabled)
+                        .font(.caption).accessibilityIdentifier("lens-blur-preview")
+                    Text("Select the background depth to blur. Near/Far soften its edges; detected subjects stay protected. Distance is estimated, not metres.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.padding(.horizontal, 14).padding(.bottom, 8)
             }
-            .padding(.horizontal, 14).padding(.bottom, 8)
-        }
         }
     }
 }

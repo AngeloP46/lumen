@@ -253,9 +253,19 @@ struct LensBlurSettings: Codable, Equatable {
     var maskID: UUID? = nil
     var subjectPoint: Pt? = nil
     var activated = false
+    var controlsVersion: Int? = nil
 
     init() {}
-    private enum CodingKeys: String, CodingKey { case amount, focusDistance, focusWidth, maskID, subjectPoint, activated }
+    /// Upgrade old untouched zeros once; subsequent explicit zero/reset choices remain off.
+    mutating func beginEditing() -> Bool {
+        let oldDefault = controlsVersion == nil && amount == 0 && maskID == nil && subjectPoint == nil
+            && focusDistance == 0.3 && focusWidth == 0.12
+        let first = !activated || oldDefault
+        activated = true; controlsVersion = 1
+        if first { amount = 8 }
+        return first
+    }
+    private enum CodingKeys: String, CodingKey { case amount, focusDistance, focusWidth, maskID, subjectPoint, activated, controlsVersion }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         amount = try c.decodeIfPresent(Double.self, forKey: .amount) ?? 0
@@ -263,6 +273,7 @@ struct LensBlurSettings: Codable, Equatable {
         focusWidth = try c.decodeIfPresent(Double.self, forKey: .focusWidth) ?? 0.12
         maskID = try c.decodeIfPresent(UUID.self, forKey: .maskID)
         subjectPoint = try c.decodeIfPresent(Pt.self, forKey: .subjectPoint)
+        controlsVersion = try c.decodeIfPresent(Int.self, forKey: .controlsVersion)
         // A saved old Lens Blur object is already a user choice, including zero.
         activated = try c.decodeIfPresent(Bool.self, forKey: .activated) ?? true
     }
@@ -437,6 +448,7 @@ extension EditSettings {
         case .lensBlur:
             lensBlur = d.lensBlur
             lensBlur.activated = true
+            lensBlur.controlsVersion = 1
         case .crop:
             take(.crop, from: d)
         }
@@ -522,7 +534,7 @@ extension EditSettings {
     func hasEdits(_ s: EditSection) -> Bool {
         var c = self
         c.reset(s)
-        if s == .lensBlur { c.lensBlur.activated = lensBlur.activated }
+        if s == .lensBlur { c.lensBlur.activated = lensBlur.activated; c.lensBlur.controlsVersion = lensBlur.controlsVersion }
         return c != self
     }
 

@@ -130,6 +130,9 @@ final class EditorViewModel: ObservableObject {
         self.store = store
         applyingHistory = true
         var loaded = store.editorSettings(for: item)
+        if DemoMode.isOn, DemoMode.value("-lumenDemoLegacyLens") != nil {
+            loaded.lensBlur = LensBlurSettings(); loaded.lensBlur.activated = true
+        }
         let history = store.history(for: item, current: loaded)
         undoStack = history.undo
         redoStack = history.redo
@@ -302,7 +305,7 @@ final class EditorViewModel: ObservableObject {
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure), settings: s, applyCrop: applyCrop)
                 .cropped(to: shown)
         }
-        if lensBlurEditing && lensSliderActive && lensPreviewEnabled && !showOriginal {
+        if lensBlurEditing && ((lensSliderActive && lensPreviewEnabled) || lensSelectionPreview) && !showOriginal {
             var preview = s
             preview.lensBlur.amount = max(preview.lensBlur.amount, 1)
             if let selection = session.lensBlurMask(preview, source: active), let kernel = LumenKernels.shared?.overlay {
@@ -472,6 +475,23 @@ final class EditorViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(lensPreviewEnabled, forKey: "lensPreviewEnabled"); requestRender() }
     }
     @Published var lensFocusMessage: String?
+    @Published var lensSelectionPreview = false { didSet { requestRender() } }
+    private var lensPreviewWork: DispatchWorkItem?
+    func showLensSelectionPreview() {
+        lensPreviewWork?.cancel()
+        lensSelectionPreview = true
+        if DemoMode.isOn { DemoMode.log("lens selection confirmed") }
+        let work = DispatchWorkItem { [weak self] in self?.lensSelectionPreview = false }
+        lensPreviewWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
+    }
+    func toggleLensSelectionPreview() {
+        lensPreviewWork?.cancel(); lensSelectionPreview.toggle()
+    }
+    func enableLensBlur() {
+        var s = settings; s.lensBlur.amount = 8; s.lensBlur.activated = true; s.lensBlur.controlsVersion = 1
+        s.setOn(.lensBlur, true); settings = s
+    }
     private var lensFocusPending = false
     private func finishLensFocus() {
         guard lensFocusPending, let source, let session else { return }
@@ -481,22 +501,25 @@ final class EditorViewModel: ObservableObject {
             s.lensBlur.focusDistance = (range.lowerBound + range.upperBound) / 2
             s.lensBlur.focusWidth = max(0.02, (range.upperBound - range.lowerBound) / 2 + 0.02)
             settings = s
-            lensFocusMessage = "Whole subject protected. Distance is relative to this photo."
+            lensFocusMessage = "Subject selected. Red shows the background to blur."
         } else {
-            lensFocusMessage = "No subject found here. Use distance and range, or refine with a brush."
+            lensFocusMessage = "Manual focus set. No subject detected here; refine edges with a brush."
         }
+        showLensSelectionPreview()
     }
     private var lensBlurEditing = false
 
     func setLensBlurEditing(_ editing: Bool) {
         lensBlurEditing = editing
         if editing {
-            if !settings.lensBlur.activated {
-                var s = settings; s.lensBlur.activated = true; s.lensBlur.amount = 8
-                settings = s; lensFocusPending = true
+            if settings.isOn(.lensBlur) {
+                var s = settings
+                let first = s.lensBlur.beginEditing()
+                if s != settings { settings = s }
+                if first { lensFocusPending = true }
             }
             prepareAutoMasksIfNeeded()
-        } else { lensBlurRefining = false; lensSliderActive = false }
+        } else { lensBlurRefining = false; lensSliderActive = false; lensPreviewWork?.cancel(); lensSelectionPreview = false }
     }
 
     func pickLensFocus(at p: Pt) {
@@ -504,6 +527,8 @@ final class EditorViewModel: ObservableObject {
               let distance = source?.depthField?.value(atNormalized: p.x, p.y) else { return }
         lastChange = .distantPast
         var s = settings
+        if s.lensBlur.amount == 0 { s.lensBlur.amount = 8 }
+        s.lensBlur.activated = true; s.lensBlur.controlsVersion = 1; s.setOn(.lensBlur, true)
         s.lensBlur.focusDistance = Double(distance)
         s.lensBlur.subjectPoint = p
         if DemoMode.isOn, DemoMode.value("-lumenDemoLensDepth") != nil, let source {
@@ -512,6 +537,7 @@ final class EditorViewModel: ObservableObject {
         // A focus change starts a fresh automatic range; existing brush refinements remain available in Masks.
         s.lensBlur.maskID = nil
         settings = s
+        lensFocusMessage = "Selecting subject…"
         lensFocusPending = true
         prepareAutoMasksIfNeeded()
         lensBlurPicking = false
@@ -604,6 +630,7 @@ final class EditorViewModel: ObservableObject {
         lastChange = .distantPast
         var s = EditSettings()
         s.lensBlur.activated = settings.lensBlur.activated
+        s.lensBlur.controlsVersion = settings.lensBlur.controlsVersion
         settings = s
     }
 

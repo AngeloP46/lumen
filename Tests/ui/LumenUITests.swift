@@ -19,9 +19,22 @@ final class LumenUITests: XCTestCase {
     // MARK: helpers
 
     func testLensBlurRevisionsAndPhotoInfo() {
-        launch(open: 0, tool: "Lens Blur", extra: ["-lumenDemoLensDepth", "1"])
+        launch(open: 0, tool: "Lens Blur", extra: ["-lumenDemoLensDepth", "1", "-lumenDemoLegacyLens", "1"])
         XCTAssertTrue(el("lens-blur-focus").waitForExistence(timeout: 40))
         XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 8, accuracy: 0.1)
+        XCTAssertTrue(el("lum-bar").exists, "Depth range must be on the main Lens Blur page")
+        XCTAssertTrue(el("slider-Near edge").exists && el("slider-Far edge").exists)
+        el("lens-blur-focus").tap()
+        XCTAssertTrue(el("lens-focus-feedback").exists)
+        let layer = el("lens-focus-layer")
+        layer.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap()
+        let shown = NSPredicate(format: "value == 'shown'")
+        expectation(for: shown, evaluatedWith: el("lens-blur-selection-eye"))
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(el("lens-focus-feedback").label.contains("Subject selected"))
+        shot("lens-blur-confirmed-background")
+        sleep(5)
+        XCTAssertEqual(valueOf("lens-blur-selection-eye"), "hidden")
         XCTAssertTrue(el("btn-info").isHittable)
         el("btn-info").tap()
         XCTAssertTrue(app.staticTexts["Photo information"].waitForExistence(timeout: 10))
@@ -57,6 +70,7 @@ final class LumenUITests: XCTestCase {
         sleep(2)
         app.terminate()
         if let i = app.launchArguments.firstIndex(of: "-lumenDemoFresh") { app.launchArguments.removeSubrange(i...i + 1) }
+        if let i = app.launchArguments.firstIndex(of: "-lumenDemoLegacyLens") { app.launchArguments.removeSubrange(i...i + 1) }
         app.launch()
         XCTAssertTrue(el("slider-Blur amount").waitForExistence(timeout: 30))
         XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 0, accuracy: 0.1, "Saved zero must survive reopening")
