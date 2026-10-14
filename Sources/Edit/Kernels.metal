@@ -348,9 +348,8 @@ float4 lumenRadialMask(sample_t s, float4 p, float4 q, destination dest) {
 float4 lumenLumMask(sample_t s, float4 p, float4 q) {
     float y = lmSrgbEnc(lmLum(max(s.rgb * q.x, 0.0)));
     float v = lmStep(p.x - max(p.z, 0.001), p.x, y) * (1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y));
-    float lo = p.x <= 0.001 ? (p.z > 0.001 ? lmStep(0.0, p.z, y) : 1.0) : lmStep(p.x - max(p.z, 0.001), p.x, y);
-    float hi = p.y >= 0.999 ? (p.w > 0.001 ? 1.0 - lmStep(1.0 - p.w, 1.0, y) : 1.0) : 1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y);
-    v = lo * hi;
+    if (p.x <= 0.001) v = (1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y));
+    if (p.y >= 0.999) v = lmStep(p.x - max(p.z, 0.001), p.x, y);
     return float4(v, v, v, 1.0);
 }
 
@@ -425,9 +424,10 @@ float4 lumenClip(sample_t s, float4 p) {
 // Band of a grey value (depth mask): same shape as the luminance band. p = (low, high, low soft edge, high soft edge)
 float4 lumenRangeMask(sample_t s, float4 p) {
     float y = s.r;
-    float v = lmStep(p.x - max(p.z, 0.001), p.x, y) * (1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y));
-    if (p.x <= 0.001) v = (1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y));
-    if (p.y >= 0.999) v = lmStep(p.x - max(p.z, 0.001), p.x, y);
+    // At the ends, feather moves inward into the valid depth domain instead of becoming a no-op.
+    float lo = p.x <= 0.001 ? (p.z > 0.001 ? lmStep(0.0, p.z, y) : 1.0) : lmStep(p.x - max(p.z, 0.001), p.x, y);
+    float hi = p.y >= 0.999 ? (p.w > 0.001 ? 1.0 - lmStep(1.0 - p.w, 1.0, y) : 1.0) : 1.0 - lmStep(p.y, p.y + max(p.w, 0.001), y);
+    float v = lo * hi;
     return float4(v, v, v, 1.0);
 }
 
