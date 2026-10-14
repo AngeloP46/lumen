@@ -72,6 +72,16 @@ struct LumRangeEditor: View {
         return Chip(title: title, selected: on) { low = lo; high = hi; lowFeather = lf; highFeather = hf }
     }
 
+    private func depthCoverage(_ value: Double) -> Double {
+        func step(_ a: Double, _ b: Double) -> Double {
+            let t = min(max((value - a) / max(b - a, 0.000001), 0), 1)
+            return t * t * (3 - 2 * t)
+        }
+        let near = low <= 0.001 ? (lowFeather > 0.001 ? step(0, lowFeather) : 1) : step(low - max(lowFeather, 0.001), low)
+        let far = high >= 0.999 ? (highFeather > 0.001 ? 1 - step(1 - highFeather, 1) : 1) : 1 - step(high, high + max(highFeather, 0.001))
+        return near * far
+    }
+
     /// The brightness bar. White handles (top corners of the band) set where it starts and ends; the small blue
     /// handles (bottom corners) pull its soft edges out, the same as the Dark edge / Light edge sliders.
     private var bar: some View {
@@ -82,7 +92,7 @@ struct LumRangeEditor: View {
             let x: (Double) -> CGFloat = { CGFloat(min(max($0, 0), 1)) * w }
             let ends: [CGPoint] = [
                 CGPoint(x: x(low), y: top), CGPoint(x: x(high), y: top),                                   // 0, 1: band
-                CGPoint(x: x(low - lowFeather), y: top + barH), CGPoint(x: x(high + highFeather), y: top + barH), // 2, 3: soft edges
+                CGPoint(x: x(depth && low <= 0.001 ? lowFeather : low - lowFeather), y: top + barH), CGPoint(x: x(depth && high >= 0.999 ? 1 - highFeather : high + highFeather), y: top + barH), // 2, 3: soft edges
             ]
             ZStack(alignment: .topLeading) {
                 Group {
@@ -101,6 +111,17 @@ struct LumRangeEditor: View {
                         }
                         .frame(height: barH).allowsHitTesting(false)
                     }
+                    if depth {
+                        Path { p in
+                            p.move(to: CGPoint(x: 0, y: barH))
+                            for i in 0...100 {
+                                let value = Double(i) / 100
+                                p.addLine(to: CGPoint(x: x(value), y: barH * CGFloat(1 - depthCoverage(value))))
+                            }
+                            p.addLine(to: CGPoint(x: w, y: barH)); p.closeSubpath()
+                        }
+                        .fill(Theme.accent.opacity(0.4)).allowsHitTesting(false)
+                    } else {
                     // the selected band, with its two sloping soft edges
                     Path { p in
                         p.move(to: CGPoint(x: x(low - lowFeather), y: barH))
@@ -117,6 +138,7 @@ struct LumRangeEditor: View {
                         p.addLine(to: CGPoint(x: x(high + highFeather), y: barH))
                     }.stroke(Theme.accent, lineWidth: 1.6))
                     .allowsHitTesting(false)
+                    }
                 }
                 .offset(y: top)
 
@@ -159,9 +181,9 @@ struct LumRangeEditor: View {
                         high = max(v, low + 0.02)
                         if !depth { highFeather = min(highFeather, 1 - high) }
                     case 2:
-                        lowFeather = depth ? min(max(featherStart - Double(g.translation.width / w), 0), 1) : min(max(low - v, 0), min(0.5, low))
+                        lowFeather = depth ? min(max(featherStart + (low <= 0.001 ? 1 : -1) * Double(g.translation.width / w), 0), 1) : min(max(low - v, 0), min(0.5, low))
                     default:
-                        highFeather = depth ? min(max(featherStart + Double(g.translation.width / w), 0), 1) : min(max(v - high, 0), min(0.5, 1 - high))
+                        highFeather = depth ? min(max(featherStart + (high >= 0.999 ? -1 : 1) * Double(g.translation.width / w), 0), 1) : min(max(v - high, 0), min(0.5, 1 - high))
                     }
                 }
                 .onEnded { _ in active = nil })

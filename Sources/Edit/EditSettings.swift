@@ -522,6 +522,7 @@ extension EditSettings {
     func hasEdits(_ s: EditSection) -> Bool {
         var c = self
         c.reset(s)
+        if s == .lensBlur { c.lensBlur.activated = lensBlur.activated }
         return c != self
     }
 

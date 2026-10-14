@@ -344,6 +344,7 @@ if let file = files.first, let session = EditSession(url: file),
     let oldBlur = try! JSONDecoder().decode(LensBlurSettings.self, from: Data("{\"amount\":0,\"focusDistance\":0.3,\"focusWidth\":0.12}".utf8))
     check(oldBlur.activated && oldBlur.amount == 0, "Saved legacy zero must not activate blur")
     check(!LensBlurSettings().activated && LensBlurSettings().amount == 0, "Untouched photos must start unchanged")
+    check(!EditSettings().hasEdits(.lensBlur), "Activation bookkeeping must not mark untouched photos edited")
     var resetBlur = EditSettings(); resetBlur.reset(.lensBlur)
     check(resetBlur.lensBlur.activated && resetBlur.lensBlur.amount == 0, "Reset must remember the user's off choice")
     if let rangeKernel = LumenKernels.shared?.rangeMask {

@@ -4,7 +4,9 @@
 Lens Blur and photo-information revisions mirrored from main work branch (PR #2).
 Subject-instance protection and subject depth distribution, first-use 8, progressive
 far blur, calibrated distance, full depth feather travel, inline linked-mask refinement,
-and optional transient slider preview implemented. Standard metadata info button added
+and optional transient slider preview implemented. Endpoint graphic matches the depth
+feather effect; activation bookkeeping does not mark untouched photos edited.
+Standard metadata info button added
 for all camera brands; no Store/payment logic changed. Focused checks pending.
 Security-only SideStore publication 38627206272 succeeded; feed 0.1.200/build 200,
 size/hash/URL matched release. Security build/Heal/OFF-ON checks already passed.
