@@ -4,18 +4,18 @@ You are working in a **disposable draft copy** of the Lumen repo. Read this befo
 
 ## What this folder is
 
-- `C:\Users\pc user\Downloads\GP work\Lumen-Sandbox` — a copy of the real repo
-  (`github.com/AngeloP46/lumen`), working on the branch **`sandbox/`** only.
+- `C:\Users\pc user\Projects\app development\Lumen-Sandbox` — a copy of the real repo
+  (`github.com/AngeloP46/lumen`), working on the branch **`sandbox`** only.
 - Your job: **draft** the App Store code described in `docs/APPSTORE-PLAN.md` (read it fully first),
-  and **push your commits to the `sandbox/` branch** so the repo's automatic test suite runs on
+  and **push your commits to the `sandbox` branch** so the repo's automatic test suite runs on
   your work (the engine test compiles the engine and renders a real Sony A9 ARW; the results come
   back as preview images on GitHub).
-- When the main developer (Claude) comes back in ~48h, he will review the `sandbox/` branch,
+- When the main developer (Claude) comes back in ~48h, he will review the `sandbox` branch,
   fix it, and rebuild it in the real repo. **Nothing you write here is final — but it must be
   honest, well-commented, and clearly marked as a draft.**
 
 **How to check the test results:** after pushing, the repo's "Engine test" workflow runs on the
-`sandbox/` branch automatically. Results are at the GitHub repo → Actions tab (pass/fail), and
+`sandbox` branch automatically. Results are at the GitHub repo → Actions tab (pass/fail), and
 rendered preview sheets are uploaded as a `test-previews` GitHub release and `engine-renders`
 artifacts. If a push makes the engine test fail, **fix and re-push** — that's the loop.
 If the test fails for reasons that pre-date you (check by looking at main's last run), note it in
@@ -31,8 +31,8 @@ If the test fails for reasons that pre-date you (check by looking at main's last
      embedded in the remote URL. **Never read, print, copy or edit `.git/config`.** The token
      only has permission on the `lumen` repo's *contents*; it cannot do anything else, but it
      still must not be handled.
-   - Push **only** the `sandbox/` branch: `git push origin sandbox/` (or `git push -u origin
-     sandbox/` the first time). **Never push `main` or any other branch. Never delete or force-
+   - Push **only** the `sandbox` branch: `git push origin sandbox` (or `git push -u origin
+     sandbox` the first time). **Never push `main` or any other branch. Never delete or force-
      push anything.**
    - Small, descriptive commits per logical piece, pushed in batches (a few times a session is
      fine; don't push after every file).

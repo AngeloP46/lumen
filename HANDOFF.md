@@ -11,15 +11,14 @@ longer count as Pro. Added an in-app privacy notice and Apple's standard Terms l
 
 Added export-policy regression checks and a flag-OFF simulator build to the sandbox compile
 workflow. Strengthened RAW checks to apply an edit and reopen output, checking dimensions and
-16-bit TIFF. CR2 sample added from raw.pixls.us with a pinned SHA-256; genuine iPhone ProRAW still missing. No main changes or SideStore
-publication. Build/testing results will be recorded here when available.
+16-bit TIFF. CR2 sample added from raw.pixls.us with a pinned SHA-256; genuine iPhone ProRAW still missing. No main code changes or SideStore
+publication. Export-policy checks, flag-OFF simulator build, flag-ON simulator build, six-format RAW matrix and editing-engine tests have passed. Screenshot capture passed; watermark/paywall images were visually checked. The 70-test interface suite passed with zero failures at b8580d1. Latest e4698a9 preset checks and both flag configurations also passed; its screenshot capture also passed.
 
 Still unresolved: publish an app-specific privacy URL for App Store metadata (current website
-notice is waitlist-only); final pricing/name; whether advanced built-in presets should require
-Pro export; real StoreKit purchase/restore/grace testing; real phone watermark appearance.
+notice is waitlist-only); final pricing/name; real StoreKit purchase/restore/grace testing; real phone watermark appearance.
 Do not treat source review or simulator compilation as proof of working purchases.
 
-**Last updated:** 14 Oct 2026 (by PC ASSISTANT, chat with Angelo)
+**Last updated:** 14 Oct 2026 (Codex fixes, validation and relocation authorized by Angelo)
 
 ## One-line summary
 
@@ -32,12 +31,12 @@ an isolated sandbox in the meantime.
 
 | Thing | Where |
 |---|---|
-| The full plan (source of truth for the work) | `C:\Users\pc user\Downloads\GP work\Lumen\docs\APPSTORE-PLAN.md` |
-| Real repo (Claude works here, pushes to GitHub) | `C:\Users\pc user\Downloads\GP work\Lumen` |
-| Sandbox (local LLM works here — do not edit it yourself) | `C:\Users\pc user\Downloads\GP work\Lumen-Sandbox` |
+| The full plan (source of truth for the work) | `C:\Users\pc user\Projects\app development\Lumen\docs\APPSTORE-PLAN.md` |
+| Real repo (Claude works here, pushes to GitHub) | `C:\Users\pc user\Projects\app development\Lumen` |
+| Sandbox (local LLM works here — do not edit it yourself) | `C:\Users\pc user\Projects\app development\Lumen-Sandbox` |
 | Sandbox rules the local LLM must follow | `Lumen-Sandbox\SANDBOX-BRIEF.md` |
 | Local LLM's own work log (it writes this) | `Lumen-Sandbox\SANDBOX-LOG.md` (created by the LLM) |
-| GitHub branch with the local LLM's pushed work | `sandbox/` branch on github.com/AngeloP46/lumen — https://github.com/AngeloP46/lumen/tree/sandbox |
+| GitHub branch with the local LLM's pushed work | `sandbox` branch on github.com/AngeloP46/lumen — https://github.com/AngeloP46/lumen/tree/sandbox |
 | Test results from GitHub | repo → **Actions** tab (pass/fail) and the `test-previews` GitHub release (rendered ARW preview sheets) |
 
 ## Decisions already made (all locked, see plan §11)
@@ -62,7 +61,7 @@ an isolated sandbox in the meantime.
 2. **RAW finding:** the app already decodes all major camera RAW via Apple's CIRAWFilter —
    the "Sony-only" problem is mostly wording, plus a test matrix to prove (CR2/CR3/NEF/RAF/
    ARW/DNG/ProRAW must open, edit, export — hard requirement before Gate 2).
-3. Built the sandbox: clone in `Lumen-Sandbox`, brief written, `sandbox/` branch created on
+3. Built the sandbox: clone in `Lumen-Sandbox`, brief written, `sandbox` branch created on
    GitHub and pushed. A 2-day fine-grained token (repo: lumen, Contents read/write) is embedded
    in the sandbox's `origin` remote — **it expires ~15 Oct**; after that the sandbox cannot
    push. Do not print or copy the remote URL (it contains the token).
@@ -125,7 +124,7 @@ an isolated sandbox in the meantime.
 ## Review focus for tomorrow (14 Oct PM, marketing day — no new features)
 
 Angelo is pausing feature work to validate demand. When Claude returns, review in this
-order (all on the `sandbox/` branch, nothing merged to main, SideStore untouched):
+order (all on the `sandbox` branch, nothing merged to main, SideStore untouched):
 
 1. **Subscription logic** (`Sources/Store/LumenStore.swift`, `PaywallView.swift`):
    - **BUG (confirmed):** the paywall shows "7 days free, then renews" under BOTH products,
@@ -154,54 +153,46 @@ Marketing assets are being prepared separately; listing set = shots 01, 02, 03, 
 
 ---
 
-**Context.** You drafted nothing for the App Store yourself — a capable local LLM did it on
-the **`sandbox/` branch** of this repo while you were offline: https://github.com/AngeloP46/lumen/tree/sandbox
-Latest sandbox commit: 9dde7c2 (14 Oct 2026). Treat ALL of it as unreviewed draft. Read in
-this order — that's the whole handoff, nothing else is needed:
+The project moved on 14 October 2026. Use these canonical folders:
+- Main app: C:\Users\pc user\Projects\app development\Lumen
+- App Store sandbox: C:\Users\pc user\Projects\app development\Lumen-Sandbox
+- Landing page: C:\Users\pc user\Projects\app development\landing-page
+The old Downloads paths redirect to these app folders for existing sessions.
 
-1. `docs/APPSTORE-PLAN.md` (main branch) — the launch plan, source of truth, §11 = locked decisions.
-2. `HANDOFF.md` (sandbox branch) — status, timeline, "Review focus" section = known issues.
-3. `SANDBOX-LOG.md` (sandbox branch) — every file written/changed, open questions 1–9.
-4. `docs/APPSTORE-ASSETS.md` (sandbox branch) — draft App Store listing (name, description,
-   keywords, screenshot plan, subscription setup + rejection-risk checklists).
-5. Code: search the sandbox branch for `DRAFT — sandbox` — that marks every file that's new.
-   Key ones: `Sources/Store/LumenStore.swift`, `Sources/Store/ProGate.swift`,
-   `Sources/Views/PaywallView.swift`, `Sources/Views/LumaforgeMark.swift`, and the
-   `#if APP_STORE` hooks in `EditorView.swift` / `LibraryView.swift` / `Demo.swift`.
+Read Lumen/AGENTS.md and CLAUDE.md, then Lumen/docs/APPSTORE-PLAN.md (preserve this existing
+untracked file), then Lumen-Sandbox/HANDOFF.md's leading Codex update and SANDBOX-LOG.md.
 
-**Known issues to fix (confirmed by review on 14 Oct, in priority order):**
-1. `PaywallView.swift`: "7 days free, then renews" is shown under BOTH products, but the trial
-   is monthly-only (plan §173). Fix the annual row.
-2. `LibraryView.swift` batch export (`store.export(list:options:)`) has NO Pro gate — free
-   users can batch-export Pro-edited photos clean. Add the same gate as `requestExport()`.
-3. `LumenStore.refreshStatus()`: trial detection is a heuristic (expiry < 8 days) — verify
-   against StoreKit 2.
-4. Watermark (`LumaforgeMark.swift`, tiled diagonal Canvas, 45 % opacity) is preview-only:
-   confirm the exported file stays clean (current intent) and tune look on a real device.
-5. RAW matrix (`raw-matrix.yml`, `Tests/rawmatrix/`): CR3/NEF/RAF/ARW/DNG all pass (5/5);
-   extend to CR2 + iPhone ProRAW when samples are available.
+The local LLM's App Store draft was reviewed and fixed by Codex with Angelo's approval.
+Actual GitHub branch name: sandbox (no trailing slash). Code fixes: 61f28e5, 20d2f86,
+b8580d1; check git log for subsequent documentation commits. Main remains 70f1448 and no
+SideStore app update has been published.
 
-**Hard rules:** never touch `project.yml` or `build.yml` (SideStore pipeline is frozen; the
-SideStore app must stay paywall-free and watermark-free); never push to `main`; all App Store
-work stays additive behind the `APP_STORE` compile condition; Angelo decides §11 items —
-present options, don't decide. Current stage: Gate 2 (RAW matrix is the hard gate). Angelo is
-validating demand via marketing this week — no new features until he says go.
+Fixed: batch/single export restrictions at UI and actual export entry points; StoreKit
+trial eligibility/offer wording; trial classification; billing grace; observed watermark
+updates; foreground/expiry refresh; restore errors; neutral grading/masks/sharpen controls;
+privacy policy view and standard Apple EULA link. Pricing unchanged. Angelo confirmed built-in preset looks/strength export free; extra Pro edits remain gated. e4698a9 implements actual recipe matching and expanded regression cases.
 
-**Screenshots:** `app-store-sandbox.yml` (sandbox branch) captures 10 real simulator shots on
-every push (artifact `app-store-shots`): 01 free light, 02 grade, 03 curve, 04 detail, 05 masks,
-06 heal, 07 export sheet, 08 batch, 09 watermark, 10 paywall. 05/06 are CI stand-ins (no AI in
-simulator) — NOT listing material. Listing set = 01, 02, 03, 04, 07, 08, 10, all captured
-watermark-free via the `-lumenDemoNoWM` launch flag (CI-only, no effect on normal use).
+Validation: export-policy regression checks and simulator flag-OFF/flag-ON builds passed.
+Six-format RAW test (now including checksum-pinned Canon CR2) and engine tests passed at
+20d2f86; subsequent code correction changes only paywall API usage and compiler diagnostics.
+Screenshot capture passed and watermark/paywall images were visually checked. The 70-test interface suite passed with zero failures (b8580d1). Latest preset checks and both builds/screenshot capture passed at e4698a9.
 
-**Report back:** what you kept/fixed/discarded from the draft, RAW matrix status, and what's
-left before Gate 3 (landing page + waitlist).
+Still needed: genuine iPhone ProRAW sample; StoreKit runtime tests for purchase, restore,
+eligibility, revocation/expiry/grace; real-phone watermark check; public app privacy-policy
+URL for metadata; final name/pricing decision by Angelo. Preset policy is confirmed as described above. Compilation is not proof of
+correct purchases. 05/06 simulator mask/heal screenshots remain internal stand-ins; record
+marketing footage on the actual phone. Paywall shot 10 shows unloaded products, so keep it internal until real or StoreKit-test products are configured.
+
+Preserve the personal SideStore build and frozen project.yml/build.yml/model-fetch scripts.
+Do not merge or push main without Angelo's instruction. No new app features requested.
+The site is already polished and TikTok content is underway; content planning follows this
+fix/review work. Website prices are proposed demand-testing options, not final app prices.
 
 ---
-
 ## How updates are tracked (no extra file needed)
 
 - **Local LLM's progress:** its git commits in `Lumen-Sandbox` + `SANDBOX-LOG.md` + the
-  `sandbox/` branch on GitHub + Actions results.
+  `sandbox` branch on GitHub + Actions results.
 - **Claude's progress:** his commits in the real repo (`Lumen` folder) + his updates to
   `CLAUDE.md` (he keeps a status log there) + GitHub Actions.
 - **Decisions/status for humans:** this file + `docs/APPSTORE-PLAN.md` §11. Keep §11 and this

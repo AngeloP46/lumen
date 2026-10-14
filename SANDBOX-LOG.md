@@ -50,7 +50,7 @@ files, SideStore feed — untouched.
 
 ## Build/test status (live on GitHub's Mac, 13 Oct)
 
-The `sandbox/` branch runs the repo's normal CI on every push, plus a new manual/branch
+The `sandbox` branch runs the repo's normal CI on every push, plus a new manual/branch
 workflow `app-store-sandbox.yml` that builds the WHOLE app with the App Store flag ON.
 Results at https://github.com/AngeloP46/lumen/actions (branch: sandbox):
 
@@ -105,7 +105,7 @@ Canon R5 CR3, Nikon D750 NEF, Fuji X-T4 RAF, Sony A7 ARW and 5D III DNG all open
 Still missing from the matrix: CR2 (needs an old-Canon sample) and ProRAW (needs a real
 iPhone ProRAW file — a real device is the only clean source).
 
-## 14 Oct session — screenshots + watermark (all pushed to `sandbox/`)
+## 14 Oct session — screenshots + watermark (all pushed to `sandbox`)
 
 - Watermark reworked twice (see open question 7): final = tiled diagonal, `Canvas`-based.
 - `app-store-sandbox.yml` now captures 10 shots; 01–08 + 10 are clean (`-lumenDemoNoWM`),
@@ -150,3 +150,7 @@ with exposure edit, exact sample-extension coverage, reopened exports/dimensions
 CR2 and ProRAW remain explicitly untested. Compilation and runtime results pending GitHub CI.
 
 CR2 follow-up: added the public-domain Canon EOS 5D Mark II RAW sample (raw.pixls.us sample 1182), pinned SHA-256 81c5ee6da45c4e22584c5344807ac32e2c9ba82ad274486ba64745ef8dd4f69c. RAW matrix now requires six exact formats. ProRAW remains missing; no build results yet.
+
+14 Oct preset decision: Angelo chose free built-in preset exports, with no blanket exemption for extra Pro edits. e4698a9 matches actual built-in recipes/strengths, gates HDR/masks/heal and extra advanced values, and fades built-in advanced strength from neutral on free photos. Existing Pro edits are retained when fading from a Pro starting state. Added preset/copy/reload/mixed-batch cases. No metadata flag can grant free export. App Store-only hook; personal build unchanged. Manual compile/policy run: https://github.com/AngeloP46/lumen/actions/runs/38589125986 (pending). Existing 70-test personal-app interface suite continues; skip-ci commit avoids restarting unchanged flag-OFF behavior.
+
+Final validation (14 Oct): e4698a9 policy regression checks, simulator APP_STORE OFF/ON builds and ten screenshot captures all passed in run 38589125986. Earlier b8580d1 UI suite passed 70 tests with zero failures (run 38585012729); e4698a9 changes only APP_STORE runtime and latest OFF build confirms personal configuration still compiles. Six-format RAW regression passed at 20d2f86 (38584274180), as did editing-engine tests (38584274314). No personal phone publication. Relocation verified: 1,349 files moved, individual old-path junctions retained; all 26 copied landing-page files hash-match the original. Main source HEAD stays 70f1448; only local notes/AGENTS and existing untracked plan updated. Preserved original download and live site. New content tone preference recorded in root notes.
