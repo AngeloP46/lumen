@@ -343,6 +343,18 @@ if let file = files.first, let session = EditSession(url: file),
     check(!LensBlurSettings().activated && LensBlurSettings().amount == 0, "Untouched photos must start unchanged")
     var resetBlur = EditSettings(); resetBlur.reset(.lensBlur)
     check(resetBlur.lensBlur.activated && resetBlur.lensBlur.amount == 0, "Reset must remember the user's off choice")
+    if let rangeKernel = LumenKernels.shared?.rangeMask {
+        let nearDepth = EditSession.constant(0.2, extent), farDepth = EditSession.constant(0.8, extent)
+        let nearSoft = rangeKernel.apply(extent: extent, arguments: [nearDepth, CIVector(x: 0, y: 0.35, z: 1, w: 0)])!
+        let farSoft = rangeKernel.apply(extent: extent, arguments: [farDepth, CIVector(x: 0.65, y: 1, z: 0, w: 1)])!
+        check(values(nearSoft, background)[0] < 0.2, "Near endpoint feather must affect the depth mask")
+        check(values(farSoft, background)[0] < 0.2, "Far endpoint feather must affect the depth mask")
+    }
+    rampSource.storeDepth(tight)
+    if let band = session.lensSubjectRange(rampSource, point: nil) {
+        check(band.lowerBound > 0.7 && band.upperBound > 0.8, "Focus range must measure the whole subject")
+    } else { check(false, "Subject depth distribution unavailable") }
+
     if let cg = smallRender(output, width: 256) { saveJPEG(cg, "lens-blur-synthetic.jpg") }
 }
 

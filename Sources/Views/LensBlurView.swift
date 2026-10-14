@@ -28,6 +28,9 @@ struct LensBlurPanel: View {
                 HStack {
                     Text("Refine background").font(.headline)
                     Spacer()
+                    IconButton(system: vm.overlayEnabled ? "eye" : "eye.slash", active: vm.overlayEnabled) {
+                        vm.overlayEnabled.toggle()
+                    }.accessibilityIdentifier("lens-blur-refine-eye")
                     Button("Done") { vm.lensBlurRefining = false }
                         .accessibilityIdentifier("lens-blur-refine-done")
                 }.frame(minHeight: 44).padding(.horizontal, 14)
