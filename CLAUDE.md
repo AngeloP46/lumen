@@ -35,32 +35,38 @@ Public unrestricted SideStore distribution remains unchanged for the owner's upd
 feed; distribution before selling Pro is still a business decision. GitHub account
 two-factor authentication was not verifiable through the current API token.
 
-## Status — Lens Blur revisions and photo information, 14 October
-Shared revisions implemented on lens-blur-revisions (PR #2), mirrored into sandbox;
-final engine/metadata run 38631365097 passed 79 checks; final UI/sandbox checks pending.
-Personal IPA build 38631360377 passed at frozen source e9d997b (app code d383f7e);
-Sony RAW comparison/export inspected. Required PR-associated build is being refreshed.
-Subject/selected Vision instance protection, whole-subject depth
-percentiles, first explicit activation amount 8 with saved zero preserved, progressive
-far blur, photo-calibrated distance travel, full Near/Far feather controls, inline
-linked mask refinement and transient red slider preview with saved off preference.
-Top photo-information button reads standard EXIF/TIFF camera/lens/date/dimensions/
-size/shutter/aperture/ISO across brands; missing metadata is shown honestly.
-Personal SideStore remains fully unlocked; sandbox Store code stays separate.
+## Status — shared revisions complete, 14 October
+Lens Blur and photo information merged through protected PR #2 as 34b72c3.
+Shared source is in sandbox too; Store code remains separate. Personal main/SideStore
+is fully unlocked. Current phone feed is security-only 0.1.200. The new shared editor
+release has NOT been published: automatic approval review required Angelo's explicit
+instruction for the external SideStore deployment. Do not claim it is on the phone.
 
-Things to verify: focused engine/metadata and UI checks, sandbox OFF/ON compilation,
-including endpoint graphic/preview-off checks, then protected merge/publication.
-Phone subject boundaries and RAW/HDR speed remain
-owner checks. Old saved Lens Blur objects preserve zero rather than guessing intent.
+Implemented: whole detected/selected-instance subject protection and subject depth
+percentiles; first-use amount 8 with saved zero/off preserved; progressive far blur;
+photo-calibrated distance; full Near/Far feather travel and accurate depth graphic;
+inline linked-mask refinement with brushes/Add/Subtract; transient red slider preview
+with saved off preference. Top info button reads standard original EXIF/TIFF camera,
+lens, date, dimensions, size, shutter/aperture/ISO across camera brands.
 
-Troubleshooting: subject detection failure offers distance/range/brush fallback.
-Auto Level reads image horizons/edges (Vision then edge voting), not camera roll
-metadata. Some cameras store proprietary tilt; no universal still-photo tag is used.
-Photo information reads original metadata and never edits dates or source files.
-Read PRODUCT-BRIEF.md for the camera-independent iOS/RAW audience and pricing direction.
-Simulator Lens touch tests use marked synthetic depth/subject fixtures; real subject
-quality remains a phone check, not an inference from UI test success.
+Validation (final app source d383f7e; frozen test revision e9d997b; later commits notes):
+engine/metadata 38631365097 passed 79 checks including nine camera-make fixtures and
+real Sony RAW preview/JPEG export; focused UI 38631369309 passed one combined test,
+zero failures (87 seconds), including default 8, inline refinement, preview on/off,
+saved-zero reopen, info sheet and both Near/Far endpoints. Screenshots/renders inspected.
+Personal IPA 38631360377 and protected PR/readiness 38632032581 passed. Sandbox
+38631373218 passed policy and APP_STORE OFF/ON compilation; compile-only skips shots.
 
+Things to verify: once Angelo authorizes publication, dispatch build.yml on current
+main and verify feed version/build/URL/size/hash. Then check representative camera
+RAW/ProRAW subject edges, brush feel, HDR/export appearance and performance on phone.
+
+Troubleshooting: missing subjects offer distance/range/brush fallback. Old saved
+Lens Blur objects preserve zero rather than guessing previous intent. Simulator touch
+checks use marked synthetic depth/subject fixtures and do not establish AI quality.
+Auto Level uses Vision horizon detection then straight-edge voting, not camera roll
+metadata. Photo info uses available standard metadata; missing fields stay missing.
+Read PRODUCT-BRIEF.md for the iOS/RAW/all-brands and cheaper-Lightroom direction.
 
 Read this first. It records what exists, how it's built and shipped, and what to do next.
 
@@ -197,7 +203,7 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 
 ## Troubleshooting (14 October additions)
 - Lens Blur depth failure: controls show that depth could not be estimated, and export refuses to silently omit requested blur. Build must include the existing depth model. UI tests use a clearly marked demo-only synthetic depth fixture for touch checks; this does not establish AI quality.
-- Lens Blur boundaries can show estimated-depth errors or background colour bleed: use Refine background, then Masks Add/Subtract brush. Camera RAW is the primary intended use; Portrait depth extraction has not been added in this change.
+- Lens Blur boundaries can show estimated-depth errors or background colour bleed: use inline Refine background with Add/Subtract brush. Camera RAW is the primary intended use; Portrait depth extraction has not been added in this change.
 - Undo from before the new version cannot be reconstructed; future undo/redo is persisted per photo. The global Edits switches still preserve values independently.
 
 ## Status (2026-10-12 01:00: main = latest SideStore build, released after full UI suite + engine test passed: Landscape parts off the sky, AI busy notice, sky-aware depth)
@@ -236,7 +242,7 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 
 ## Things to verify on the phone
 - Updated SideStore build: max pinch release at off-centre points, closed-panel centering, clipping margins, Near/Far slider travel, undo/redo after reopen.
-- Lens Blur on Sony camera RAW: focus picking, subject edges around cars/people, zoomed preview, HDR and exported appearance. Automated tests do not confirm real-phone appearance/performance.
+- Lens Blur on representative camera RAW/ProRAW (including Sony): focus picking, subject edges around cars/people, zoomed preview, HDR and exported appearance. Automated tests do not confirm real-phone appearance/performance.
 - HDR on the real screen: does the badge show `HDR +x.x`, do bright skies/lights glow with detail, does the HDR export look right in Photos.
 - Two-finger pan and pinch, zooming out in Masks, slider scrolling from anywhere: how they feel under a real finger.
 - Library: Select, paste edits onto many, batch export speed with 24 MP ARWs, date sections (date taken comes from EXIF).
