@@ -1,54 +1,44 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
-## Shared editor improvements — 14 October, validation passed
+## Shared editor improvements — 14 October, published to SideStore
 
-Final shared source: main feef0e4, sandbox d09da21. All required validation passed:
-final IPA 38602637294, combined focused UI 38602633151, depth sliders 38599011360,
-full engine 38600705716 (969 checks), focused Lens Blur/Sony ARW preview+JPEG export
-38602642007 (32 checks). Screenshots checked for toolbar readability/panel overlap.
-Sandbox policy and both OFF/ON compile steps passed in 38600345922; its optional
-duplicate screenshot capture was cancelled, so do not describe the whole run as green.
-Older failed cases were fixed (no-op pixels, depth-cache slider interruption, refinement
-endpoints/missing-depth export, preserving each photo's refinement when pasting).
-Ready for personal main publication, without any Store changes; check SideStore feed.
-Both clones carry the final shared source. Real-phone quality/speed still needs feedback.
+**SideStore 0.1.197 is published and its source.json verified** (build 197, run
+38604801375, app build commit cbc8405; app source feef0e4). The same shared code is
+in sandbox d09da21 plus notes-only updates. SideStore remains paywall, subscription
+and watermark free. Store code/project/build flags were not merged into personal main.
 
-Angelo authorized improvements for both the personal SideStore app and sandbox.
-Shared commit 9ac404a (sandbox cherry-pick 6a05836) preserves the last pinch anchor
-when elastic maximum zoom settles, centres the photo when the editing panel closes,
-keeps clipping warnings inside nontransparent photo pixels, and removes the extra
-depth-feather slider cap. Near/far sliders soften the selected depth band; the bar
-handles choose that band. Depth endpoints with no outside range remain inactive.
+Angelo authorized these shared improvements and Lens Blur explicitly:
+- Maximum elastic pinch release keeps the last touched photo point in place.
+- Closing the editing panel centres the image; clipping ignores transparent margins.
+- Depth feather sliders can reach their full range; bar handles select the actual band.
+- Per-photo undo/redo is stored with edits atomically, capped at 100. Old discarded
+  history cannot be reconstructed. Redo survives reopening; new edits clear it.
+- Standalone Lens Blur beside Detail, readable scrolling toolbar, tap focus,
+  amount/distance/range and optional background refinement with existing mask brushes.
+  Camera RAW depth estimation is the primary path; Portrait depth extraction was not added.
+- Preset/paste keep each photo's blur and refinement. Blur applies before geometry,
+  scales with source size and applies to HDR gain as well. Missing depth cannot silently
+  omit active depth blur on export; no-effect states preserve pixels exactly.
 
-Undo/redo stacks are saved per photo in the existing atomic settings JSON under
-_undoHistory, capped at 100 steps and checked against the saved current settings.
-Old app versions ignore the additional key. Historical steps discarded by previous
-versions cannot be recovered. New edits clear redo; reset/preset/paste/Auto start
-separate steps. Library batch paste also records the previous settings.
+Validation passed: final IPA 38602637294, focused combined UI 38602633151,
+depth sliders 38599011360, full engine 38600705716 (969 checks), focused Lens Blur
+and real Sony ARW preview/JPEG export 38602642007 (32 checks). Final screenshots
+inspected for readable toolbar and panels above it. Source frozen at feef0e4 before
+these final runs; subsequent commits are notes. Original shared fixes also passed
+UI/build/engine before the feature was added.
 
-Validation pending: focused October editor UI test 38597024287, IPA build 38597029271,
-engine/clipping regression 38597032919, sandbox flag OFF/ON check 38597191057.
-No new SideStore publication yet. Depth slider regression passed in 38599011360.
-Do not claim success before those runs finish.
+Sandbox policy and OFF/ON simulator builds passed their steps in 38600345922;
+optional duplicate screenshot capture was cancelled. Do not call that whole run green.
+Sandbox-only ProGate requires Pro for active Lens Blur, including preset looks;
+zero/disabled blur remains free. Personal build has no gate. Purchases still need real
+StoreKit testing separately from compilation, as noted in the earlier App Store review.
 
-Lens Blur is now implemented in shared commit 259d906 (sandbox 7cb505e):
-standalone tool beside Detail, tap-to-focus, amount/focus range/distance, optional
-background refinement via the existing Masks editor. Scrolling toolbar keeps 66pt
-targets and readable labels. Applies before crop/rotation, scales radius across
-preview/export and blurs HDR gain too. Camera RAW depth estimation is the primary
-path; no Portrait-depth replacement was introduced. Older sidecars default blur off.
-Preset/paste keep each photo's focus. Estimated edges can need brush corrections;
-subject colour bleed at background boundaries remains a quality limitation.
+Phone follow-up: estimated-depth boundaries/background colour bleed may need Refine
+background. Verify Sony ARW focus edges, speed, HDR and exported look on the phone;
+the simulator touch fixture uses synthetic depth and does not prove model quality.
+Owner updates normally: LocalDevVPN on, SideStore My Apps pull to refresh, Update Lumen.
 
-User interaction fixture uses synthetic depth only in demo mode, not proof of AI
-quality. Engine has synthetic foreground/background, scaling/crop, zero amount,
-missing depth and backward-compatible sidecar checks. Final runs: build 38599731669
-(passed), engine 38599735465 and combined focused UI 38599740081 (pending).
-Depth slider check passed in 38599011360. Prior shared-fix UI/engine/build all passed.
-Sandbox-only ProGate requires Pro for active Lens Blur, including free preset looks;
-disabled/zero blur remain free. Tests added. Personal Sources/Store untouched. Do not accidentally merge App Store paywall work to main.
-
-## Latest update — Codex fixes, 14 Oct 2026
+## Earlier App Store export review — Codex fixes, 14 Oct 2026
 
 Angelo authorized addressing the review findings. Local fixes supersede the older issue lists
 below: batch and single export now both enforce Pro at the UI and underlying export entry
@@ -249,7 +239,10 @@ correct purchases. 05/06 simulator mask/heal screenshots remain internal stand-i
 marketing footage on the actual phone. Paywall shot 10 shows unloaded products, so keep it internal until real or StoreKit-test products are configured.
 
 Preserve the personal SideStore build and frozen project.yml/build.yml/model-fetch scripts.
-Do not merge or push main without Angelo's instruction. No new app features requested.
+Do not merge App Store paywall/watermark work into main. Angelo subsequently explicitly
+approved shared editor fixes, standalone Lens Blur and a readable scrolling toolbar;
+these are now in both builds and published in SideStore 0.1.197. Read the current
+shared-improvements section above before continuing.
 The site is already polished and TikTok content is underway; content planning follows this
 fix/review work. Website prices are proposed demand-testing options, not final app prices.
 
