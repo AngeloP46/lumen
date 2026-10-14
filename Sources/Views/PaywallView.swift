@@ -105,7 +105,7 @@ struct PaywallView: View {
         let billing = periodText(subscription.subscriptionPeriod)
         if product.id == LumenStore.monthlyID, store.monthlyTrialEligible,
            let offer = subscription.introductoryOffer, offer.paymentMode == .freeTrial {
-            return "\(periodText(offer.period, count: offer.numberOfPeriods)) free, then \(product.displayPrice) every \(billing). Renews automatically."
+            return "\(periodText(offer.period, count: offer.periodCount)) free, then \(product.displayPrice) every \(billing). Renews automatically."
         }
         return "\(product.displayPrice) every \(billing). Renews automatically."
     }

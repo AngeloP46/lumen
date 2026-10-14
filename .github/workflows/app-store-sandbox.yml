@@ -52,13 +52,13 @@ jobs:
 
       - name: Build for simulator (APP_STORE flag ON, sandbox bundle ID)
         run: |
+          code=0
           xcodebuild \
             -project Lumen.xcodeproj -scheme Lumen -configuration Release -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO ARCHS=arm64 \
             SWIFT_ACTIVE_COMPILATION_CONDITIONS=APP_STORE \
-            PRODUCT_BUNDLE_IDENTIFIER=com.sandbox.lumaforge > build.log 2>&1
-          code=$?
+            PRODUCT_BUNDLE_IDENTIFIER=com.sandbox.lumaforge > build.log 2>&1 || code=$?
           # Show the actual compiler errors (and a tail of the log for context) so failures
           # are fixable from the run log without downloading anything.
           grep -E "error:|error while|fatal error" build.log | head -40
