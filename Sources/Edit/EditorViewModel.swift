@@ -161,6 +161,12 @@ final class EditorViewModel: ObservableObject {
                 let field = DepthField(width: 64, height: 64, values: values, histogram: Array(repeating: 1, count: 64))
                 src.storeDepth(field)
                 src.storeMask(EditSession.aiDepth, EditSession.depthImage(field, extent: src.extent))
+                // Touch/layout checks use synthetic subject coverage too; they do not measure Vision quality.
+                let e = src.extent
+                let subject = EditSession.constant(1, CGRect(x: e.minX + e.width * 0.2, y: e.minY,
+                                                            width: e.width * 0.2, height: e.height))
+                    .composited(over: EditSession.constant(0, e))
+                src.storeMask(EditSession.aiSubject, subject)
             }
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -296,10 +302,13 @@ final class EditorViewModel: ObservableObject {
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure), settings: s, applyCrop: applyCrop)
                 .cropped(to: shown)
         }
-        if lensBlurEditing && lensSliderActive && lensPreviewEnabled && !showOriginal,
-           let selection = session.lensBlurMask(s, source: active), let kernel = LumenKernels.shared?.overlay {
-            let shown = session.geometry(selection, s, applyCrop: applyCrop)
-            img = kernel.apply(extent: img.extent, arguments: [img, shown, CIVector(x: 1, y: 0.1, z: 0.12, w: 0.55)]) ?? img
+        if lensBlurEditing && lensSliderActive && lensPreviewEnabled && !showOriginal {
+            var preview = s
+            preview.lensBlur.amount = max(preview.lensBlur.amount, 1)
+            if let selection = session.lensBlurMask(preview, source: active), let kernel = LumenKernels.shared?.overlay {
+                let shown = session.geometry(selection, s, applyCrop: applyCrop)
+                img = kernel.apply(extent: img.extent, arguments: [img, shown, CIVector(x: 1, y: 0.1, z: 0.12, w: 0.55)]) ?? img
+            }
         }
         // Remove people: red = will be removed, a faint white = stays
         if let people = peopleFound, !showOriginal {
@@ -453,7 +462,12 @@ final class EditorViewModel: ObservableObject {
 
     @Published var lensBlurPicking = false
     @Published var lensBlurRefining = false { didSet { maskEditing = lensBlurRefining; requestRender() } }
-    @Published var lensSliderActive = false { didSet { requestRender() } }
+    @Published var lensSliderActive = false {
+        didSet {
+            if DemoMode.isOn { DemoMode.log("lens preview \(lensSliderActive && lensPreviewEnabled)") }
+            requestRender()
+        }
+    }
     @Published var lensPreviewEnabled = UserDefaults.standard.object(forKey: "lensPreviewEnabled") as? Bool ?? true {
         didSet { UserDefaults.standard.set(lensPreviewEnabled, forKey: "lensPreviewEnabled"); requestRender() }
     }
@@ -492,6 +506,9 @@ final class EditorViewModel: ObservableObject {
         var s = settings
         s.lensBlur.focusDistance = Double(distance)
         s.lensBlur.subjectPoint = p
+        if DemoMode.isOn, DemoMode.value("-lumenDemoLensDepth") != nil, let source {
+            source.storeMask(EditSession.subjectKey(p), source.cachedMask(EditSession.aiSubject))
+        }
         // A focus change starts a fresh automatic range; existing brush refinements remain available in Masks.
         s.lensBlur.maskID = nil
         settings = s
