@@ -266,6 +266,7 @@ final class LibraryStore: ObservableObject {
         for item in list {
             var s = edits
             let own = settings(for: item)
+            s.lensBlur = own.lensBlur  // focus belongs to this photo
             s.heals = own.heals   // heals are made for one photo's pixels: always keep each photo's own
             if keepOwn {
                 s.masks = own.masks

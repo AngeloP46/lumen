@@ -37,6 +37,9 @@ extension EditSession {
             gainImg = gk.apply(extent: ext, arguments: args + [gh])
         }
 
+        img = applyLensBlur(img, settings: s, source: source)
+        if let gi = gainImg { gainImg = applyLensBlur(gi, settings: s, source: source) }
+
         if geometry {
             img = self.geometry(img, s, applyCrop: applyCrop)
             if let gi = gainImg { gainImg = self.geometry(gi, s, applyCrop: applyCrop) }
@@ -64,6 +67,46 @@ extension EditSession {
             img = ag.apply(extent: img.extent, arguments: [img, gi, v(min(max(hdrWeight, 0), 1), 0, 0, 0)]) ?? img
         }
         return img
+    }
+
+    // MARK: Lens Blur
+
+    /// Uses only cached analysis; prepareAutoMasks performs the model work off the UI thread.
+    func lensBlurMask(_ settings: EditSettings, source: ImageSource) -> CIImage? {
+        let s = settings.effective
+        let blur = s.lensBlur
+        guard blur.amount > 0 else { return nil }
+        if let id = blur.maskID, let mask = s.masks.first(where: { $0.id == id }) {
+            return maskImage(mask, source: source, gain: exp2(s.exposure))
+        }
+        guard let depth = source.cachedMask(Self.aiDepth), let kernel = LumenKernels.shared?.rangeMask else { return nil }
+        let width = min(max(blur.focusWidth, 0.02), 0.5)
+        let farEdge = min(max(blur.focusDistance, 0), 1) + width
+        // At the farthest plane there is no background left to blur. Avoid the range kernel's endpoint shortcut.
+        guard farEdge < 0.999 else { return Self.constant(0, source.extent) }
+        return kernel.apply(extent: source.extent,
+                            arguments: [depth, CIVector(x: farEdge, y: 1, z: width, w: 0)])
+    }
+
+    func applyLensBlur(_ input: CIImage, settings: EditSettings, source: ImageSource) -> CIImage {
+        guard let mask = lensBlurMask(settings, source: source) else { return input }
+        let radius = min(max(settings.effective.lensBlur.amount, 0), 100) / 100 * Double(source.longEdge) * 0.018
+        guard radius > 0 else { return input }
+        return Self.maskedLensBlur(input, mask: mask, radius: radius)
+    }
+
+    /// Radius scales with source pixels, so preview, detail and export show the same apparent blur.
+    /// Clamp the photo at its edge to avoid dark borders; keep the sharp foreground from the original.
+    static func maskedLensBlur(_ input: CIImage, mask: CIImage, radius: Double) -> CIImage {
+        let extent = input.extent
+        let filter = CIFilter(name: "CIMaskedVariableBlur")
+        filter?.setValue(input.clampedToExtent(), forKey: kCIInputImageKey)
+        filter?.setValue(mask.cropped(to: extent).clampedToExtent(), forKey: "inputMask")
+        filter?.setValue(radius, forKey: kCIInputRadiusKey)
+        guard let blurred = filter?.outputImage?.cropped(to: extent) else { return input }
+        return blurred.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: input, "inputMaskImage": mask.cropped(to: extent)
+        ]).cropped(to: extent)
     }
 
     // MARK: Geometry
@@ -124,6 +167,7 @@ extension EditSession {
     func renderCGImage(_ s: EditSettings, maxEdge: CGFloat) -> CGImage? {
         heals = s.effective.heals
         guard let src = makeSource(maxEdge: maxEdge, materialize: false) else { return nil }
+        if s.effective.lensBlur.amount > 0 { prepareAutoMasks(s, source: src) }
         return renderCGImage(s, source: src)
     }
 
@@ -139,6 +183,8 @@ extension EditSession {
         heals = s.effective.heals
         guard let src = makeSource(maxEdge: nil, materialize: false) else { return nil }
         prepareAutoMasks(s, source: src)
+        // Never quietly export an unblurred photo when a requested focus map could not be prepared.
+        if s.effective.lensBlur.amount > 0 && lensBlurMask(s, source: src) == nil { return nil }
         var img = develop(s, source: src, geometry: true)
         let q: [CIImageRepresentationOption: Any] = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
         // HDR: the SDR rendition is the base image; the gain-map options need iOS 18 / macOS 15.

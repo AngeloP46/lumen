@@ -3,7 +3,7 @@ import SwiftUI
 private enum Tool: String, CaseIterable, Identifiable {
     // tool bar order, left to right; Presets is last (least used)
     case crop = "Crop", light = "Light", color = "Color", grade = "Grade"
-    case curve = "Curve", detail = "Detail", masks = "Masks", heal = "Heal", presets = "Presets"
+    case curve = "Curve", detail = "Detail", lensBlur = "Lens Blur", masks = "Masks", heal = "Heal", presets = "Presets"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -14,6 +14,7 @@ private enum Tool: String, CaseIterable, Identifiable {
         case .grade: return "circle.hexagongrid"
         case .curve: return "point.topleft.down.curvedto.point.bottomright.up"
         case .detail: return "triangle"
+        case .lensBlur: return "camera.aperture"
         case .masks: return "circle.dashed.inset.filled"
         case .heal: return "bandage"
         }
@@ -145,11 +146,14 @@ struct EditorView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             vm.start(store: store)
+            vm.setLensBlurEditing(tool == .lensBlur)
             if DemoMode.isOn { applyDemo() }
         }
         .onDisappear { vm.flushSave(); store.refreshThumbnail(item) }
         .onChange(of: tool) { _, new in
             vm.wbPicking = false
+            vm.lensBlurPicking = false
+            vm.setLensBlurEditing(new == .lensBlur)
             wbMark = nil
             vm.maskEditing = (new == .masks)
             vm.cropEditing = (new == .crop)
@@ -217,6 +221,7 @@ struct EditorView: View {
         case .presets: return ToolSpec(compact: vm.presetStrengthAvailable ? 152 : 112, roomy: vm.presetStrengthAvailable ? 152 : 112)
         case .crop: return ToolSpec(compact: 200, roomy: 240)
         case .heal: return ToolSpec(compact: 150, roomy: 150)
+        case .lensBlur: return ToolSpec(compact: 230, roomy: 270)
         case .grade: return ToolSpec(compact: 250, roomy: 262)
         case .curve: return ToolSpec(compact: 280, roomy: 340)   // the curve fills its panel: bigger is easier
         case .light: return ToolSpec(compact: 100, roomy: 0, rows: 6, header: 44)
@@ -539,6 +544,7 @@ struct EditorView: View {
                             .opacity(vm.showOriginal ? 0 : 1)
                     }
                     if tool == .color && vm.wbPicking && !vm.colorMix { wbLayer(xform) }
+                    if tool == .lensBlur && vm.lensBlurPicking { lensFocusLayer(xform) }
                     if vm.splitCompare && !vm.showOriginal && tool != .crop { splitLayer(xform) }
                 }
                 if vm.isLoading || vm.isExporting { ProgressView().tint(.white) }
@@ -702,6 +708,17 @@ struct EditorView: View {
         }
     }
 
+    private func lensFocusLayer(_ xform: ViewXform) -> some View {
+        let sg = SourceGeometry(source: vm.sourceSize, settings: vm.settings)
+        return Color.clear.contentShape(Rectangle())
+            .gesture(SpatialTapGesture().onEnded { v in
+                guard xform.rect.contains(v.location) else { return }
+                vm.pickLensFocus(at: sg.toSource(xform.unclamped(v.location, limit: -10...10)))
+            })
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier("lens-focus-layer")
+    }
+
     // MARK: Floating top buttons
 
     private var floatingBar: some View {
@@ -786,9 +803,9 @@ struct EditorView: View {
 
     // MARK: Gestures
 
-    private var canNavigate: Bool { tool != .masks && tool != .crop && tool != .heal }
+    private var canNavigate: Bool { tool != .masks && tool != .crop && tool != .heal && !vm.lensBlurPicking }
     // in Heal a resting finger is the start of a stroke, not a request to see the original
-    private var canCompare: Bool { tool != .crop && tool != .heal && !(tool == .masks && vm.maskTab == .shape && vm.selectedMask != nil) }
+    private var canCompare: Bool { tool != .crop && tool != .heal && !vm.lensBlurPicking && !(tool == .masks && vm.maskTab == .shape && vm.selectedMask != nil) }
     /// One finger pans a zoomed photo wherever it is not busy with something else (mask handles, brush, crop frame).
     private var canPan: Bool { tool != .crop }
     /// In Masks the photo can be made smaller than the screen, so a gradient or radial can reach far past its edges.
@@ -1005,8 +1022,10 @@ struct EditorView: View {
         .accessibilityLabel("Show tools")
     }
 
-    /// Eight tools, all visible at once. `compact` (landscape side column): icons only, a slimmer bar.
+    /// Fixed readable targets in a scrolling row; a partial next button indicates more tools. `compact` (landscape side column): icons only, a slimmer bar.
     private func toolBar(compact: Bool) -> some View {
+        ScrollViewReader { proxy in
+        ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 0) {
             ForEach(Tool.allCases) { t in
                 Button { withAnimation(.easeOut(duration: 0.15)) { tool = (tool == t) ? nil : t } } label: {
@@ -1019,20 +1038,27 @@ struct EditorView: View {
                             .overlay(alignment: .topTrailing) {
                                 if off { Image(systemName: "eye.slash").font(.system(size: 9, weight: .bold)).offset(x: 8, y: -4) }
                             }
-                        if !compact { Text(t.rawValue).font(.system(size: 9.5, weight: .medium)) }
+                        if !compact { Text(t.rawValue).font(.system(size: 11, weight: .medium)).lineLimit(1) }
                         // the same "changed" dot as on the sliders: this tool has edits
                         Circle().fill(edited && !off ? Theme.accent : Color.clear).frame(width: 4, height: 4)
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(width: compact ? 48 : 66)
                     .frame(height: compact ? landscapeBarHeight : toolbarHeight)
                     .foregroundStyle(tool == t ? Theme.accent : Color(white: 0.6))
                 }
+                .id(t)
                 .accessibilityIdentifier("tool-\(t.rawValue)")
                 .accessibilityLabel(t.rawValue)
                 .accessibilityValue(t.section.map { vm.settings.isOn($0) ? "on" : "off" } ?? "")
             }
         }
         .padding(.horizontal, 2)
+        }
+        .accessibilityIdentifier("editor-tools")
+        .onChange(of: tool, initial: true) { _, selected in
+            if let selected { proxy.scrollTo(selected, anchor: .center) }
+        }
+        }
     }
 
     @ViewBuilder
@@ -1045,6 +1071,9 @@ struct EditorView: View {
         case .grade: GradePanel(vm: vm)
         case .curve: CurvePanel(vm: vm)
         case .detail: DetailPanel(vm: vm)
+        case .lensBlur: LensBlurPanel(vm: vm) {
+            vm.refineLensBlur(); tool = .masks
+        }
         case .masks: MaskPanel(vm: vm)
         case .heal: HealPanel(vm: vm)
         }

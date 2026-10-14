@@ -155,6 +155,13 @@ final class EditorViewModel: ObservableObject {
             let s = EditSession(url: url, expandHDR: wantsHDR)
             s?.heals = heals
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
+            // Simulator interaction fixture only; real builds always use estimated camera-photo depth.
+            if DemoMode.isOn, DemoMode.value("-lumenDemoLensDepth") != nil, let src {
+                let values = (0..<4096).map { Float($0 % 64) / 63 }
+                let field = DepthField(width: 64, height: 64, values: values, histogram: Array(repeating: 1, count: 64))
+                src.storeDepth(field)
+                src.storeMask(EditSession.aiDepth, EditSession.depthImage(field, extent: src.extent))
+            }
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if DemoMode.isOn {
@@ -239,7 +246,7 @@ final class EditorViewModel: ObservableObject {
         }
         scheduleSave()
         requestRender()
-        if settings.masks != old.masks { prepareAutoMasksIfNeeded() }
+        if settings.masks != old.masks || settings.lensBlur != old.lensBlur { prepareAutoMasksIfNeeded() }
         // HDR changes how the file is decoded; heals are painted in while decoding
         if settings.hdr != old.hdr || settings.effective.heals != old.effective.heals { reloadSource() }
     }
@@ -368,6 +375,7 @@ final class EditorViewModel: ObservableObject {
     private func syncDetailMasks() {
         guard let source, let detail = detailSource else { return }
         let (masks, tried) = source.snapshotMasks()
+        detail.storeDepth(source.depthField)
         let sx = detail.size.width / source.size.width, sy = detail.size.height / source.size.height
         for key in tried { detail.storeMask(key, masks[key]?.transformed(by: CGAffineTransform(scaleX: sx, y: sy))) }
     }
@@ -438,16 +446,58 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    @Published var lensBlurPicking = false
+    private var lensBlurEditing = false
+
+    func setLensBlurEditing(_ editing: Bool) {
+        lensBlurEditing = editing
+        if editing { prepareAutoMasksIfNeeded() }
+    }
+
+    func pickLensFocus(at p: Pt) {
+        guard p.x >= 0, p.x <= 1, p.y >= 0, p.y <= 1,
+              let distance = source?.depthField?.value(atNormalized: p.x, p.y) else { return }
+        lastChange = .distantPast
+        var s = settings
+        s.lensBlur.focusDistance = Double(distance)
+        // A focus change starts a fresh automatic range; existing brush refinements remain available in Masks.
+        s.lensBlur.maskID = nil
+        settings = s
+        lensBlurPicking = false
+        if DemoMode.isOn { DemoMode.log("lens focus picked") }
+    }
+
+    func refineLensBlur() {
+        if let id = settings.lensBlur.maskID, settings.masks.contains(where: { $0.id == id }) {
+            selectMask(id); maskTab = .shape; return
+        }
+        var m = Mask.make(.depth)
+        m.name = "Lens Blur background"
+        m.components[0].lumLow = min(settings.lensBlur.focusDistance + settings.lensBlur.focusWidth, 1)
+        m.components[0].lumHigh = 1
+        m.components[0].lumLowFeather = settings.lensBlur.focusWidth
+        m.components[0].lumHighFeather = 0
+        lastChange = .distantPast
+        var s = settings
+        s.masks.append(m)
+        s.lensBlur.maskID = m.id
+        settings = s
+        selectMask(m.id); maskTab = .shape
+    }
+
     private func prepareAutoMasksIfNeeded() {
         guard let session, let source, !autoMaskBusy else { return }
-        let needs = settings.masks.contains { m in m.components.contains { $0.kind.needsAnalysis } }
+        let needs = lensBlurEditing || settings.lensBlur.amount > 0 || settings.masks.contains { m in m.components.contains { $0.kind.needsAnalysis } }
         guard needs else { return }
-        let snapshot = settings
+        let askedBlur = settings.lensBlur
+        var snapshot = settings
+        if lensBlurEditing { snapshot.lensBlur.amount = max(snapshot.lensBlur.amount, 1) }
+        let analysisSettings = snapshot
         autoMaskBusy = true
         let slow = DemoMode.value("-lumenDemoSlowAI") != nil   // CI: time to see the busy notice
         workQueue.async {
             if slow { Thread.sleep(forTimeInterval: 4) }
-            session.prepareAutoMasks(snapshot, source: source)
+            session.prepareAutoMasks(analysisSettings, source: source)
             let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople, EditSession.aiDepth, EditSession.aiScene].filter { source.hasTried($0) && source.cachedMask($0) == nil })
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -456,7 +506,7 @@ final class EditorViewModel: ObservableObject {
                 self.syncDetailMasks()
                 self.requestRender()
                 // masks may have changed while we were busy
-                if self.settings.masks != snapshot.masks { self.prepareAutoMasksIfNeeded() }
+                if self.settings.masks != analysisSettings.masks || self.settings.lensBlur != askedBlur { self.prepareAutoMasksIfNeeded() }
             }
         }
     }
@@ -547,6 +597,7 @@ final class EditorViewModel: ObservableObject {
         var s = edits
         s.masks = settings.masks
         s.heals = settings.heals
+        s.lensBlur = settings.lensBlur
         s.take(.crop, from: settings)
         s.hdr = settings.hdr; s.hdrStops = settings.hdrStops
         s.disabled = settings.disabled

@@ -159,6 +159,38 @@ final class LumenUITests: XCTestCase {
         shot("depth-edges-full-travel")
     }
 
+    func testLensBlurToolbarAndEditorFixes() {
+        testOctoberEditorFixes()
+        app.terminate()
+        launch(open: 0, tool: "Lens Blur", extra: ["-lumenDemoLensDepth", "1"])
+        let focus = el("lens-blur-focus")
+        XCTAssertTrue(focus.waitForExistence(timeout: 30), "depth fixture must finish preparing")
+        XCTAssertTrue(el("tool-Lens Blur").isHittable)
+        XCTAssertGreaterThanOrEqual(el("tool-Lens Blur").frame.width, 60, "tools must keep readable widths")
+        focus.tap()
+        XCTAssertTrue(el("lens-focus-layer").waitForExistence(timeout: 5))
+        el("lens-focus-layer").tap(); sleep(1)
+        XCTAssertTrue(events().contains { $0.contains("lens focus picked") })
+        XCTAssertFalse(el("lens-focus-layer").exists)
+        let amount = el("slider-Blur amount")
+        amount.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: amount.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(2)
+        XCTAssertGreaterThan(Double(valueOf("reset-Blur amount")) ?? 0, 10)
+        shot("lens-blur-panel")
+        // Make room for the last row rather than letting the scroll gesture land on a range control.
+        let handle = el("panel-handle")
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 0, dy: -220)))
+        el("lens-blur-refine").tap(); sleep(2)
+        XCTAssertTrue(el("lum-bar").exists, "refine opens the background's depth range")
+        shot("lens-blur-refinement")
+        el("editor-tools").swipeLeft(); sleep(1)
+        XCTAssertTrue(el("tool-Presets").isHittable, "scrolling reveals the last tool")
+        el("editor-tools").swipeRight(); el("editor-tools").swipeRight(); sleep(1)
+        XCTAssertTrue(el("tool-Crop").isHittable, "scrolling back reveals the first tool")
+    }
+
     // MARK: sliders
 
     func testDoubleTapResetsSlider() {

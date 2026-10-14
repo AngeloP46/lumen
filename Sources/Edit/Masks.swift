@@ -273,7 +273,8 @@ extension EditSession {
     /// Computes any automatic masks `s` needs and caches them on `source`. Call off the main thread.
     @discardableResult
     func prepareAutoMasks(_ s: EditSettings, source: ImageSource) -> Bool {
-        var needSubject = false, needSky = false, needPeople = false, needDepth = false
+        var needSubject = false, needSky = false, needPeople = false
+        var needDepth = s.effective.lensBlur.amount > 0
         var sceneSets: Set<[String]> = []
         for m in s.masks {
             for c in m.components {
