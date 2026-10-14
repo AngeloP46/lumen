@@ -487,7 +487,7 @@ final class EditorViewModel: ObservableObject {
 
     private func prepareAutoMasksIfNeeded() {
         guard let session, let source, !autoMaskBusy else { return }
-        let needs = lensBlurEditing || settings.lensBlur.amount > 0 || settings.masks.contains { m in m.components.contains { $0.kind.needsAnalysis } }
+        let needs = ((lensBlurEditing || settings.lensBlur.amount > 0) && !source.hasTried(EditSession.aiDepth)) || settings.masks.contains { m in m.components.contains { $0.kind.needsAnalysis } }
         guard needs else { return }
         let askedBlur = settings.lensBlur
         var snapshot = settings
