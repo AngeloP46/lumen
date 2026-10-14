@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "models": {
+    "depth": {
+      "repository": "apple/coreml-depth-anything-v2-small",
+      "revision": "cfef6f6f2a70783dedc0bfae40cecbc2052285d3",
+      "name": "DepthAnythingV2SmallF16",
+      "files": {
+        "Manifest.json": {
+          "size": 617,
+          "sha256": "2883ae290c48fe916dc5ececac03a7d847fa277165a49ef5652fa1d2b9cb55f7"
+        },
+        "Data/com.apple.CoreML/model.mlmodel": {
+          "size": 399433,
+          "sha256": "44ac97a3efcfd52113183fb2862ff59cd0368e9ec2e30a90a54980dd11407042"
+        },
+        "Data/com.apple.CoreML/weights/weight.bin": {
+          "size": 49419072,
+          "sha256": "fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed"
+        }
+      }
+    },
+    "seg": {
+      "repository": "apple/coreml-detr-semantic-segmentation",
+      "revision": "7c771f8867a479d1441ac5fb0a8de31feea76bb6",
+      "name": "DETRResnet50SemanticSegmentationF16",
+      "files": {
+        "Manifest.json": {
+          "size": 617,
+          "sha256": "0749549c6b11139e11a40aaab82add4843a9977010337e596cce3dbb35c98512"
+        },
+        "Data/com.apple.CoreML/model.mlmodel": {
+          "size": 309817,
+          "sha256": "61e05678150bcae26deac589b998dffe13c2977a9ba6f802938a9f3a60bfdcce"
+        },
+        "Data/com.apple.CoreML/weights/weight.bin": {
+          "size": 85158176,
+          "sha256": "2f4de3dfed1aeced35ad7096d7c8721fcfb59571110a9e9138d73a7e56480408"
+        }
+      }
+    },
+    "heal": {
+      "repository": "mlboydaisuke/LaMa-CoreML",
+      "revision": "5ed76e3799ab4cad31381750d29880c267477e18",
+      "name": "LaMa",
+      "files": {
+        "Manifest.json": {
+          "size": 617,
+          "sha256": "c814fff3cedf827c044094545ef80b0280b6cb8dd0e5c0bcf69fd31921191e58"
+        },
+        "Data/com.apple.CoreML/model.mlmodel": {
+          "size": 1101809,
+          "sha256": "06a100ef99e0fd16326a3a8c4a687d13f7b26f544ea906a75338932d8554f953"
+        },
+        "Data/com.apple.CoreML/weights/weight.bin": {
+          "size": 215544960,
+          "sha256": "d0541f6044a94cd4982bfdac074fc1ccfe11d8f1f590c299d6b5071b501fc184"
+        }
+      }
+    }
+  }
+}

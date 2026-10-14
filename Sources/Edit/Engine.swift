@@ -169,11 +169,104 @@ struct SceneField: Sendable {
 enum HealStore {
     nonisolated(unsafe) static var directory: URL = FileManager.default.temporaryDirectory.appendingPathComponent("LumenHeals")
     private static let cache = NSCache<NSString, CIImage>()
+    private static let lifecycleLock = NSLock()
+    private static var readers: [UUID: Int] = [:]
+    private static var pendingRemoval: Set<UUID> = []
+    private static var deletedOwners: Set<String> = []
+
+    /// A queued thumbnail/export keeps the immutable patches until it has finished rendering.
+    final class Lease: @unchecked Sendable {
+        private var ids: Set<UUID>
+        init(_ ids: Set<UUID>) { self.ids = ids }
+        func close() {
+            HealStore.lifecycleLock.lock(); defer { HealStore.lifecycleLock.unlock() }
+            for id in ids {
+                let remaining = (HealStore.readers[id] ?? 1) - 1
+                if remaining > 0 { HealStore.readers[id] = remaining }
+                else {
+                    HealStore.readers.removeValue(forKey: id)
+                    if HealStore.pendingRemoval.remove(id) != nil { HealStore.removeFiles(id) }
+                }
+            }
+            ids.removeAll()
+        }
+        deinit { close() }
+    }
+
+    static func retain(_ ids: Set<UUID>) -> Lease {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        for id in ids { readers[id, default: 0] += 1 }
+        return Lease(ids)
+    }
+
+    /// Finds every Heal reference, including disabled edits and all saved undo/redo snapshots.
+    /// Reading the JSON rather than decoding settings preserves references from older sidecars.
+    static func references(in value: Any) -> Set<UUID> {
+        var ids = Set<UUID>()
+        if let object = value as? [String: Any] {
+            if let spots = object["heals"] as? [[String: Any]] {
+                for spot in spots {
+                    if let text = spot["id"] as? String, let id = UUID(uuidString: text) { ids.insert(id) }
+                }
+            }
+            for child in object.values { ids.formUnion(references(in: child)) }
+        } else if let array = value as? [Any] {
+            for child in array { ids.formUnion(references(in: child)) }
+        }
+        return ids
+    }
+
+    private static func ownerURL(_ id: UUID) -> URL { directory.appendingPathComponent("\(id.uuidString)-owner.json") }
+
+    /// Serialises patch writes against deletion. A late Heal result cannot recreate deleted photo data.
+    static func write(_ id: UUID, owner: URL, body: () throws -> Void) throws -> Bool {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        let key = owner.standardizedFileURL.path
+        guard !deletedOwners.contains(key) else { return false }
+        do {
+            try body()
+            // Imported photo filenames contain their UUID and survive iOS container relocation.
+            try JSONEncoder().encode(owner.lastPathComponent).write(to: ownerURL(id), options: .atomic)
+            return true
+        } catch { removeFiles(id); throw error }
+    }
+
+    /// Includes patches no longer present in the latest capped history. Only owner records are scanned;
+    /// unrelated patches and active writes are never swept. Older patches are recovered from sidecar IDs.
+    static func markDeleted(owner: URL) -> Set<UUID> {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        let key = owner.standardizedFileURL.path
+        deletedOwners.insert(key)
+        var ids = Set<UUID>()
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.lastPathComponent.hasSuffix("-owner.json") {
+            guard let data = try? Data(contentsOf: file), let recorded = try? JSONDecoder().decode(String.self, from: data),
+                  recorded == owner.lastPathComponent, let id = UUID(uuidString: String(file.lastPathComponent.dropLast(11))) else { continue }
+            ids.insert(id)
+        }
+        return ids
+    }
+
+    static func remove(_ ids: Set<UUID>) {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        for id in ids {
+            if readers[id, default: 0] > 0 { pendingRemoval.insert(id) }
+            else { removeFiles(id) }
+        }
+    }
+
+    private static func removeFiles(_ id: UUID) {
+        for url in [patchURL(id), maskURL(id), ownerURL(id)] {
+            cache.removeObject(forKey: url.lastPathComponent as NSString)
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
 
     static func patchURL(_ id: UUID) -> URL { directory.appendingPathComponent("\(id.uuidString).png") }
     static func maskURL(_ id: UUID) -> URL { directory.appendingPathComponent("\(id.uuidString)-mask.png") }
 
     private static func load(_ url: URL, raw: Bool) -> CIImage? {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
         let key = url.lastPathComponent as NSString
         if let hit = cache.object(forKey: key) { return hit }
         let opts: [CIImageOption: Any] = raw ? [.colorSpace: NSNull()] : [:]
@@ -245,6 +338,7 @@ final class EditSession: @unchecked Sendable {
     private let raw: CIRAWFilter?
     private let plain: CIImage?
     let nativeSize: CGSize
+    let originalURL: URL
     private let decodeLock = NSLock()
     /// Healed spots to paint into every decode (preview, full resolution, export, thumbnails). Set from the edits
     /// before decoding; `renderCGImage(_:maxEdge:)` and `renderData` do it themselves.
@@ -266,6 +360,7 @@ final class EditSession: @unchecked Sendable {
     /// gain map (iOS 18+) with their highlights above 1.0 instead of the SDR rendition. Default false keeps the SDR
     /// path unchanged.
     init?(url: URL, expandHDR: Bool = false) {
+        originalURL = url
         let isRaw = UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .rawImage) ?? false
         if isRaw, let f = CIRAWFilter(imageURL: url) {
             f.extendedDynamicRangeAmount = expandHDR ? 2.0 : 1.0
