@@ -89,7 +89,16 @@ extension EditSession {
     }
 
     func applyLensBlur(_ input: CIImage, settings: EditSettings, source: ImageSource) -> CIImage {
-        guard let mask = lensBlurMask(settings, source: source) else { return input }
+        let s = settings.effective
+        guard s.lensBlur.amount > 0 else { return input }
+        if let id = s.lensBlur.maskID, let editable = s.masks.first(where: { $0.id == id }) {
+            guard editable.amount > 0 else { return input }
+        } else {
+            let width = min(max(s.lensBlur.focusWidth, 0.02), 0.5)
+            guard min(max(s.lensBlur.focusDistance, 0), 1) + width < 0.999 else { return input }
+        }
+        // A no-op must bypass Core Image's colour conversions, not just blend with a black mask.
+        guard let mask = lensBlurMask(s, source: source) else { return input }
         let radius = min(max(settings.effective.lensBlur.amount, 0), 100) / 100 * Double(source.longEdge) * 0.018
         guard radius > 0 else { return input }
         return Self.maskedLensBlur(input, mask: mask, radius: radius)
