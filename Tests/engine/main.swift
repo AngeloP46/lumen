@@ -230,6 +230,93 @@ func floatPixels(_ img: CIImage, width: Int = 64) -> [Float]? {
 }
 
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
+// Lens Blur: controlled foreground/background detail, independent of model accuracy.
+if let file = files.first, let session = EditSession(url: file),
+   let sample = session.makeSource(maxEdge: 128, materialize: false) {
+    let extent = CGRect(x: 0, y: 0, width: 256, height: 128)
+    var pattern = CIImage(color: CIColor(red: 0.08, green: 0.08, blue: 0.08)).cropped(to: extent)
+    for x in stride(from: 0, to: 256, by: 8) {
+        let stripe = CIImage(color: CIColor(red: 0.7, green: 0.7, blue: 0.7))
+            .cropped(to: CGRect(x: x, y: 0, width: 4, height: 128))
+        pattern = stripe.composited(over: pattern)
+    }
+    func source(_ image: CIImage) -> ImageSource {
+        ImageSource(base: image, l1: image, l2: image, chroma: image,
+                    air: sample.air, darkNorm: sample.darkNorm, stats: sample.stats)
+    }
+    let src = source(pattern)
+    let near = EditSession.constant(0.1, extent)
+    let far = EditSession.constant(0.9, CGRect(x: 128, y: 0, width: 128, height: 128))
+    src.storeMask(EditSession.aiDepth, far.composited(over: near))
+    var settings = EditSettings()
+    settings.lensBlur.amount = 100
+    let output = session.applyLensBlur(pattern, settings: settings, source: src)
+    check(output.extent == extent, "Lens Blur changed image bounds")
+    func values(_ image: CIImage, _ region: CGRect) -> [Float] {
+        var p = [Float](repeating: 0, count: Int(region.width * region.height) * 4)
+        p.withUnsafeMutableBytes { bytes in
+            LumenGPU.context.render(image, toBitmap: bytes.baseAddress!, rowBytes: Int(region.width) * 16,
+                                    bounds: region, format: .RGBAf, colorSpace: nil)
+        }
+        return p
+    }
+    let foreground = CGRect(x: 16, y: 16, width: 80, height: 80)
+    let fp = values(pattern, foreground), fo = values(output, foreground)
+    check(zip(fp, fo).allSatisfy { abs($0.0 - $0.1) < 0.002 }, "Lens Blur altered the sharp foreground")
+    let background = CGRect(x: 160, y: 16, width: 80, height: 80)
+    func spread(_ p: [Float]) -> Float {
+        let red = stride(from: 0, to: p.count, by: 4).map { p[$0] }
+        let mean = red.reduce(0, +) / Float(red.count)
+        return red.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Float(red.count)
+    }
+    check(spread(values(output, background)) < spread(values(pattern, background)) * 0.45,
+          "Lens Blur did not reduce background detail")
+    settings.lensBlur.amount = 0
+    check(values(session.applyLensBlur(pattern, settings: settings, source: src), background) == values(pattern, background),
+          "Zero Lens Blur amount changed pixels")
+    settings.lensBlur.amount = 100
+    let noDepth = source(pattern)
+    check(values(session.applyLensBlur(pattern, settings: settings, source: noDepth), background) == values(pattern, background),
+          "Missing depth produced an unexpected blur")
+    settings.lensBlur.focusDistance = 1
+    check(values(session.applyLensBlur(pattern, settings: settings, source: src), background) == values(pattern, background),
+          "Farthest focus plane should leave no background blur")
+    settings.lensBlur.focusDistance = 0.3
+    settings.setOn(.lensBlur, false)
+    check(values(session.applyLensBlur(pattern, settings: settings, source: src), background) == values(pattern, background),
+          "Disabled Lens Blur still rendered")
+    settings.setOn(.lensBlur, true)
+    var mask = Mask.make(.linear)
+    mask.components[0].x0 = 0.5; mask.components[0].y0 = 0
+    mask.components[0].x1 = 0.5; mask.components[0].y1 = 1
+    mask.amount = 0
+    settings.masks = [mask]; settings.lensBlur.maskID = mask.id
+    check(values(session.applyLensBlur(pattern, settings: settings, source: src), background) == values(pattern, background),
+          "Lens Blur ignored an editable mask's zero opacity")
+    settings.lensBlur.maskID = nil
+    let scale = CGAffineTransform(scaleX: 2, y: 2)
+    let large = source(pattern.transformed(by: scale))
+    large.storeMask(EditSession.aiDepth, src.cachedMask(EditSession.aiDepth)!.transformed(by: scale))
+    let resized = EditSession.downscaled(session.applyLensBlur(large.base, settings: settings, source: large), 0.5)
+    let a = values(output, background), b = values(resized, background)
+    let delta = zip(a, b).map { abs($0.0 - $0.1) }.reduce(0, +) / Float(a.count)
+    check(delta < 0.035, "Lens Blur strength changed with render size: \(delta)")
+    settings.quarterTurns = 1; settings.cropL = 0.1; settings.cropR = 0.8
+    let transformed = session.geometry(output, settings)
+    check(transformed.extent.width < transformed.extent.height,
+          "Lens Blur crop/rotation dimensions were incorrect")
+    check(values(transformed, transformed.extent).allSatisfy { $0.isFinite },
+          "Lens Blur rotation/crop produced nonfinite pixels")
+    var json = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as! [String: Any]
+    json.removeValue(forKey: "lensBlur")
+    let legacy = try! JSONDecoder().decode(EditSettings.self, from: JSONSerialization.data(withJSONObject: json))
+    check(legacy.lensBlur == LensBlurSettings(), "Older sidecar did not default Lens Blur to off")
+    let roundTrip = try! JSONDecoder().decode(EditSettings.self, from: JSONEncoder().encode(settings))
+    check(roundTrip == settings, "Lens Blur did not survive sidecar round trip")
+    check(!EditSection.lensBlur.canPaste, "Photo-specific Lens Blur should not be pasted to another photo")
+    if let cg = smallRender(output, width: 256) { saveJPEG(cg, "lens-blur-synthetic.jpg") }
+}
+
 var opened = 0
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
     let stem = file.deletingPathExtension().lastPathComponent

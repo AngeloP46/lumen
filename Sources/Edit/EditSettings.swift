@@ -243,6 +243,15 @@ struct Mask: Codable, Equatable, Identifiable, Hashable {
     }
 }
 
+/// Photo-specific focus in the estimated depth field (0 = near, 1 = far).
+struct LensBlurSettings: Codable, Equatable {
+    var amount: Double = 0
+    var focusDistance: Double = 0.3
+    var focusWidth: Double = 0.12
+    /// Optional editable mask: depth plus painted Add/Subtract refinements.
+    var maskID: UUID? = nil
+}
+
 // MARK: - Keys that may be missing in older files
 
 protocol DefaultValue { associatedtype Value: Codable & Equatable; static var value: Value { get } }
@@ -254,6 +263,7 @@ enum DefaultNoHeals: DefaultValue { static let value: [HealSpot] = [] }
 enum DefaultZero: DefaultValue { static let value = 0.0 }
 enum DefaultHundred: DefaultValue { static let value = 100.0 }
 enum DefaultZone: DefaultValue { static let value = GradeZone() }
+enum DefaultLensBlur: DefaultValue { static let value = LensBlurSettings() }
 
 /// Decodes to the default when the key is absent, so sidecars and saved presets from before the key existed still load.
 @propertyWrapper
@@ -317,6 +327,7 @@ struct EditSettings: Codable, Equatable {
     @Defaulted<DefaultHDRStops> var hdrStops: Double
     // Local
     var masks: [Mask] = []
+    @Defaulted<DefaultLensBlur> var lensBlur: LensBlurSettings
     // Geometry
     var straighten: Double = 0     // degrees, positive = clockwise
     var quarterTurns: Int = 0
@@ -352,12 +363,12 @@ struct EditSettings: Codable, Equatable {
 // MARK: - Sections (Edits sheet: switch a tool's edits off / on, reset one tool)
 
 enum EditSection: String, CaseIterable, Identifiable {
-    case light = "Light", color = "Color", grade = "Grade", curve = "Curve", detail = "Detail", masks = "Masks", heal = "Heal", crop = "Crop"
+    case light = "Light", color = "Color", grade = "Grade", curve = "Curve", detail = "Detail", masks = "Masks", heal = "Heal", lensBlur = "Lens Blur", crop = "Crop"
     var id: String { rawValue }
     /// Crop can be reset but not switched off (masks and the crop frame are placed on the cropped photo).
     var canSwitchOff: Bool { self != .crop }
     /// Heal patches are made for one photo's pixels, so they are never pasted onto another.
-    var canPaste: Bool { self != .heal }
+    var canPaste: Bool { self != .heal && self != .lensBlur }
     var icon: String {
         switch self {
         case .light: "sun.max"
@@ -367,6 +378,7 @@ enum EditSection: String, CaseIterable, Identifiable {
         case .detail: "triangle"
         case .masks: "circle.dashed.inset.filled"
         case .heal: "bandage"
+        case .lensBlur: "camera.aperture"
         case .crop: "crop.rotate"
         }
     }
@@ -406,6 +418,8 @@ extension EditSettings {
             masks = d.masks
         case .heal:
             heals = d.heals
+        case .lensBlur:
+            lensBlur = d.lensBlur
         case .crop:
             take(.crop, from: d)
         }
@@ -435,6 +449,8 @@ extension EditSettings {
             masks = o.masks
         case .heal:
             heals = o.heals
+        case .lensBlur:
+            lensBlur = o.lensBlur
         case .crop:
             straighten = o.straighten; quarterTurns = o.quarterTurns; cropAspect = o.cropAspect
             cropL = o.cropL; cropT = o.cropT; cropR = o.cropR; cropB = o.cropB
@@ -479,6 +495,7 @@ extension EditSettings {
         if t < 0.5 { r.blackAndWhite = a.blackAndWhite; r.curves = a.curves }
         r.masks = a.masks
         r.heals = a.heals
+        r.lensBlur = a.lensBlur
         r.take(.crop, from: a)
         r.hdr = a.hdr; r.hdrStops = a.hdrStops
         r.disabled = a.disabled

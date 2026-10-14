@@ -135,6 +135,58 @@ final class LumenUITests: XCTestCase {
         shot("maximum-zoom-release")
     }
 
+    func testDepthEdgeSlidersHaveFullTravel() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "depth"])
+        XCTAssertTrue(el("lum-bar").waitForExistence(timeout: 30))
+        let middle = app.buttons["Middle"].firstMatch
+        XCTAssertTrue(middle.waitForExistence(timeout: 10))
+        middle.tap(); sleep(1)
+        for name in ["Near edge", "Far edge"] {
+            let slider = el("slider-" + name)
+            if !slider.isHittable { el("panel").swipeUp(); sleep(1) }
+            XCTAssertTrue(slider.isHittable, "depth edge slider must be reachable")
+            for _ in 0..<2 {
+                slider.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
+                    .press(forDuration: 0.1, thenDragTo: slider.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)))
+            }
+            sleep(1)
+            XCTAssertEqual(valueOf("reset-" + name), "50", "edge feather must reach the full advertised slider range")
+        }
+        shot("depth-edges-full-travel")
+    }
+
+    func testLensBlurToolbarAndEditorFixes() {
+        testOctoberEditorFixes()
+        app.terminate()
+        launch(open: 0, tool: "Lens Blur", extra: ["-lumenDemoLensDepth", "1"])
+        let focus = el("lens-blur-focus")
+        XCTAssertTrue(focus.waitForExistence(timeout: 30), "depth fixture must finish preparing")
+        XCTAssertTrue(el("tool-Lens Blur").isHittable)
+        XCTAssertGreaterThanOrEqual(el("tool-Lens Blur").frame.width, 60, "tools must keep readable widths")
+        focus.tap()
+        XCTAssertTrue(el("lens-focus-layer").waitForExistence(timeout: 5))
+        el("lens-focus-layer").tap(); sleep(1)
+        XCTAssertTrue(events().contains { $0.contains("lens focus picked") })
+        XCTAssertFalse(el("lens-focus-layer").exists)
+        let amount = el("slider-Blur amount")
+        amount.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: amount.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(2)
+        XCTAssertGreaterThan(Double(valueOf("reset-Blur amount")) ?? 0, 10)
+        shot("lens-blur-panel")
+        // Make room for the last row rather than letting the scroll gesture land on a range control.
+        let handle = el("panel-handle")
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 0, dy: -220)))
+        el("lens-blur-refine").tap(); sleep(2)
+        XCTAssertTrue(el("lum-bar").exists, "refine opens the background's depth range")
+        shot("lens-blur-refinement")
+        el("editor-tools").swipeLeft(); sleep(1)
+        XCTAssertTrue(el("tool-Presets").isHittable, "scrolling reveals the last tool")
+        el("editor-tools").swipeRight(); el("editor-tools").swipeRight(); sleep(1)
+        XCTAssertTrue(el("tool-Crop").isHittable, "scrolling back reveals the first tool")
+    }
+
     // MARK: sliders
 
     func testDoubleTapResetsSlider() {
