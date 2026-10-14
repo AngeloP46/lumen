@@ -248,12 +248,13 @@ extension EditSession {
         let id = UUID()
         try? FileManager.default.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         do {
-            try ctx.writePNGRepresentation(of: out, to: HealStore.patchURL(id), format: .RGBA8, colorSpace: srgb)
-            try Self.writeGrayPNG(blend, to: HealStore.maskURL(id))
+            guard try HealStore.write(id, owner: originalURL, body: {
+                try ctx.writePNGRepresentation(of: out, to: HealStore.patchURL(id), format: .RGBA8, colorSpace: srgb)
+                try Self.writeGrayPNG(blend, to: HealStore.maskURL(id))
+            }) else { return nil }
         } catch { return nil }
         guard let back = CIImage(contentsOf: HealStore.patchURL(id)), plausible(back) else {
-            try? FileManager.default.removeItem(at: HealStore.patchURL(id))
-            try? FileManager.default.removeItem(at: HealStore.maskURL(id))
+            HealStore.remove([id])
             return nil
         }
         Self.healFailure = nil

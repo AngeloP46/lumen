@@ -50,9 +50,10 @@ final class LibraryStore: ObservableObject {
     private let thumbsDir: URL
     private let editsDir: URL
 
-    init() {
+    init(testRoot: URL? = nil) {
+        if testRoot == nil, DemoMode.isOn, DemoMode.value("-lumenDemoHealDeletion") == "1" { Self.checkHealDeletion() }
         let docs = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        root = docs.appendingPathComponent("Library", isDirectory: true)
+        root = testRoot ?? docs.appendingPathComponent("Library", isDirectory: true)
         filesDir = root.appendingPathComponent("files", isDirectory: true)
         thumbsDir = root.appendingPathComponent("thumbs", isDirectory: true)
         editsDir = root.appendingPathComponent("edits", isDirectory: true)
@@ -63,8 +64,10 @@ final class LibraryStore: ObservableObject {
         HealStore.directory = root.appendingPathComponent("heals", isDirectory: true)
         try? fm.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         // Smart fill (beta, 0.1.154) was taken out again: free the ~950 MB it may have downloaded
-        let lib = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-        try? fm.removeItem(at: lib.appendingPathComponent("SmartFill-cyberrealistic-v8-inpaint-6bit", isDirectory: true))
+        if testRoot == nil {
+            let lib = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            try? fm.removeItem(at: lib.appendingPathComponent("SmartFill-cyberrealistic-v8-inpaint-6bit", isDirectory: true))
+        }
         loadIndex()
         fillInDatesTaken()
         // thumbnails that never got made (or were lost) are made again
@@ -82,6 +85,66 @@ final class LibraryStore: ObservableObject {
                 return UserPreset(id: id, name: name, settings: Self.decodeSettings(d))
             }
         }
+    }
+
+
+    /// Deterministic CI fixture: exercises real deletion/storage without a Heal model or user data.
+    private static func checkHealDeletion() {
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("heal-privacy-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: folder) }
+        let files = folder.appendingPathComponent("files"), thumbs = folder.appendingPathComponent("thumbs")
+        try? fm.createDirectory(at: files, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: thumbs, withIntermediateDirectories: true)
+        let removed = LibraryItem(id: UUID(), displayName: "Removed", fileName: "removed.jpg", added: Date(), taken: Date())
+        let kept = LibraryItem(id: UUID(), displayName: "Kept", fileName: "kept.jpg", added: Date(), taken: Date())
+        for item in [removed, kept] {
+            try? Data([1]).write(to: files.appendingPathComponent(item.fileName))
+            try? Data([1]).write(to: thumbs.appendingPathComponent("\(item.id.uuidString).jpg"))
+        }
+        try? JSONEncoder().encode([removed, kept]).write(to: folder.appendingPathComponent("index.json"))
+        let library = LibraryStore(testRoot: folder)
+        func spot() -> HealSpot { HealSpot(strokes: [], x: 0, y: 0, w: 0.1, h: 0.1) }
+        let current = spot(), undo = spot(), redo = spot(), shared = spot(), copied = spot(), preset = spot(), active = spot(), dropped = spot()
+        let all = [current, undo, redo, shared, copied, preset, active, dropped]
+        func exists(_ s: HealSpot) -> Bool {
+            fm.fileExists(atPath: HealStore.patchURL(s.id).path) || fm.fileExists(atPath: HealStore.maskURL(s.id).path)
+        }
+        func check(_ yes: Bool, _ message: String) { DemoMode.log("heal deletion \(yes ? "PASS" : "FAIL") \(message)") }
+        for s in all {
+            _ = try? HealStore.write(s.id, owner: library.fileURL(removed), body: {
+                try Data([1]).write(to: HealStore.patchURL(s.id))
+                try Data([2]).write(to: HealStore.maskURL(s.id))
+            })
+        }
+        var edits = EditSettings(); edits.heals = [current, shared, copied, preset, active]
+        var previous = EditSettings(); previous.heals = [undo]
+        var next = EditSettings(); next.heals = [redo]
+        library.save(edits, for: removed, history: EditHistory(current: edits, undo: [previous], redo: [next]))
+        var otherHistory = EditSettings(); otherHistory.heals = [shared]
+        library.save(EditSettings(), for: kept, history: EditHistory(current: EditSettings(), undo: [], redo: [otherHistory]))
+        var clipboard = EditSettings(); clipboard.heals = [copied]; library.clipboard = clipboard
+        var recipe = EditSettings(); recipe.heals = [preset]
+        library.userPresets = [UserPreset(name: "Legacy", settings: recipe)]
+        let lease = HealStore.retain([active.id])
+        library.delete(removed)
+        check([current, undo, redo, dropped].allSatisfy { !exists($0) }, "current undo redo and trimmed owner patches removed")
+        check([shared, copied, preset].allSatisfy(exists), "retained history clipboard and preset preserved")
+        check(exists(active), "in-flight render retains patch")
+        lease.close()
+        check(!exists(active), "last render release cleans pending patch")
+        library.save(edits, for: removed)
+        check(!fm.fileExists(atPath: library.editURL(removed).path), "delayed save cannot recreate deleted edits")
+        let late = spot()
+        let written = try? HealStore.write(late.id, owner: library.fileURL(removed), body: {
+            try Data([1]).write(to: HealStore.patchURL(late.id))
+        })
+        check(written == false && !exists(late), "late Heal result cannot recreate deleted pixels")
+        library.clipboard = nil; library.userPresets = []
+        library.delete(kept)
+        check(!exists(shared), "shared patch removed after last photo deleted")
+        // Retained legacy references are intentionally preserved; this is not a global garbage sweep.
+        check(!fm.fileExists(atPath: library.fileURL(removed).path) && !fm.fileExists(atPath: library.thumbURL(removed).path), "photo and thumbnail removed")
     }
 
     // MARK: Photo list
@@ -236,6 +299,8 @@ final class LibraryStore: ObservableObject {
     }
 
     func save(_ s: EditSettings, for item: LibraryItem, history supplied: EditHistory? = nil) {
+        // A debounced editor save may arrive after library deletion; never recreate its sidecar.
+        guard items.contains(where: { $0.id == item.id }) else { return }
         let previous = settings(for: item)
         var history = supplied ?? self.history(for: item, current: previous)
         // Library paste/batch changes are undoable too; editor saves already contain their history.
@@ -297,9 +362,11 @@ final class LibraryStore: ObservableObject {
         guard batchProgress == nil, !list.isEmpty else { return }
         batchProgress = (0, list.count)
         let jobs = list.map { (url: fileURL($0), edits: settings(for: $0), name: $0.displayName) }
+        let patches = HealStore.retain(Set(jobs.flatMap { $0.edits.heals.map(\.id) }))
         let dir = fm.temporaryDirectory.appendingPathComponent("lumen-export-\(UUID().uuidString)", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         exportQueue.async {
+            defer { patches.close() }
             var urls: [URL] = []
             var used = Set<String>()
             for (n, job) in jobs.enumerated() {
@@ -374,13 +441,35 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    /// Keep references in other photos, presets and the clipboard. Fail closed when a retained
+    /// sidecar is unreadable, rather than deleting pixels still needed by another photo.
+    private func retainedHealIDs(excluding item: LibraryItem) -> Set<UUID>? {
+        var ids = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
+        ids.formUnion(clipboard?.heals.map(\.id) ?? [])
+        for other in items where other.id != item.id {
+            let url = editURL(other)
+            guard fm.fileExists(atPath: url.path) else { continue }
+            guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
+            ids.formUnion(HealStore.references(in: json))
+        }
+        return ids
+    }
+
     func delete(_ item: LibraryItem) {
+        guard items.contains(where: { $0.id == item.id }) else { return }
+        var patches = HealStore.markDeleted(owner: fileURL(item))
+        if let data = try? Data(contentsOf: editURL(item)), let json = try? JSONSerialization.jsonObject(with: data) {
+            patches.formUnion(HealStore.references(in: json))
+        }
+        let retained = retainedHealIDs(excluding: item)
         for u in [fileURL(item), thumbURL(item), editURL(item)] { try? fm.removeItem(at: u) }
         // The thumbnail queue is serial: this runs after any render already in flight for this photo.
         let thumb = thumbURL(item)
         thumbQueue.async { try? FileManager.default.removeItem(at: thumb) }
         items.removeAll { $0.id == item.id }
         saveIndex()
+        if let retained { HealStore.remove(patches.subtracting(retained)) }
+        else { lastError = "Photo removed, but its Heal patches could not safely be cleaned up because another photo's edits are unreadable." }
     }
 
     // MARK: Rating / flags
@@ -503,9 +592,12 @@ final class LibraryStore: ObservableObject {
     // MARK: Thumbnails
 
     func refreshThumbnail(_ item: LibraryItem) {
+        guard items.contains(where: { $0.id == item.id }) else { return }
         let src = fileURL(item), dst = thumbURL(item), id = item.id
         let settings = settings(for: item)
+        let patches = HealStore.retain(Set(settings.heals.map(\.id)))
         thumbQueue.async {
+            defer { patches.close() }
             guard let session = EditSession(url: src),
                   let cg = session.renderCGImage(settings, maxEdge: 640),
                   let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else {

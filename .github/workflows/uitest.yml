@@ -20,14 +20,19 @@ concurrency:
   group: uitest-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   uitest:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
+        with:
+          persist-credentials: false
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: bash .github/ci/install-xcodegen.sh
       - name: Sample photos
         run: |
           mkdir -p demo
@@ -63,7 +68,7 @@ jobs:
           grep -E "error:|Test Case .* failed" uiout/xcodebuild.log | sed -E 's#^/[^:]*/##' | sort -u \
             | head -40 | while IFS= read -r line; do echo "::error::${line:0:900}"; done
           exit "$code"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
         if: always()
         with:
           name: uitest

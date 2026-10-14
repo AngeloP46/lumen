@@ -12,17 +12,27 @@ on:
   push:
     branches: [sandbox]
   workflow_dispatch:
+    inputs:
+      checks_only:
+        description: 'Skip duplicate UI screenshots; compile both payment flag configurations'
+        type: boolean
+        default: false
 
 concurrency:
   group: app-store-sandbox-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   compile-check:
     runs-on: macos-15
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
+        with:
+          persist-credentials: false
 
       - name: AI models (depth, scene, heal)
         run: |
@@ -31,7 +41,7 @@ jobs:
           bash .github/ci/get-heal-model.sh Models
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: bash .github/ci/install-xcodegen.sh
 
       - name: Generate Xcode project
         # project.yml is FROZEN (SideStore pipeline reads it). The App Store configuration is
@@ -65,7 +75,7 @@ jobs:
           tail -25 build.log
           exit $code
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
         if: always()
         with:
           name: build-log
@@ -93,6 +103,7 @@ jobs:
 
       # --- App Store UI screenshots: real captures of every main screen (only if the compile passed) ---
       - name: App Store screenshots
+        if: ${{ success() && !inputs.checks_only }}
         run: |
           mkdir -p shots
           shot() { # name, args...
@@ -121,7 +132,7 @@ jobs:
           W=20 shot 10-paywall -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoPro 1 -lumenDemoPaywall 1 -lumenDemoNoWM
           ls -la shots
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
         with:
           name: app-store-shots
           path: shots

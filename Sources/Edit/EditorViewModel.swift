@@ -1127,7 +1127,9 @@ final class EditorViewModel: ObservableObject {
         isExporting = true
         let s = settings
         let name = item.displayName
+        let patches = HealStore.retain(Set(s.heals.map(\.id)))
         workQueue.async {
+            defer { patches.close() }
             let data = session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
             var url: URL?
             if let data {
