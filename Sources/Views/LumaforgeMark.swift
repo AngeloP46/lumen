@@ -15,7 +15,7 @@ struct LumaforgeMark: View {
                 layer.rotate(by: .degrees(-24))
                 let tile = layer.resolve(
                     Text("Lumaforge")   // placeholder name (plan §11.1)
-                        .font(.system(size: 30, weight: .heavy))
+                        .font(.system(size: 34, weight: .black))
                         .foregroundStyle(.white)
                 )
                 // faint dark shadow so the white text reads on bright skies AND dark scenes
@@ -39,7 +39,7 @@ struct LumaforgeMark: View {
                 }
             }
         }
-        .opacity(0.32)   // visible on every photo, but the photo still shows through
+        .opacity(0.45)   // obvious on every photo (the point: a free edit is clearly not final), photo still shows through
         .allowsHitTesting(false)   // never blocks gestures
         .accessibilityIdentifier("lumaforge-mark")
     }
