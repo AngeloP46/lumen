@@ -1,6 +1,31 @@
-# Lumen App Store project — status & hand-off (for a new chat)
+# Lumen App Store project â€” status & hand-off (for a new chat)
 
-## Latest update — Codex fixes, 14 Oct 2026
+## Shared editor improvements — 14 October, checks running
+
+Angelo authorized improvements for both the personal SideStore app and sandbox.
+Shared commit 9ac404a (sandbox cherry-pick 6a05836) preserves the last pinch anchor
+when elastic maximum zoom settles, centres the photo when the editing panel closes,
+keeps clipping warnings inside nontransparent photo pixels, and removes the extra
+depth-feather slider cap. Near/far sliders soften the selected depth band; the bar
+handles choose that band. Depth endpoints with no outside range remain inactive.
+
+Undo/redo stacks are saved per photo in the existing atomic settings JSON under
+_undoHistory, capped at 100 steps and checked against the saved current settings.
+Old app versions ignore the additional key. Historical steps discarded by previous
+versions cannot be recovered. New edits clear redo; reset/preset/paste/Auto start
+separate steps. Library batch paste also records the previous settings.
+
+Validation pending: focused October editor UI test 38597024287, IPA build 38597029271,
+engine/clipping regression 38597032919, sandbox flag OFF/ON check 38597191057.
+No new SideStore publication yet. A separate depth slider test is being added.
+Do not claim success before those runs finish.
+
+Background blur: Angelo agreed to the proposed background-only prototype using
+depth, tap-to-focus and blur amount, with manual mask corrections. Implementation
+has not started; handle edge halos/foreground colour bleed and test cars/portraits.
+Finish the bug fixes first. Do not accidentally merge App Store paywall work to main.
+
+## Latest update â€” Codex fixes, 14 Oct 2026
 
 Angelo authorized addressing the review findings. Local fixes supersede the older issue lists
 below: batch and single export now both enforce Pro at the UI and underlying export entry
@@ -21,7 +46,7 @@ Do not treat source review or simulator compilation as proof of working purchase
 **Last updated:** 14 Oct 2026 (Codex fixes, validation and relocation authorized by Angelo)
 
 
-## Landing page V5 — 14 October update
+## Landing page V5 â€” 14 October update
 
 Angelo asked for the landing-page copy pass after the app fixes. Updated the canonical
 landing-page/index.html and thanks.html with direct descriptions of the real app, examples
@@ -50,49 +75,49 @@ an isolated sandbox in the meantime.
 |---|---|
 | The full plan (source of truth for the work) | `C:\Users\pc user\Projects\app development\Lumen\docs\APPSTORE-PLAN.md` |
 | Real repo (Claude works here, pushes to GitHub) | `C:\Users\pc user\Projects\app development\Lumen` |
-| Sandbox (local LLM works here — do not edit it yourself) | `C:\Users\pc user\Projects\app development\Lumen-Sandbox` |
+| Sandbox (local LLM works here â€” do not edit it yourself) | `C:\Users\pc user\Projects\app development\Lumen-Sandbox` |
 | Sandbox rules the local LLM must follow | `Lumen-Sandbox\SANDBOX-BRIEF.md` |
 | Local LLM's own work log (it writes this) | `Lumen-Sandbox\SANDBOX-LOG.md` (created by the LLM) |
-| GitHub branch with the local LLM's pushed work | `sandbox` branch on github.com/AngeloP46/lumen — https://github.com/AngeloP46/lumen/tree/sandbox |
-| Test results from GitHub | repo → **Actions** tab (pass/fail) and the `test-previews` GitHub release (rendered ARW preview sheets) |
+| GitHub branch with the local LLM's pushed work | `sandbox` branch on github.com/AngeloP46/lumen â€” https://github.com/AngeloP46/lumen/tree/sandbox |
+| Test results from GitHub | repo â†’ **Actions** tab (pass/fail) and the `test-previews` GitHub release (rendered ARW preview sheets) |
 
-## Decisions already made (all locked, see plan §11)
+## Decisions already made (all locked, see plan Â§11)
 
 - **Free export:** Light & Color + crop/rotate + presets only. **Pro:** curves, detail, HDR, all
-  masks, heal → export requires the subscription.
-- **Prices:** ≈£1/month (7-day trial) + ≈£8/year → closest Apple UK tiers.
+  masks, heal â†’ export requires the subscription.
+- **Prices:** â‰ˆÂ£1/month (7-day trial) + â‰ˆÂ£8/year â†’ closest Apple UK tiers.
 - **Watermark:** tiled diagonal "Lumaforge" text across the whole photo, ~45 % opacity, white
   with a dark shadow, Pro-edited previews only, App Store build only. (14 Oct: replaced a
-  single badge — Angelo: the first 30 %-material version was invisible on bright skies, the
+  single badge â€” Angelo: the first 30 %-material version was invisible on bright skies, the
   solid-badge version "looked like a button"; tiled protection style is the agreed look.)
 - **iPhone-only** at launch, **instant release to 100%**, **worldwide, English only**.
-- **Name:** placeholder **"Lumaforge"** in all code (that name is taken on the App Store — final
+- **Name:** placeholder **"Lumaforge"** in all code (that name is taken on the App Store â€” final
   name is Angelo's to pick before Gate 4; "Lumen" is also taken).
-- **SideStore build stays frozen** — no paywall, no watermark, everything works. The existing
+- **SideStore build stays frozen** â€” no paywall, no watermark, everything works. The existing
   `build.yml` (SideStore feed) and `project.yml` must never change for this work.
 
 ## What happened in the last chat (timeline)
 
-1. Researched and wrote `docs/APPSTORE-PLAN.md` (v2, export-gate model) — gates 1–5, Claude's
+1. Researched and wrote `docs/APPSTORE-PLAN.md` (v2, export-gate model) â€” gates 1â€“5, Claude's
    build spec, Apple setup steps, marketing plan, RAW-format findings.
-2. **RAW finding:** the app already decodes all major camera RAW via Apple's CIRAWFilter —
+2. **RAW finding:** the app already decodes all major camera RAW via Apple's CIRAWFilter â€”
    the "Sony-only" problem is mostly wording, plus a test matrix to prove (CR2/CR3/NEF/RAF/
-   ARW/DNG/ProRAW must open, edit, export — hard requirement before Gate 2).
+   ARW/DNG/ProRAW must open, edit, export â€” hard requirement before Gate 2).
 3. Built the sandbox: clone in `Lumen-Sandbox`, brief written, `sandbox` branch created on
    GitHub and pushed. A 2-day fine-grained token (repo: lumen, Contents read/write) is embedded
-   in the sandbox's `origin` remote — **it expires ~15 Oct**; after that the sandbox cannot
+   in the sandbox's `origin` remote â€” **it expires ~15 Oct**; after that the sandbox cannot
    push. Do not print or copy the remote URL (it contains the token).
 4. Angelo created the token at github.com/settings/tokens; if it's revoked/expired, re-pointing
    the sandbox remote needs a fresh token (see SANDBOX-BRIEF for the rules).
 5. **App Store draft built and tested (this session):** store, paywall, export gate, watermark
-   — all behind `#if APP_STORE`, all in new files (plus 4 small hooks in EditorView). The
+   â€” all behind `#if APP_STORE`, all in new files (plus 4 small hooks in EditorView). The
    App Store build compiles clean, and the workflow now also boots a simulator and captures
    three screenshots on every push (artifact `app-store-shots`): free edit, Pro edit with
    watermark, and the paywall.
 6. **Watermark reworked** after Angelo saw the first shots: it was small and top-right, behind
    the toolbar icons. Now it's big, bottom-centre **on the photo** (follows zoom/pan), with a
    shadow so it reads on bright skies. Angelo to give the final OK on look/placement.
-7. **App Store listing assets drafted:** `docs/APPSTORE-ASSETS.md` — name, subtitle,
+7. **App Store listing assets drafted:** `docs/APPSTORE-ASSETS.md` â€” name, subtitle,
    description, keywords, privacy, age rating, screenshot plan, subscription setup checklist,
    rejection-risk checklist. All DRAFT for Gate 4.
 8. **RAW format matrix test written:** new `Tests/rawmatrix/` + `.github/workflows/raw-matrix.yml`
@@ -100,9 +125,9 @@ an isolated sandbox in the meantime.
    camera RAW (Canon R5 CR3, Nikon D750 NEF, Fuji X-T4 RAF, Sony A7 ARW, 5D III DNG) from
    raw.pixls.us and checks the engine opens, decodes and exports each (JPEG/HEIC/16-bit TIFF).
    This is the Gate 2 proof; first run results pending in the Actions tab (workflow
-   "RAW format matrix"). CR2 and ProRAW still need samples — ProRAW especially may need a real
+   "RAW format matrix"). CR2 and ProRAW still need samples â€” ProRAW especially may need a real
    iPhone sample (see open questions).
-9. **14 Oct (this session) — screenshots + watermark fixed:**
+9. **14 Oct (this session) â€” screenshots + watermark fixed:**
    - Watermark reworked twice after Angelo compared the real captures: (a) the 30 %-opacity
      material capsule was invisible on bright skies; (b) the solid dark badge "looked like a
      button". Final look = **tiled diagonal "Lumaforge" text across the whole photo**
@@ -114,9 +139,9 @@ an isolated sandbox in the meantime.
      08 batch select, 09 watermark, 10 paywall. New CI-only demo hooks (all launch-arg driven,
      no runtime cost): `-lumenDemoGrade`, `-lumenDemoCurve`, `-lumenDemoDetail2`,
      `-lumenDemoExport`, `-lumenDemoBatch`, plus existing `-lumenDemoMask`/`-lumenDemoPeople`.
-   - **`-lumenDemoNoWM`** suppresses the watermark so the ad shots (01–08, 10) are captured
+   - **`-lumenDemoNoWM`** suppresses the watermark so the ad shots (01â€“08, 10) are captured
      CLEAN; only 09 shows the watermark. Angelo: ad images must not carry the watermark.
-   - **05-masks / 06-heal are NOT listing material** — the simulator has no AI; those overlays
+   - **05-masks / 06-heal are NOT listing material** â€” the simulator has no AI; those overlays
      are CI stand-ins. Listing set = 01, 02, 03, 04, 07, 08, 10 (all clean, all real).
    - `docs/APPSTORE-ASSETS.md` screenshot plan updated to the 10-shot set + proposed 6-shot
      App Store order with headlines.
@@ -125,48 +150,48 @@ an isolated sandbox in the meantime.
 
 1. **Check on the sandbox** (if Angelo asks "how's it going?"): read
    `Lumen-Sandbox\SANDBOX-LOG.md`, check `git log` in `Lumen-Sandbox`, and look at the Actions
-   tab of the sandbox branch (browser: https://github.com/AngeloP46/lumen/actions — branch
+   tab of the sandbox branch (browser: https://github.com/AngeloP46/lumen/actions â€” branch
    `sandbox`). Report: what was drafted, whether the engine test passes, open questions.
-   Key artifacts: `app-store-shots` (the 10 App Store screenshots — see timeline item 9) and
+   Key artifacts: `app-store-shots` (the 10 App Store screenshots â€” see timeline item 9) and
    `raw-matrix` (RESULT.txt of the RAW format test).
 2. **When Claude's usage is back (~15 Oct):** copy the ONE section at the end of this file,
-   "THE HANDOFF FOR CLAUDE — copy everything between the lines", and paste it into his chat.
+   "THE HANDOFF FOR CLAUDE â€” copy everything between the lines", and paste it into his chat.
    That single message contains everything: what to read, in what order, the known issues,
    and the rules. No other files need to be pasted.
 3. **Gate 3 (Angelo, free):** landing page + waitlist + ~2 weeks of before/after clips before
-   any money is spent (plan §7).
-4. **Gate 4 (Angelo, ~$99):** developer account, App Store Connect setup (plan §6), final name,
+   any money is spent (plan Â§7).
+4. **Gate 4 (Angelo, ~$99):** developer account, App Store Connect setup (plan Â§6), final name,
    TestFlight beta, submit.
 
-## Review focus for tomorrow (14 Oct PM, marketing day — no new features)
+## Review focus for tomorrow (14 Oct PM, marketing day â€” no new features)
 
 Angelo is pausing feature work to validate demand. When Claude returns, review in this
 order (all on the `sandbox` branch, nothing merged to main, SideStore untouched):
 
 1. **Subscription logic** (`Sources/Store/LumenStore.swift`, `PaywallView.swift`):
    - **BUG (confirmed):** the paywall shows "7 days free, then renews" under BOTH products,
-     but the locked decision is a 7-day trial on the MONTHLY only (plan §173/375). The
+     but the locked decision is a 7-day trial on the MONTHLY only (plan Â§173/375). The
      annual row's note is wrong.
    - Trial detection in `refreshStatus()` is a heuristic (monthly expiry < 8 days =
-     trialing) — verify against StoreKit 2.
-   - Paywall is `#if APP_STORE` only and has a free "Keep editing free" close path —
+     trialing) â€” verify against StoreKit 2.
+   - Paywall is `#if APP_STORE` only and has a free "Keep editing free" close path â€”
      confirm that satisfies Apple's free-tier-must-work rule.
 2. **Export restriction** (`ProGate.swift`, `EditorView.requestExport`):
    - **GAP (confirmed):** the single-photo export gate exists, but the LIBRARY BATCH export
-     (`LibraryView` → `store.export(list:options:)`) has NO Pro check — a free user can
+     (`LibraryView` â†’ `store.export(list:options:)`) has NO Pro check â€” a free user can
      batch-export Pro-edited photos clean. Needs the same gate or per-item gating.
    - Preset edge case: a preset that sets curve values makes the photo Pro (documented in
      ProGate.swift; confirm intended).
 3. **Watermark** (`LumaforgeMark.swift`, tiled diagonal, 45 %):
-   - It is a preview overlay ONLY. Confirm it does not affect the exported file — the
+   - It is a preview overlay ONLY. Confirm it does not affect the exported file â€” the
      plan's intent is a watermarked *preview*; if free exports must carry the watermark in
      the file itself, that's a new pipeline task (currently they don't).
-   - Opacity/angle/spacing tuned from screenshots only — never seen on a real device.
+   - Opacity/angle/spacing tuned from screenshots only â€” never seen on a real device.
 
 Marketing assets are being prepared separately; listing set = shots 01, 02, 03, 04, 07, 08,
 10 from the `app-store-shots` artifact (all real, all clean).
 
-## THE HANDOFF FOR CLAUDE — copy everything between the lines, paste it once
+## THE HANDOFF FOR CLAUDE â€” copy everything between the lines, paste it once
 
 ---
 
@@ -212,8 +237,8 @@ fix/review work. Website prices are proposed demand-testing options, not final a
   `sandbox` branch on GitHub + Actions results.
 - **Claude's progress:** his commits in the real repo (`Lumen` folder) + his updates to
   `CLAUDE.md` (he keeps a status log there) + GitHub Actions.
-- **Decisions/status for humans:** this file + `docs/APPSTORE-PLAN.md` §11. Keep §11 and this
-  file updated when Angelo makes a new decision — that's the whole tracking system.
+- **Decisions/status for humans:** this file + `docs/APPSTORE-PLAN.md` Â§11. Keep Â§11 and this
+  file updated when Angelo makes a new decision â€” that's the whole tracking system.
 
 ## Gotchas
 
@@ -221,7 +246,7 @@ fix/review work. Website prices are proposed demand-testing options, not final a
   lumen repo and expires in 2 days anyway.
 - Don't push anything to `main` from `Lumen-Sandbox` (the brief forbids it; the SideStore feed
   publishes from main only).
-- Don't rename/move/delete anything in `Lumen-Sandbox` or the `Lumen` folder — just read and
+- Don't rename/move/delete anything in `Lumen-Sandbox` or the `Lumen` folder â€” just read and
   report.
-- The plan is in the REAL repo's `docs/` — if it gets updated, update it there (it's committed),
+- The plan is in the REAL repo's `docs/` â€” if it gets updated, update it there (it's committed),
   not just in the sandbox.

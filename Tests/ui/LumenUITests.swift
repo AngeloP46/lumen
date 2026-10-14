@@ -135,6 +135,26 @@ final class LumenUITests: XCTestCase {
         shot("maximum-zoom-release")
     }
 
+    func testDepthEdgeSlidersHaveFullTravel() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoMask", "depth"])
+        XCTAssertTrue(el("lum-bar").waitForExistence(timeout: 30))
+        let middle = app.buttons["Middle"].firstMatch
+        XCTAssertTrue(middle.waitForExistence(timeout: 10))
+        middle.tap(); sleep(1)
+        for name in ["Near edge", "Far edge"] {
+            let slider = el("slider-" + name)
+            if !slider.isHittable { el("panel").swipeUp(); sleep(1) }
+            XCTAssertTrue(slider.isHittable, "depth edge slider must be reachable")
+            for _ in 0..<2 {
+                slider.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
+                    .press(forDuration: 0.1, thenDragTo: slider.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)))
+            }
+            sleep(1)
+            XCTAssertEqual(valueOf("reset-" + name), "50", "edge feather must reach the full advertised slider range")
+        }
+        shot("depth-edges-full-travel")
+    }
+
     // MARK: sliders
 
     func testDoubleTapResetsSlider() {
@@ -1237,7 +1257,7 @@ final class LumenUITests: XCTestCase {
         shot("before-after")
         el("split-close").tap()
         sleep(1)
-        XCTAssertFalse(el("split-handle").exists, "× ends the split")
+        XCTAssertFalse(el("split-handle").exists, "Ã— ends the split")
     }
 
     func testPasteSomeEditsOnlyTakesTheChosenTools() {
@@ -1249,8 +1269,8 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         XCTAssertEqual(valueOf("reset-Exposure"), "0.00")
         el("btn-menu").tap()
-        XCTAssertTrue(app.buttons["Paste some edits…"].waitForExistence(timeout: 5))
-        app.buttons["Paste some edits…"].tap()
+        XCTAssertTrue(app.buttons["Paste some editsâ€¦"].waitForExistence(timeout: 5))
+        app.buttons["Paste some editsâ€¦"].tap()
         XCTAssertTrue(el("paste-go").waitForExistence(timeout: 5), "the Paste some sheet should open")
         shot("paste-some")
         el("paste-go").tap()
