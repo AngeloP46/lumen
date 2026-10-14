@@ -1,6 +1,6 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
-**Last updated:** 13 Oct 2026 (by PC ASSISTANT, chat with Angelo)
+**Last updated:** 14 Oct 2026 (by PC ASSISTANT, chat with Angelo)
 
 ## One-line summary
 
@@ -26,8 +26,10 @@ an isolated sandbox in the meantime.
 - **Free export:** Light & Color + crop/rotate + presets only. **Pro:** curves, detail, HDR, all
   masks, heal → export requires the subscription.
 - **Prices:** ≈£1/month (7-day trial) + ≈£8/year → closest Apple UK tiers.
-- **Watermark:** clearly visible, large, corner, ~15–25% opacity, Pro-edited previews only,
-  App Store build only.
+- **Watermark:** tiled diagonal "Lumaforge" text across the whole photo, ~45 % opacity, white
+  with a dark shadow, Pro-edited previews only, App Store build only. (14 Oct: replaced a
+  single badge — Angelo: the first 30 %-material version was invisible on bright skies, the
+  solid-badge version "looked like a button"; tiled protection style is the agreed look.)
 - **iPhone-only** at launch, **instant release to 100%**, **worldwide, English only**.
 - **Name:** placeholder **"Lumaforge"** in all code (that name is taken on the App Store — final
   name is Angelo's to pick before Gate 4; "Lumen" is also taken).
@@ -65,6 +67,24 @@ an isolated sandbox in the meantime.
    This is the Gate 2 proof; first run results pending in the Actions tab (workflow
    "RAW format matrix"). CR2 and ProRAW still need samples — ProRAW especially may need a real
    iPhone sample (see open questions).
+9. **14 Oct (this session) — screenshots + watermark fixed:**
+   - Watermark reworked twice after Angelo compared the real captures: (a) the 30 %-opacity
+     material capsule was invisible on bright skies; (b) the solid dark badge "looked like a
+     button". Final look = **tiled diagonal "Lumaforge" text across the whole photo**
+     (`LumaforgeMark.swift` is now a `Canvas`), 45 % opacity, white + dark shadow, clipped to
+     the photo frame in `EditorView` (follows zoom/pan). Angelo approved the visibility; the
+     tiled style is his requested "other apps' protection" look.
+   - `app-store-sandbox.yml` now captures **10 real screenshots** (artifact `app-store-shots`):
+     01 free light, 02 grade, 03 curve, 04 detail, 05 masks, 06 heal, 07 export sheet,
+     08 batch select, 09 watermark, 10 paywall. New CI-only demo hooks (all launch-arg driven,
+     no runtime cost): `-lumenDemoGrade`, `-lumenDemoCurve`, `-lumenDemoDetail2`,
+     `-lumenDemoExport`, `-lumenDemoBatch`, plus existing `-lumenDemoMask`/`-lumenDemoPeople`.
+   - **`-lumenDemoNoWM`** suppresses the watermark so the ad shots (01–08, 10) are captured
+     CLEAN; only 09 shows the watermark. Angelo: ad images must not carry the watermark.
+   - **05-masks / 06-heal are NOT listing material** — the simulator has no AI; those overlays
+     are CI stand-ins. Listing set = 01, 02, 03, 04, 07, 08, 10 (all clean, all real).
+   - `docs/APPSTORE-ASSETS.md` screenshot plan updated to the 10-shot set + proposed 6-shot
+     App Store order with headlines.
 
 ## What to do next (in order)
 
@@ -72,8 +92,8 @@ an isolated sandbox in the meantime.
    `Lumen-Sandbox\SANDBOX-LOG.md`, check `git log` in `Lumen-Sandbox`, and look at the Actions
    tab of the sandbox branch (browser: https://github.com/AngeloP46/lumen/actions — branch
    `sandbox`). Report: what was drafted, whether the engine test passes, open questions.
-   Key artifacts: `app-store-shots` (the 3 App Store screenshots) and `raw-matrix` (RESULT.txt
-   of the RAW format test).
+   Key artifacts: `app-store-shots` (the 10 App Store screenshots — see timeline item 9) and
+   `raw-matrix` (RESULT.txt of the RAW format test).
 2. **When Claude's usage is back (~15 Oct):** give him the hand-off message below.
 3. **Gate 3 (Angelo, free):** landing page + waitlist + ~2 weeks of before/after clips before
    any money is spent (plan §7).
@@ -99,9 +119,13 @@ an isolated sandbox in the meantime.
 > New this time: `docs/APPSTORE-ASSETS.md` in the sandbox branch is a full draft of the App
 > Store listing (name/subtitle/description/keywords/privacy/screenshot plan/subscription setup
 > checklist/rejection checklist) — review it and fold it into App Store Connect at Gate 4.
-> The `app-store-sandbox.yml` workflow also captures 3 real screenshots on every push
-> (artifact `app-store-shots`); use them as the base for the final App Store screenshots
-> (compose them into phone frames with headlines — see the screenshot plan in the doc).
+> The `app-store-sandbox.yml` workflow captures **10 real simulator screenshots** on every push
+> (artifact `app-store-shots`): 01 free light, 02 grade, 03 curve, 04 detail, 05 masks (CI
+> stand-in — not for the listing), 06 heal (CI stand-in — not for the listing), 07 export
+> sheet, 08 batch, 09 watermark, 10 paywall. Shots 01–08 and 10 are captured clean via the
+> `-lumenDemoNoWM` flag (Angelo: no watermark in ad images). Compose the listing images from
+> 01, 02, 03, 04, 07, 08, 10 (order + headlines in the doc). The watermark is now a tiled
+> diagonal pattern (`LumaforgeMark.swift`, a `Canvas`) — review its opacity/spacing on device.
 > `raw-matrix.yml` + `Tests/rawmatrix/` are a working RAW format matrix (CR3/NEF/RAF/ARW/DNG)
 > — check its Actions results; extend it to CR2 and ProRAW (needs a real iPhone ProRAW sample)
 

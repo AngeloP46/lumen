@@ -10,9 +10,11 @@ Store code per `docs/APPSTORE-PLAN.md` (v2, export-gate model) and `SANDBOX-BRIE
 | `Sources/Store/LumenStore.swift` | StoreKit 2 store: products, entitlements, purchase, restore, `ProStatus`. `#if APP_STORE` = real StoreKit; `#else` = always-Pro stub (SideStore builds). |
 | `Sources/Store/ProGate.swift` | `EditSettings.usesProFeatures` — the free/Pro line: free = Light + Color + crop/straighten/turns + presets; Pro = Grade, Curve, Detail, HDR, masks, heals. Respects the Edits-sheet `disabled` switches. |
 | `Sources/Views/PaywallView.swift` | The export-gate paywall: both products with real prices, trial line, Restore, privacy line, free close path. |
-| `Sources/Views/LumaforgeMark.swift` | Watermark (placeholder glyph + "Lumaforge" name). Two placements (corner/bottom) — Angelo picks. |
+| `Sources/Views/LumaforgeMark.swift` | Watermark. 14 Oct: now a tiled diagonal "Lumaforge" text pattern (SwiftUI `Canvas`), 45 % opacity, white + dark shadow — the classic protection look Angelo asked for (the earlier single-badge version was invisible at 30 %, then "looked like a button"). |
 | `.github/workflows/app-store-sandbox.yml` | Manual-only compile check: proves the draft builds with `SWIFT_ACTIVE_COMPILATION_CONDITIONS=APP_STORE` + bundle ID override on GitHub's Mac. No signing (documented for Gate 4). |
-| `Sources/Views/EditorView.swift` (EDITED — 4 small hooks, all `#if APP_STORE`) | 1) `requestExport()` gate function, 2) paywall sheet, 3) export button calls the gate + small crown badge, 4) watermark over the canvas. |
+| `Sources/Views/EditorView.swift` (EDITED — hooks, all `#if APP_STORE`/demo-guarded) | 1) `requestExport()` gate function, 2) paywall sheet, 3) export button calls the gate + small crown badge, 4) tiled watermark over the canvas (skipped when `-lumenDemoNoWM` is set), 5) `applyDemo()` pre-builds per-tool demo edits for screenshots (`-lumenDemoGrade`/`Curve`/`Detail2`/`Export`/`People`). |
+| `Sources/Views/LibraryView.swift` (EDITED — 1 hook) | `-lumenDemoBatch` enters selection mode with photos checked, so the batch-export bar is visible in the screenshot. |
+| `Sources/Demo.swift` (EDITED) | Added `noWM` (`-lumenDemoNoWM`): suppresses the watermark in a CI launch so ad shots are clean. |
 
 **Nothing else was touched.** `project.yml`, `build.yml`, engine-test, ui-test, all engine
 files, SideStore feed — untouched.
@@ -33,6 +35,14 @@ files, SideStore feed — untouched.
 5. **Watermark on 100% zoom view:** the hook covers the canvas only. If the 100% view is a
    separate view path, the mark needs a second hook — I couldn't confirm without more reading;
    flagged rather than guessed.
+7. **Tiled watermark tuning:** 45 % opacity / 34 pt text / -24° / 250×130 pt spacing are
+   guesses from screenshot captures, never eyeballed on a real device. Tune in
+   `LumaforgeMark.swift` (the `Canvas`) if it reads too faint or too loud on a phone.
+8. **`-lumenDemoNoWM`** is launch-arg-only (CI screenshots) — it does nothing in normal use,
+   but it means the watermark can be suppressed in any test launch. Confirm that's acceptable.
+9. **Screenshots 05/06 (masks/heal)** use CI stand-ins (fake AI). Angelo has ruled them out of
+   the App Store listing; real mask/heal ad shots would need a real device or a captured
+   photo. The listing set is 01, 02, 03, 04, 07, 08, 10 (all clean, all real).
 6. **Sandbox compile-check workflow:** run it manually from the Actions tab (workflow_dispatch)
    to prove the draft builds. It does NOT compile the new Store files into the engine test —
    the engine test compiles a fixed file list, so it's unaffected by this draft (which is the
@@ -94,6 +104,19 @@ Canon R5 CR3, Nikon D750 NEF, Fuji X-T4 RAF, Sony A7 ARW and 5D III DNG all open
 (non-blank) and exported to JPEG, HEIC and 16-bit TIFF at full resolution on GitHub's Mac.
 Still missing from the matrix: CR2 (needs an old-Canon sample) and ProRAW (needs a real
 iPhone ProRAW file — a real device is the only clean source).
+
+## 14 Oct session — screenshots + watermark (all pushed to `sandbox/`)
+
+- Watermark reworked twice (see open question 7): final = tiled diagonal, `Canvas`-based.
+- `app-store-sandbox.yml` now captures 10 shots; 01–08 + 10 are clean (`-lumenDemoNoWM`),
+  only 09 shows the watermark. Run 38547865597 (5d86f40) **PASSED** — all 10 shots verified:
+  watermark clearly visible on 09, no watermark on 01/04 (04 is a Pro edit — proves the
+  clean flag works on the gate case).
+- 05/06 are CI stand-ins only — NOT listing material (Angelo's ruling).
+- Listing set for the App Store: 01, 02, 03, 04, 07, 08, 10. Order + headlines in
+  `docs/APPSTORE-ASSETS.md` §10.
+- All changes are launch-arg/demo-guarded or `#if APP_STORE` — the SideStore build (flag
+  off) is unaffected; `project.yml` and `build.yml` still untouched.
 
 ## What to check first when building in the real repo
 
