@@ -1,9 +1,9 @@
 // Headless RAW format matrix: `raw-matrix <metallib> <inputDir> <outDir>`
 //
-// One sample per camera RAW format (Canon CR3, Nikon NEF, Fuji RAF, Sony ARW, Adobe DNG).
+// One sample per camera RAW format (Canon CR2/CR3, Nikon NEF, Fuji RAF, Sony ARW, Adobe DNG).
 // For each: open, apply an exposure edit, decode and reopen JPEG/HEIC/16-bit TIFF exports.
-// This is sample coverage, not proof of every camera model. CR2 and iPhone ProRAW remain
-// a separate launch gate until genuine samples are added and verified.
+// This is sample coverage, not proof of every camera model. iPhone ProRAW remains
+// a separate launch gate until a genuine sample is added and verified.
 //
 // DRAFT — sandbox only. Not part of the SideStore build.
 import CoreImage
@@ -23,7 +23,7 @@ guard LumenKernels.shared != nil else { print("KERNELS FAILED TO LOAD"); exit(1)
 
 let files = ((try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? [])
     .sorted { $0.lastPathComponent < $1.lastPathComponent }
-let wanted = ["cr3", "nef", "raf", "arw", "dng"]
+let wanted = ["cr2", "cr3", "nef", "raf", "arw", "dng"]
 print("samples:", files.map { $0.lastPathComponent }.joined(separator: " | "))
 
 var failures: [String] = []
@@ -103,7 +103,7 @@ for f in files {
 let found = Set(files.map { $0.pathExtension.lowercased() }.filter { wanted.contains($0) })
 check(found == Set(wanted), "missing RAW sample formats: \(Set(wanted).subtracting(found).sorted())")
 let summary = failures.isEmpty
-    ? "PASS: \(found.count) sample formats opened, edited and exported. CR2 and iPhone ProRAW NOT covered."
+    ? "PASS: \(found.count) sample formats opened, edited and exported. iPhone ProRAW NOT covered."
     : "FAILED: \(failures.count) problems\n" + failures.map { "  - " + $0 }.joined(separator: "\n")
 print("==== RAW MATRIX SUMMARY ====")
 print(summary)

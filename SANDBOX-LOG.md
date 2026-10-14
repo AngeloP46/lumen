@@ -148,3 +148,5 @@ app-store-sandbox.yml now runs it and builds flag OFF as well as ON. Existing Si
 project.yml/build.yml/model-fetch scripts untouched. Strengthened Tests/rawmatrix/main.swift
 with exposure edit, exact sample-extension coverage, reopened exports/dimensions/TIFF depth.
 CR2 and ProRAW remain explicitly untested. Compilation and runtime results pending GitHub CI.
+
+CR2 follow-up: added the public-domain Canon EOS 5D Mark II RAW sample (raw.pixls.us sample 1182), pinned SHA-256 81c5ee6da45c4e22584c5344807ac32e2c9ba82ad274486ba64745ef8dd4f69c. RAW matrix now requires six exact formats. ProRAW remains missing; no build results yet.

@@ -8,7 +8,7 @@ on:
       - '.github/workflows/raw-matrix.yml'
 
 # DRAFT — sandbox. Proves the engine opens and exports one sample of every major camera RAW
-# format (Canon CR3, Nikon NEF, Fuji RAF, Sony ARW, DNG). Samples come from raw.pixls.us
+# format (Canon CR2/CR3, Nikon NEF, Fuji RAF, Sony ARW, DNG). Samples come from raw.pixls.us
 # (public domain). Does not touch the SideStore build or the main branch.
 concurrency:
   group: raw-matrix-${{ github.ref }}
@@ -23,6 +23,8 @@ jobs:
       - name: Fetch one sample per RAW format
         run: |
           mkdir -p samples
+          bash .github/ci/get.sh samples/canon-5d2.CR2 "https://raw.pixls.us/getfile.php/1182/nice/Canon%20-%20EOS%205D%20Mark%20II%20-%20RAW%20(3%3A2).CR2" 20000000
+          echo "81c5ee6da45c4e22584c5344807ac32e2c9ba82ad274486ba64745ef8dd4f69c  samples/canon-5d2.CR2" | shasum -a 256 -c -
           bash .github/ci/get.sh samples/canon-r5.CR3  "https://raw.pixls.us/data/Canon/EOS%20R5/Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3" 20000000
           bash .github/ci/get.sh samples/nikon-d750.NEF "https://raw.pixls.us/data/Nikon/D750/compressed_14_bit.NEF" 10000000
           bash .github/ci/get.sh samples/fuji-xt4.RAF   "https://raw.pixls.us/data/Fujifilm/X-T4/DSCF0266.RAF" 10000000

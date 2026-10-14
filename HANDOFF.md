@@ -11,7 +11,7 @@ longer count as Pro. Added an in-app privacy notice and Apple's standard Terms l
 
 Added export-policy regression checks and a flag-OFF simulator build to the sandbox compile
 workflow. Strengthened RAW checks to apply an edit and reopen output, checking dimensions and
-16-bit TIFF. CR2 and genuine iPhone ProRAW samples still missing. No main changes or SideStore
+16-bit TIFF. CR2 sample added from raw.pixls.us with a pinned SHA-256; genuine iPhone ProRAW still missing. No main changes or SideStore
 publication. Build/testing results will be recorded here when available.
 
 Still unresolved: publish an app-specific privacy URL for App Store metadata (current website
