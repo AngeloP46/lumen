@@ -60,6 +60,26 @@ func finishChecks() -> Never {
     exit(failures.isEmpty ? 0 : 1)
 }
 
+// Clipping must mark real black/white pixels while leaving transparent letterboxing empty.
+do {
+    let kernel = LumenKernels.shared!.clip!
+    let bounds = CGRect(x: 0, y: 0, width: 4, height: 4)
+    for (name, color, expected) in [
+        ("transparent", CIColor(red: 0, green: 0, blue: 0, alpha: 0), [Float](repeating: 0, count: 4)),
+        ("black", CIColor(red: 0, green: 0, blue: 0), [Float(0.1), 0.4, 1, 1]),
+        ("white", CIColor(red: 1, green: 1, blue: 1), [Float(1), 0.08, 0.08, 1])
+    ] {
+        let image = CIImage(color: color).cropped(to: bounds)
+        guard let result = kernel.apply(extent: bounds, arguments: [image, CIVector(x: 1, y: 0.0007, z: 0, w: 0)]) else {
+            check(false, "clipping kernel failed for \(name)"); continue
+        }
+        var pixel = [Float](repeating: 0, count: 4)
+        LumenGPU.context.render(result, toBitmap: &pixel, rowBytes: 16,
+                                bounds: CGRect(x: 1, y: 1, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        for i in 0..<4 { check(abs(pixel[i] - expected[i]) < 0.015, "clipping \(name) channel \(i): \(pixel)") }
+    }
+}
+
 func now() -> Double { Date().timeIntervalSinceReferenceDate }
 
 func saveJPEG(_ cg: CGImage, _ name: String) {

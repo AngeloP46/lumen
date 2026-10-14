@@ -63,6 +63,78 @@ final class LumenUITests: XCTestCase {
         ((try? String(contentsOfFile: logPath, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
     }
 
+    /// Focused checks for the owner's October 14 editor reports; no full-suite rerun needed.
+    func testOctoberEditorFixes() {
+        launch(open: 0, tool: "Light")
+        let slider = el("slider-Highlights")
+        slider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: slider.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(2) // debounced settings and history are written together
+        let edited = valueOf("reset-Highlights")
+        XCTAssertNotEqual(edited, "0")
+        app.terminate()
+        if let i = app.launchArguments.firstIndex(of: "-lumenDemoFresh") {
+            app.launchArguments.removeSubrange(i...i + 1)
+        }
+        app.launch()
+        XCTAssertTrue(el("photo").waitForExistence(timeout: 60))
+        sleep(3)
+        XCTAssertEqual(valueOf("reset-Highlights"), edited)
+        XCTAssertTrue(el("btn-undo").isEnabled, "saved undo must survive reopening")
+        for _ in 0..<8 {
+            if valueOf("reset-Highlights") == "0" || !el("btn-undo").isEnabled { break }
+            el("btn-undo").tap(); sleep(1)
+        }
+        XCTAssertEqual(valueOf("reset-Highlights"), "0")
+        XCTAssertTrue(el("btn-redo").isEnabled)
+        // Persist the redo stack as well, then reopen and use it.
+        sleep(2); app.terminate(); app.launch()
+        XCTAssertTrue(el("photo").waitForExistence(timeout: 60)); sleep(3)
+        XCTAssertTrue(el("btn-redo").isEnabled)
+        el("btn-redo").tap(); sleep(1)
+        XCTAssertNotEqual(valueOf("reset-Highlights"), "0")
+        slider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: slider.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)))
+        sleep(1)
+        XCTAssertFalse(el("btn-redo").isEnabled, "a new edit invalidates redo")
+        let handle = el("panel-handle")
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 0, dy: 450)))
+        sleep(2)
+        XCTAssertFalse(el("panel").exists)
+        if let d = drawn() {
+            XCTAssertEqual(d.top, d.height - d.bottom, accuracy: 2, "closed panel must centre the photo")
+        } else { XCTFail("missing photo bounds") }
+        shot("closed-panel-centred")
+
+        app.terminate()
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoZoom", "7.8"])
+        let photo = el("photo")
+        photo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: photo.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.6)))
+        photo.pinch(withScale: 1.8, velocity: 2)
+        sleep(2)
+        let points = events().filter { $0.contains("pinch point ") }
+        guard let before = points.last(where: { $0.contains("before") }),
+              let after = points.last(where: { $0.contains("after") }) else {
+            return XCTFail("pinch must report its release point")
+        }
+        func coordinates(_ line: String) -> [Double] {
+            let parts = line.split(separator: " ")
+            guard let index = parts.firstIndex(of: "point"), parts.count > index + 4 else { return [] }
+            return parts[(index + 2)...(index + 3)].compactMap { Double($0) }
+        }
+        let b = coordinates(before), a = coordinates(after)
+        XCTAssertEqual(b.count, 2); XCTAssertEqual(a.count, 2)
+        if b.count == 2 && a.count == 2 {
+            XCTAssertEqual(a[0], b[0], accuracy: 0.01)
+            XCTAssertEqual(a[1], b[1], accuracy: 0.01)
+        }
+        XCTAssertTrue(before.contains("zoom 9.200"), "test must exercise elastic overshoot: \(before)")
+        XCTAssertEqual(zoomLevel(), 8, accuracy: 0.1)
+        shot("maximum-zoom-release")
+    }
+
     // MARK: sliders
 
     func testDoubleTapResetsSlider() {

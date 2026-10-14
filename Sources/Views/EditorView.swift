@@ -83,6 +83,7 @@ struct EditorView: View {
     @GestureState private var pinchTouching = false
     @State private var lastHoldEnd = Date.distantPast
     // two-finger pinch/pan (TwoFingerWatcher): where it started, and whether fingers are on the photo right now
+    @State private var pinchAnchor: CGPoint?
     @State private var twoFinger: (zoom: CGFloat, pan: CGSize, centre: CGPoint, spread: CGFloat)?
     @State private var lastPinchEnd = Date.distantPast
 
@@ -460,7 +461,7 @@ struct EditorView: View {
     /// The photo sits directly on top of the panel (spare height above it, under the floating buttons and the
     /// histogram) and grows upwards into that space when zoomed. Masks and Crop keep it centred, so handles and the crop
     /// frame have room all round.
-    private var alignBottom: Bool { !chromeHidden && !landscape && tool != .masks && tool != .crop }
+    private var alignBottom: Bool { !chromeHidden && !landscape && tool != nil && tool != .masks && tool != .crop }
 
     private var canvas: some View {
         photoArea
@@ -903,11 +904,13 @@ struct EditorView: View {
             if tool == .masks { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
             if tool == .heal { vm.healCancel() }
             twoFinger = (zoom, pan, p, spread)
+            pinchAnchor = p
             panBase = nil
             pinchBase = nil
             vm.showOriginal = false
         case .changed:
             guard let b = twoFinger else { return }
+            pinchAnchor = p
             // a little give past the limits while the fingers are down; it settles back when they lift
             let z = min(max(b.zoom * spread / b.spread, minZoom * 0.8), maxZoom * 1.15)
             let c = CGPoint(x: xf.canvas.width / 2, y: xf.canvas.height / 2)
@@ -920,16 +923,30 @@ struct EditorView: View {
             guard twoFinger != nil else { return }
             twoFinger = nil
             lastPinchEnd = Date()
-            settleZoom(xf)
+            if DemoMode.isOn { logPinchPoint("before", xf) }
+            settleZoom(xf, anchor: pinchAnchor)
+            if DemoMode.isOn { logPinchPoint("after", xf) }
+            pinchAnchor = nil
         }
     }
 
+    private func logPinchPoint(_ phase: String, _ xf: ViewXform) {
+        guard let p = pinchAnchor else { return }
+        let x = (p.x - xf.canvas.width / 2 - pan.width) / zoom
+        let y = (p.y - xf.canvas.height / 2 - drop(zoom, xf) - pan.height) / zoom
+        DemoMode.log(String(format: "pinch point %@ %.5f %.5f zoom %.3f", phase, Double(x), Double(y), Double(zoom)))
+    }
+
     /// After a pinch: back inside the zoom limits; anything close to "fit" snaps to it.
-    private func settleZoom(_ xf: ViewXform) {
+    private func settleZoom(_ xf: ViewXform, anchor: CGPoint? = nil) {
         let target = min(max(zoom, minZoom), maxZoom)
         guard target != zoom || abs(target - 1) < 0.03 else { return }
         withAnimation(.easeOut(duration: 0.18)) {
-            if abs(target - 1) < 0.03 { resetZoom() } else { zoom = target; pan = clampPan(pan, zoom: target, xf) }
+            if abs(target - 1) < 0.03 { resetZoom() } else {
+                // Releasing an elastic pinch must keep the last touched photo point in place.
+                setZoom(target, anchor: anchor ?? CGPoint(x: xf.canvas.width / 2, y: xf.canvas.height / 2),
+                        from: (zoom, pan), xf)
+            }
         }
     }
 
@@ -945,10 +962,10 @@ struct EditorView: View {
                 }
                 if let b = pinchBase { setZoom(b.zoom * v.magnification, anchor: v.startLocation, from: b, xf) }
             }
-            .onEnded { _ in
+            .onEnded { v in
                 guard pinchBase != nil else { return }
                 pinchBase = nil
-                settleZoom(xf)
+                settleZoom(xf, anchor: v.startLocation)
             }
     }
 

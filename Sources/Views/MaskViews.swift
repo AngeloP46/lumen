@@ -60,9 +60,9 @@ struct LumRangeEditor: View {
         }
     }
 
-    /// Feather stored as 0...0.5, shown as 0...50 %, never reaching past the end of the scale.
+    /// Feather stored as 0...0.5, shown as 0...50 %. Depth feather may extend beyond the available depth values.
     private func soft(_ b: Binding<Double>, limit: @escaping () -> Double) -> Binding<Double> {
-        Binding(get: { b.wrappedValue * 100 }, set: { b.wrappedValue = min($0 / 100, max(limit(), 0)) })
+        Binding(get: { b.wrappedValue * 100 }, set: { b.wrappedValue = min(max($0 / 100, 0), depth ? 0.5 : max(limit(), 0)) })
     }
 
     private func preset(_ title: String, _ lo: Double, _ hi: Double, _ lf: Double, _ hf: Double) -> some View {
@@ -151,10 +151,10 @@ struct LumRangeEditor: View {
                     switch active ?? 3 {
                     case 0:
                         low = min(v, high - 0.02)
-                        lowFeather = min(lowFeather, low)
+                        if !depth { lowFeather = min(lowFeather, low) }
                     case 1:
                         high = max(v, low + 0.02)
-                        highFeather = min(highFeather, 1 - high)
+                        if !depth { highFeather = min(highFeather, 1 - high) }
                     case 2:
                         lowFeather = min(max(low - v, 0), min(0.5, low))
                     default:
