@@ -11,6 +11,11 @@ func expect(_ name: String, pro: Bool, edits: (inout EditSettings) -> Void) {
 }
 
 expect("untouched photo", pro: false) { _ in }
+expect("active Lens Blur", pro: true) { $0.lensBlur.amount = 30 }
+expect("focus controls without blur", pro: false) { $0.lensBlur.focusDistance = 0.8 }
+expect("disabled Lens Blur", pro: false) { $0.lensBlur.amount = 30; $0.setOn(.lensBlur, false) }
+expect("preset cannot exempt Lens Blur", pro: true) { Preset.all[0].apply(&$0); $0.lensBlur.amount = 30 }
+
 expect("free light/color/crop", pro: false) { $0.exposure = 1; $0.saturation = 12; $0.cropL = 0.1 }
 expect("neutral grading controls", pro: false) { $0.grading.shadows.hue = 180; $0.grading.balance = 20 }
 expect("visible grading", pro: true) { $0.grading.shadows.sat = 15 }

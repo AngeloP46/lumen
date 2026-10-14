@@ -17,13 +17,25 @@ separate steps. Library batch paste also records the previous settings.
 
 Validation pending: focused October editor UI test 38597024287, IPA build 38597029271,
 engine/clipping regression 38597032919, sandbox flag OFF/ON check 38597191057.
-No new SideStore publication yet. A separate depth slider test is being added.
+No new SideStore publication yet. Depth slider regression passed in 38599011360.
 Do not claim success before those runs finish.
 
-Background blur: Angelo agreed to the proposed background-only prototype using
-depth, tap-to-focus and blur amount, with manual mask corrections. Implementation
-has not started; handle edge halos/foreground colour bleed and test cars/portraits.
-Finish the bug fixes first. Do not accidentally merge App Store paywall work to main.
+Lens Blur is now implemented in shared commit 259d906 (sandbox 7cb505e):
+standalone tool beside Detail, tap-to-focus, amount/focus range/distance, optional
+background refinement via the existing Masks editor. Scrolling toolbar keeps 66pt
+targets and readable labels. Applies before crop/rotation, scales radius across
+preview/export and blurs HDR gain too. Camera RAW depth estimation is the primary
+path; no Portrait-depth replacement was introduced. Older sidecars default blur off.
+Preset/paste keep each photo's focus. Estimated edges can need brush corrections;
+subject colour bleed at background boundaries remains a quality limitation.
+
+User interaction fixture uses synthetic depth only in demo mode, not proof of AI
+quality. Engine has synthetic foreground/background, scaling/crop, zero amount,
+missing depth and backward-compatible sidecar checks. Final runs: build 38599731669
+(passed), engine 38599735465 and combined focused UI 38599740081 (pending).
+Depth slider check passed in 38599011360. Prior shared-fix UI/engine/build all passed.
+Sandbox-only ProGate requires Pro for active Lens Blur, including free preset looks;
+disabled/zero blur remain free. Tests added. Personal Sources/Store untouched. Do not accidentally merge App Store paywall work to main.
 
 ## Latest update — Codex fixes, 14 Oct 2026
 
