@@ -100,6 +100,34 @@ an isolated sandbox in the meantime.
 4. **Gate 4 (Angelo, ~$99):** developer account, App Store Connect setup (plan §6), final name,
    TestFlight beta, submit.
 
+## Review focus for tomorrow (14 Oct PM, marketing day — no new features)
+
+Angelo is pausing feature work to validate demand. When Claude returns, review in this
+order (all on the `sandbox/` branch, nothing merged to main, SideStore untouched):
+
+1. **Subscription logic** (`Sources/Store/LumenStore.swift`, `PaywallView.swift`):
+   - **BUG (confirmed):** the paywall shows "7 days free, then renews" under BOTH products,
+     but the locked decision is a 7-day trial on the MONTHLY only (plan §173/375). The
+     annual row's note is wrong.
+   - Trial detection in `refreshStatus()` is a heuristic (monthly expiry < 8 days =
+     trialing) — verify against StoreKit 2.
+   - Paywall is `#if APP_STORE` only and has a free "Keep editing free" close path —
+     confirm that satisfies Apple's free-tier-must-work rule.
+2. **Export restriction** (`ProGate.swift`, `EditorView.requestExport`):
+   - **GAP (confirmed):** the single-photo export gate exists, but the LIBRARY BATCH export
+     (`LibraryView` → `store.export(list:options:)`) has NO Pro check — a free user can
+     batch-export Pro-edited photos clean. Needs the same gate or per-item gating.
+   - Preset edge case: a preset that sets curve values makes the photo Pro (documented in
+     ProGate.swift; confirm intended).
+3. **Watermark** (`LumaforgeMark.swift`, tiled diagonal, 45 %):
+   - It is a preview overlay ONLY. Confirm it does not affect the exported file — the
+     plan's intent is a watermarked *preview*; if free exports must carry the watermark in
+     the file itself, that's a new pipeline task (currently they don't).
+   - Opacity/angle/spacing tuned from screenshots only — never seen on a real device.
+
+Marketing assets are being prepared separately; listing set = shots 01, 02, 03, 04, 07, 08,
+10 from the `app-store-shots` artifact (all real, all clean).
+
 ## Message to give Claude when he's back (paste in his chat)
 
 > Read `docs/APPSTORE-PLAN.md` in the repo before doing anything. It's a researched launch plan
