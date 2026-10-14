@@ -600,7 +600,12 @@ final class EditorViewModel: ObservableObject {
         lastChange = .distantPast
     }
 
-    func reset() { lastChange = .distantPast; settings = EditSettings() }
+    func reset() {
+        lastChange = .distantPast
+        var s = EditSettings()
+        s.lensBlur.activated = settings.lensBlur.activated
+        settings = s
+    }
 
     func auto() {
         guard let session, let source else { return }
