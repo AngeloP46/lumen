@@ -159,7 +159,8 @@ struct EditorView: View {
             vm.maskEditing = (new == .masks)
             vm.cropEditing = (new == .crop)
             vm.panMode = false
-            if new == .masks, vm.selectedMaskID == nil, let first = vm.settings.masks.first { vm.selectMask(first.id) }
+            if new == .masks, vm.selectedMaskID != nil, vm.selectedMaskID == vm.settings.lensBlur.maskID { vm.selectedMaskID = nil }
+            if new == .masks, vm.selectedMaskID == nil, let first = vm.userMasks.first { vm.selectMask(first.id) }
             if new == .presets { vm.loadPresetThumbs(user: store.userPresets) }
             if new != .heal { vm.selectedHealID = nil; vm.healMessage = nil; vm.cancelPeople() }
             if new == .crop || (new != .masks && zoom < 0.999) { withAnimation(.easeOut(duration: 0.18)) { resetZoom() } }

@@ -206,7 +206,7 @@ struct MaskPanel: View {
         VStack(spacing: 4) {
             if lensOnly, let m = vm.selectedMask {
                 ScrollView { shapeControls(m).padding(.horizontal, 14).padding(.bottom, 8) }
-            } else if vm.settings.masks.isEmpty || adding {
+            } else if vm.userMasks.isEmpty || adding {
                 typeGrid
             } else if let m = vm.selectedMask {
                 header(m)
@@ -324,7 +324,7 @@ struct MaskPanel: View {
                     }
                     .accessibilityIdentifier("mask-add")
                     .accessibilityLabel("New mask")
-                    ForEach(vm.settings.masks) { mk in
+                    ForEach(lensOnly ? vm.settings.masks : vm.userMasks) { mk in
                         let empty = vm.emptyReason(mk) != nil
                         Chip(title: mk.name, system: empty ? "exclamationmark.triangle" : mk.components.first?.kind.icon,
                              selected: mk.id == vm.selectedMaskID) {

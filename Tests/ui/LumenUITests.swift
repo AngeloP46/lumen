@@ -16,12 +16,40 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(log.components(separatedBy: "heal deletion PASS").count - 1, 9, log)
     }
 
+    /// Owner, 15 Oct: after setting the blur, leaving Lens Blur and coming back, the amount could not be changed.
+    func testLensBlurAmountStillAdjustsAfterLeavingTool() {
+        launch(open: 0, tool: "Lens Blur", extra: ["-lumenDemoLensDepth", "1"])
+        XCTAssertTrue(el("lens-blur-focus").waitForExistence(timeout: 40))
+        el("lens-blur-focus").tap()
+        el("lens-focus-layer").coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap()
+        sleep(2)
+        func drag(_ from: CGFloat, _ to: CGFloat) -> Double {
+            let s = el("slider-Blur amount")
+            XCTAssertTrue(s.waitForExistence(timeout: 10))
+            s.coordinate(withNormalizedOffset: CGVector(dx: from, dy: 0.5))
+                .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: to, dy: 0.5)))
+            sleep(1)
+            return Double(valueOf("reset-Blur amount")) ?? -1
+        }
+        let first = drag(0.4, 0.7)
+        for other in ["Detail", "Masks", "Curve"] {
+            el("tool-\(other)").tap(); sleep(1)
+            el("tool-Lens Blur").tap(); sleep(2)
+            let before = Double(valueOf("reset-Blur amount")) ?? -1
+            XCTAssertEqual(before, first, accuracy: 0.6, "amount must be kept after visiting \(other)")
+            let after = drag(0.6, 0.3)
+            XCTAssertLessThan(after, before - 3, "Blur amount must still move after visiting \(other)")
+            _ = drag(0.3, 0.6)
+        }
+        shot("lens-blur-after-return")
+    }
+
     // MARK: helpers
 
     func testLensBlurRevisionsAndPhotoInfo() {
         launch(open: 0, tool: "Lens Blur", extra: ["-lumenDemoLensDepth", "1", "-lumenDemoLegacyLens", "1"])
         XCTAssertTrue(el("lens-blur-focus").waitForExistence(timeout: 40))
-        XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 8, accuracy: 0.1)
+        XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 23, accuracy: 0.1)
         XCTAssertTrue(el("lum-bar").exists, "Depth range must be on the main Lens Blur page")
         XCTAssertTrue(el("slider-Near edge").exists && el("slider-Far edge").exists)
         el("lens-blur-focus").tap()
@@ -65,6 +93,11 @@ final class LumenUITests: XCTestCase {
         shot("lens-blur-inline-refinement")
         el("lens-blur-refine-done").tap()
         XCTAssertTrue(el("slider-Blur amount").exists)
+        // the linked background mask belongs to Lens Blur: Masks must not list it
+        el("tool-Masks").tap(); sleep(1)
+        XCTAssertFalse(app.buttons["Lens Blur background"].exists, "Lens Blur's mask must not appear in Masks")
+        el("tool-Lens Blur").tap()
+        XCTAssertTrue(el("slider-Blur amount").waitForExistence(timeout: 10))
         el("reset-Blur amount").tap()
         XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 0, accuracy: 0.1)
         sleep(2)
