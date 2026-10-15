@@ -1325,6 +1325,20 @@ do {
     check(finite(white) && white.exposure <= 0 && white.exposure >= -2, "Auto on a white frame: \(white.exposure)")
     check(auto(grid(2, 2) { _, _ in grey(0.3) }) == base, "Auto must leave a photo with too few stats unchanged")
     check(auto(grid { _, _ in grey(.nan) }) == base, "Auto must leave a photo with broken stats unchanged")
+    // white balance: a blue cast is warmed, a warm cast cooled, neutral left alone; a frame full of one colour,
+    // a sunset and black-and-white keep their white balance
+    func varied(_ c: SIMD3<Float>) -> PixelGrid { grid { x, y in c * (0.6 + Float((x * 7 + y * 3) % 9) * 0.1) } }
+    let blueCast = auto(varied(SIMD3(0.11, 0.12, 0.15)))
+    let warmCast = auto(varied(SIMD3(0.15, 0.12, 0.11)))
+    let neutral = auto(varied(SIMD3(0.12, 0.12, 0.12)))
+    check(blueCast.temperature > 5 && warmCast.temperature < -5 && abs(neutral.temperature) < 3 && abs(neutral.tint) < 3,
+          "Auto white balance (blue \(blueCast.temperature), warm \(warmCast.temperature), neutral \(neutral.temperature)/\(neutral.tint))")
+    check(auto(varied(SIMD3(0.30, 0.03, 0.03))).temperature == 0, "One colour filling the frame must keep its white balance")
+    check(auto(varied(SIMD3(0.8, 0.4, 0.1))).temperature == 0, "A sunset must keep its warmth")
+    var bwBase = base; bwBase.blackAndWhite = true
+    check(EditSession.autoSettings(grid: varied(SIMD3(0.11, 0.12, 0.15)), subject: nil, current: bwBase).temperature == 0,
+          "Black-and-white photos keep their white balance")
+    check(abs(blueCast.temperature) <= 30 && abs(blueCast.tint) <= 20, "Auto white balance must stay within its limits")
     let mixed = auto(grid { x, _ in x == 0 ? grey(.infinity) : grey(0.1) })
     check(finite(mixed), "Auto must skip non-finite cells")
 }

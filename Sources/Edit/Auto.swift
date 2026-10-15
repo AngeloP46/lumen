@@ -9,12 +9,15 @@ import CoreImage
 ///   highlights above SDR white that the screen can show are left alone.
 /// - Contrast follows the tonal spread (flat gets more, already contrasty gets none), Vibrance the existing
 ///   colour (muted gets more, colourful or black-and-white gets none). Clarity is no longer touched.
+/// - White balance: finds the photo's near-neutral areas (greys, whites, tarmac, cloud) and corrects most of
+///   their colour cast, not all of it, so golden hour stays warm; photos with too little neutral to go on
+///   (one colour filling the frame, a sunset) and black-and-white keep their white balance.
 /// Edge cases: missing / non-finite / tiny stats leave the photo unchanged; black, white, flat and single-colour
 /// photos get bounded, gentle values; an implausible subject (too small, too big) falls back to centre weighting.
 extension EditSession {
     /// The fields Auto sets (and the Auto button restores).
     static let autoKeys: [WritableKeyPath<EditSettings, Double>] =
-        [\.exposure, \.contrast, \.highlights, \.shadows, \.whites, \.blacks, \.vibrance]
+        [\.exposure, \.contrast, \.highlights, \.shadows, \.whites, \.blacks, \.vibrance, \.temperature, \.tint]
 
     func autoSettings(source: ImageSource, current: EditSettings) -> EditSettings {
         Self.autoSettings(grid: source.stats, subject: autoSubjectWeights(source), current: current)
@@ -39,6 +42,7 @@ extension EditSession {
 
         // luminance and saturation per cell; anything non-finite is skipped
         var lum: [Float] = [], sat: [Float] = [], centre: [Float] = [], subj: [Float] = []
+        var rgbCells: [SIMD3<Float>] = []
         lum.reserveCapacity(n)
         let useSubject: Bool = {
             guard let subject, subject.count == n else { return false }
@@ -52,6 +56,7 @@ extension EditSession {
                 guard r.isFinite, gr.isFinite, b.isFinite else { continue }
                 let Y = max(0.22897 * r + 0.69174 * gr + 0.07929 * b, 1e-5)
                 lum.append(Y)
+                rgbCells.append(SIMD3(max(r, 1e-5), max(gr, 1e-5), max(b, 1e-5)))
                 let mx = max(r, gr, b), mn = min(r, gr, b)
                 sat.append(mx > 1e-4 ? (mx - max(mn, 0)) / mx : 0)
                 let dx = (Float(x) + 0.5) / Float(g.width) - 0.5, dy = (Float(y) + 0.5) / Float(g.height) - 0.5
@@ -116,7 +121,42 @@ extension EditSession {
         let colour = mids.count >= 8 ? percentile(mids, nil, 0.5) : 0
         s.vibrance = (s.blackAndWhite || colour < 0.03) ? 0 : Double(max(0, min(25, (0.32 - colour) * 110)).rounded())
 
+        // --- White balance (stats are the photo as decoded, so this is absolute: tapping Auto twice gives the same)
+        if !s.blackAndWhite, let wb = autoWhiteBalance(lum: lum, rgb: rgbCells, white: white) {
+            s.temperature = wb.0; s.tint = wb.1
+        }
+
         for key in autoKeys where !s[keyPath: key].isFinite { s[keyPath: key] = current[keyPath: key] }
         return s
+    }
+
+    /// Temperature / tint (the develop kernel's units) that take most of the cast off the near-neutral areas,
+    /// or nil when the photo gives too little to go on.
+    static func autoWhiteBalance(lum: [Float], rgb: [SIMD3<Float>], white: Float) -> (Double, Double)? {
+        // log chroma per cell: blue vs red, and green vs the red/blue average
+        var ab: [Float] = [], gm: [Float] = []
+        for (i, c) in rgb.enumerated() where lum[i] > 0.03 && lum[i] < 0.9 * white {
+            let mx = max(c.x, c.y, c.z), mn = min(c.x, c.y, c.z)
+            guard (mx - mn) / mx < 0.35 else { continue }        // clearly coloured things are not evidence
+            ab.append(log2(c.z / c.x)); gm.append(log2(c.y / (c.x * c.z).squareRoot()))
+        }
+        guard ab.count >= max(8, lum.count / 20) else { return nil }   // under 5 % near-neutral: leave it
+        func median(_ v: [Float]) -> Float { let s = v.sorted(); return s[s.count / 2] }
+        var cab = median(ab), cgm = median(gm)
+        for _ in 0..<2 {   // keep the cells that agree with the estimate (drops coloured surfaces that slipped in)
+            let keep = ab.indices.filter { abs(ab[$0] - cab) < 0.25 && abs(gm[$0] - cgm) < 0.25 }
+            guard keep.count >= 8 else { break }
+            cab = median(keep.map { ab[$0] }); cgm = median(keep.map { gm[$0] })
+        }
+        // the picker's maths for a spot of this colour (r = 1, b = 2^ab, g = 2^gm * sqrt(b))
+        let r = 1.0, b = Double(exp2(cab)), g = Double(exp2(cgm)) * b.squareRoot()
+        let t = log2(b / r) / 1.2
+        let n = -log2(r * exp2(0.6 * t) / g) / 0.4
+        // most of the way, less for a very strong cast (likely deliberate light), and within sensible limits
+        let strength = abs(cab) > 1.2 ? 0.3 : 0.6
+        let temp = min(max(t * 100 * strength, -30), 30).rounded()
+        let tint = min(max(n * 100 * strength, -20), 20).rounded()
+        guard temp.isFinite, tint.isFinite else { return nil }
+        return (temp, tint)
     }
 }
