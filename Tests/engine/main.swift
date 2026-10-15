@@ -272,6 +272,16 @@ if let file = files.first, let session = EditSession(url: file),
     }
     check(spread(values(output, background)) < spread(values(pattern, background)) * 0.45,
           "Lens Blur did not reduce background detail")
+    // Live preview (half resolution while sliding) must look like the full blur and keep the sharp part sharp
+    let liveMask = session.lensBlurMask(settings, source: src)!
+    let live = EditSession.maskedLensBlur(pattern, mask: liveMask, radius: 100.0 / 100 * 256 * LensBlurSettings.radiusScale * 4, scale: 0.5)
+    let fullBlur = EditSession.maskedLensBlur(pattern, mask: liveMask, radius: 100.0 / 100 * 256 * LensBlurSettings.radiusScale * 4)
+    check(live.extent == extent, "Live Lens Blur preview changed image bounds")
+    let lv = values(live, background), fv = values(fullBlur, background)
+    let liveDelta = zip(lv, fv).map { abs($0.0 - $0.1) }.reduce(0, +) / Float(lv.count)
+    check(liveDelta < 0.06 && lv.allSatisfy { $0.isFinite }, "Live Lens Blur preview differs from the full blur: \(liveDelta)")
+    check(zip(values(live, foreground), values(pattern, foreground)).allSatisfy { abs($0.0 - $0.1) < 0.002 },
+          "Live Lens Blur preview softened the sharp foreground")
     // Lens-like: a bright subject must not glow into the blurred background next to it.
     let bright = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 128, height: 128))
         .composited(over: CIImage(color: CIColor(red: 0.02, green: 0.02, blue: 0.02)).cropped(to: extent))

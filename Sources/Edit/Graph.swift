@@ -5,7 +5,13 @@ import UniformTypeIdentifiers
 
 /// Builds the lazy Core Image graph for a set of edits. Nothing is rendered here, so this is cheap to call per slider tick.
 extension EditSession {
-    func develop(_ edits: EditSettings, source: ImageSource, geometry: Bool, applyCrop: Bool = true, hdrWeight: Double = 0) -> CIImage {
+    /// How Lens Blur is drawn: `.full` (export, thumbnails, the settled preview), `.preview` (half resolution while a
+    /// Lens Blur slider is moving, so fast drags can't pile up heavy GPU work) or `.off` (the histogram: blur barely
+    /// changes the tones, and skipping it removes most of the work while sliding).
+    enum LensQuality { case full, preview, off }
+
+    func develop(_ edits: EditSettings, source: ImageSource, geometry: Bool, applyCrop: Bool = true, hdrWeight: Double = 0,
+                 lens: LensQuality = .full) -> CIImage {
         // sections switched off in the Edits sheet render as if untouched
         let s = edits.effective
         guard let k = LumenKernels.shared else { return source.base }
@@ -37,8 +43,11 @@ extension EditSession {
             gainImg = gk.apply(extent: ext, arguments: args + [gh])
         }
 
-        img = applyLensBlur(img, settings: s, source: source)
-        if let gi = gainImg { gainImg = applyLensBlur(gi, settings: s, source: source) }
+        if lens != .off {
+            let scale = lens == .preview ? 0.5 : 1
+            img = applyLensBlur(img, settings: s, source: source, scale: scale)
+            if let gi = gainImg { gainImg = applyLensBlur(gi, settings: s, source: source, scale: scale) }
+        }
 
         if geometry {
             img = self.geometry(img, s, applyCrop: applyCrop)
@@ -93,7 +102,7 @@ extension EditSession {
                             arguments: [depth, subject, CIVector(x: blur.rampStart, y: 0, z: 0, w: 0)])
     }
 
-    func applyLensBlur(_ input: CIImage, settings: EditSettings, source: ImageSource) -> CIImage {
+    func applyLensBlur(_ input: CIImage, settings: EditSettings, source: ImageSource, scale: Double = 1) -> CIImage {
         let s = settings.effective
         guard s.lensBlur.amount > 0 else { return input }
         if let id = s.lensBlur.maskID, let editable = s.masks.first(where: { $0.id == id }) {
@@ -106,26 +115,35 @@ extension EditSession {
         guard let mask = lensBlurMask(s, source: source) else { return input }
         let radius = min(max(settings.effective.lensBlur.amount, 0), 100) / 100 * Double(source.longEdge) * LensBlurSettings.radiusScale
         guard radius > 0 else { return input }
-        return Self.maskedLensBlur(input, mask: mask, radius: radius)
+        return Self.maskedLensBlur(input, mask: mask, radius: radius, scale: scale)
     }
 
     /// Radius scales with source pixels, so preview, detail and export show the same apparent blur.
     /// Lens-like: round (disc) blur, so bright points become soft circles as with a real lens, and only the
     /// background feeds it, so the subject's colour does not glow into the blurred area around its edges.
     /// Three blur layers are mixed by the blur map, which keeps the blur growing with distance.
-    static func maskedLensBlur(_ input: CIImage, mask: CIImage, radius: Double) -> CIImage {
+    /// `scale` < 1 blurs a smaller copy and scales the blurred layers back up (live preview while sliding); the sharp
+    /// photo and the blur map stay full size, so the subject never goes soft.
+    static func maskedLensBlur(_ input: CIImage, mask: CIImage, radius: Double, scale: Double = 1) -> CIImage {
         let extent = input.extent
         if let k = LumenKernels.shared, let weigh = k.lensWeigh, let compose = k.lensCompose,
            CIFilter(name: "CIBokehBlur") != nil {
             let m = mask.cropped(to: extent)
-            guard let weighted = weigh.apply(extent: extent, arguments: [input.clampedToExtent(), m.clampedToExtent()])
+            guard var weighted = weigh.apply(extent: extent, arguments: [input.clampedToExtent(), m.clampedToExtent()])
             else { return smoothLensBlur(input, mask: mask, radius: radius) }
+            let sc = min(max(scale, 0.25), 1)
+            let down = CGAffineTransform(translationX: -extent.minX, y: -extent.minY).scaledBy(x: sc, y: sc)
+            if sc < 1 { weighted = weighted.cropped(to: extent).transformed(by: down) }
+            let small = sc < 1 ? weighted.extent : extent
             // a disc looks about as strong as a smooth blur of ~0.6x its radius: keep the familiar strength
-            let disc = radius * 1.6
+            // (capped: a huge disc on a big photo only costs memory, it doesn't look any different)
+            let disc = min(radius * 1.6 * sc, 200)
             let layers = [disc / 3, disc * 2 / 3, disc].map { r -> CIImage in
-                weighted.clampedToExtent().applyingFilter("CIBokehBlur", parameters: [
+                var layer = weighted.clampedToExtent().applyingFilter("CIBokehBlur", parameters: [
                     kCIInputRadiusKey: max(r, 0.5), "inputRingAmount": 0, "inputRingSize": 0.1, "inputSoftness": 1.0
-                ]).cropped(to: extent)
+                ]).cropped(to: small)
+                if sc < 1 { layer = layer.clampedToExtent().transformed(by: down.inverted()).cropped(to: extent) }
+                return layer
             }
             if let out = compose.apply(extent: extent, arguments: [input, m] + layers) { return out.cropped(to: extent) }
         }

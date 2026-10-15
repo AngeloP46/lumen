@@ -126,10 +126,23 @@ final class EditorViewModel: ObservableObject {
 
     // MARK: Loading
 
+    nonisolated(unsafe) private var memoryWarning: NSObjectProtocol?
+    deinit { if let o = memoryWarning { NotificationCenter.default.removeObserver(o) } }
+
     func start(store: LibraryStore) {
         guard !started else { return }
         started = true
         self.store = store
+        // iOS is short of memory: let go of everything that can be made again, before it closes the app
+        memoryWarning = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
+                                                               object: nil, queue: .main) { [weak self] _ in
+            LumenGPU.context.clearCaches()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.zoomLevel <= 1.4 { self.detailSource = nil }
+                self.requestRender()
+            }
+        }
         applyingHistory = true
         var loaded = store.editorSettings(for: item)
         if DemoMode.isOn, DemoMode.value("-lumenDemoLegacyLens") != nil {
@@ -297,11 +310,17 @@ final class EditorViewModel: ObservableObject {
         let hdrWeight = s.hdr ? screenStops / max(s.hdrStops, 0.01) : 0
         let badgeStops = settings.hdr ? screenStops : 0
         if hdrScreenStops != badgeStops { hdrScreenStops = badgeStops }
-        var img = session.develop(s, source: active, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: hdrWeight)
-        // the histogram always reads the small SDR preview, even while the 100% view is showing
-        let base = (useDetail || hdrWeight > 0) ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop) : img
+        // Lens Blur is heavy: half resolution while its sliders move, full again on release (crash on fast drags, 15 Oct)
+        let lensLive = lensSliderActive || lensDragging
+        var img = session.develop(s, source: active, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: hdrWeight,
+                                  lens: lensLive ? .preview : .full)
+        // the histogram always reads the small SDR preview, even while the 100% view is showing; without Lens Blur
+        // (it barely moves the tones and would double or triple the GPU work on every change)
+        let lensInPicture = s.effective.lensBlur.amount > 0
+        let base = (useDetail || hdrWeight > 0 || lensInPicture)
+            ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop, lens: .off) : img
         // in HDR the histogram shows everything the photo holds above white, also what the screen can't show now
-        let hdrImg: CIImage? = s.hdr ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: 1) : nil
+        let hdrImg: CIImage? = s.hdr ? session.develop(s, source: source, geometry: !skipGeometry, applyCrop: applyCrop, hdrWeight: 1, lens: .off) : nil
         if overlayVisible, let m = selectedMask {
             let shown = img.extent
             img = session.overlay(img, mask: m, source: active, gain: exp2(s.exposure), settings: s, applyCrop: applyCrop)
@@ -473,6 +492,8 @@ final class EditorViewModel: ObservableObject {
             requestRender()
         }
     }
+    /// Blur amount being dragged (set by the panel's slider; the red preview uses `lensSliderActive`).
+    var lensDragging = false { didSet { if !lensDragging { requestRender() } } }
     @Published var lensPreviewEnabled = UserDefaults.standard.object(forKey: "lensPreviewEnabled") as? Bool ?? true {
         didSet { UserDefaults.standard.set(lensPreviewEnabled, forKey: "lensPreviewEnabled"); requestRender() }
     }
