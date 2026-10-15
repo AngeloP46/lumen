@@ -81,7 +81,7 @@ struct LightPanel: View {
         return ParamPanel(items: items, selected: $sel, header: AnyView(
             PanelActions(resetEnabled: vm.settings.hasEdits(.light), reset: { vm.settings.reset(.light) }) {
                 // lit while the values Auto chose are untouched; tap again to undo it
-                PillButton(title: "Auto", system: "wand.and.stars", active: vm.autoActive) { vm.toggleAuto() }
+                PillButton(title: "Auto", system: vm.autoBusy ? "hourglass" : "wand.and.stars", active: vm.autoActive) { vm.toggleAuto() }
                     .accessibilityIdentifier("pill-auto")
                     .accessibilityValue(vm.autoActive ? "on" : "off")
             }))
