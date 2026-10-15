@@ -1,5 +1,10 @@
 # Lumen – project notes for Claude
 
+## Status — 15 October (Claude review of the 14 October work)
+- Reviewed everything other AIs added since 70f1448: sound and safe overall.
+- Fixed: undo/redo history moved out of the edits sidecar into `edits/<id>.history.json`, encoded and written on a serial background queue (`historyQueue`). The edits file is written synchronously and stays small (previously every 0.5 s save rewrote up to 200 snapshots on the main thread). Old `_undoHistory` in sidecars is still read and moves on the next save. Deletion and Heal-reference scans include the history file; deleting a photo without Heal patches no longer reads every other photo's edits. CI: `testHealDeletionPrivacy` has a 9th check for the separate file.
+- Agreed with Angelo before building (not done yet): Lens Blur panel declutter (Select subject / Blur amount / Near-Far / Refine only), a lens-like blur (bokeh, no subject colour bleed), and not adding a hidden "Lens Blur background" mask to Masks just by moving Near/Far.
+
 ## Lens Blur phone feedback follow-up — 14 October
 Owner reported amount still 0 and unclear subject selection on 0.1.207. PR #5:
 old untouched zero/default settings migrate once on explicit tool entry to amount 8;
@@ -165,7 +170,7 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - Artifacts (screenshots, renders) can't be downloaded from the cloud session (blob storage is blocked by its proxy); check them from the PC or rely on the test assertions.
 
 ## Release routine (owner's call 2026-10-11: no long waits for small fixes)
-- Small fix: push the branch, wait only for **Build IPA** (~2 min, proves it compiles), run just the related UI test(s) on the scratch branch `diag-pinch` if any, fast-forward `main` → SideStore. The full UI suite (~35 min) keeps running on the branch afterwards; if it finds a problem, fix it in the next release.
+- Small fix: push the branch, open a PR, wait for **Build IPA** (~2 min, proves it compiles) + Release readiness, run just the related UI test(s) on a scratch branch if any, merge the PR on GitHub → SideStore. The full UI suite (~35 min) keeps running on the branch afterwards; if it finds a problem, fix it in the next release. (`main` is protected: no direct pushes or fast-forwards.)
 - Big or risky change (engine, gestures, layout maths across tools): wait for the full suite before releasing.
 - Mask Adjust and Detail: the page Reset rides on the first section heading (`ParamPanel.pageReset`), strip = round icon; released 0.1.113 before the full suite finished.
 
@@ -222,7 +227,6 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - Undo from before the new version cannot be reconstructed; future undo/redo is persisted per photo. The global Edits switches still preserve values independently.
 
 ## Status (2026-10-12 01:00: main = latest SideStore build, released after full UI suite + engine test passed: Landscape parts off the sky, AI busy notice, sky-aware depth)
-- The PC copy (`GP work\Lumen`) could not be pulled after this release (the computer link had dropped): next session, run `git pull --ff-only` there first.
 - Panel space (owner, 2026-10-11): in one-at-a-time (strip) layout the panel hugs its row (`panelPlan` snaps to `ToolSpec.compact` unless the handle is being dragged); section headings live in `ToolSpec.sections` and no longer raise the list threshold (`listMin` = header + one heading + 4 rows). In the strip, `PanelActions`' Reset is a 34 pt round icon (id still `pill-Reset`); the mask page's Reset is just "Reset". Radial turn knob sits just below the centre pin (thumb reach). UI test job limit is 45 min (the suite outgrew 30).
 - Pro pack (owner ticked every item of the overnight report): Crop | Transform tabs (flip as seen on screen, auto-level via `levelAngle` / VNDetectHorizonRequest, 7:5, 3:1, custom ratio, grid choices `cropGrid`; Transform = `tVertical/tHorizontal/tAspect/tScale/tOffX/tOffY`, a CIPerspectiveTransform in `geometry` composited over a clear full frame, mapped for masks by `Homography` in `SourceGeometry`; flips `flipH/flipV` before the turns, `mirrored` flips radial angles). Clipping warning (`lumenClip` kernel, More → View; NOT on the histogram: a button there blocked press-and-hold on the photo). Before/after split (More → View, `splitCompare/splitPos`, draggable `split-handle`). Paste some edits (`PasteSomeSheet`, `EditSettings.take`). Grade Global wheel (`ColorGrading.global`, 5th tab). Preset Strength (`presetRecord`, `EditSettings.blend`). People mask (`computePeople`, VNGeneratePersonSegmentationRequest). Mask overlay cropped to the photo. Mask type grid = 5 columns.
 - Auto-level: Vision horizon first (its angle is anticlockwise: Straighten = -angle), else `edgeLevel` (Sobel edge-direction histogram, refined by re-measuring after turning) for photos with no horizon. Engine checks a tilted horizon, a tilted 'building' and a level photo.
@@ -250,7 +254,7 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 
 ## How to continue in a new session
 1. Open the session with working directory `C:\Users\pc user\Projects\app development\Lumen` and tell it to read CLAUDE.md first.
-2. `git checkout main; git pull`, then work on a new branch (`git checkout -b <short-name>`). Every push to it runs Build IPA, the Engine test (engine files) and the UI tests (app files). When green: `git checkout main; git merge --ff-only <short-name>; git push origin main` (this also publishes to SideStore), then delete the branch here and on GitHub (`git branch -d <name>; git push origin --delete <name>`). Before merging, `git fetch` and merge `origin/main` in if another session pushed meanwhile.
+2. `git checkout main; git pull`, then work on a new branch (`git checkout -b <short-name>`). Every push to it runs Build IPA, the Engine test (engine files) and the UI tests (app files). When green, open a PR and merge it on GitHub (`gh pr create`, `gh pr merge --merge`); `main` is protected, so never push or fast-forward it directly. The merge publishes to SideStore. Bring the branch up to date with `origin/main` first if another session merged meanwhile.
 3. Watch CI with `gh run list --repo AngeloP46/lumen --branch <branch>`; fetch artifacts with `gh run download <id> --name <artifact>` (engine-renders, screenshots, uitest, Lumen-ipa) and look at the images.
 4. Another session may be working in this same folder: check `git status` before switching branches and never commit or discard changes you didn't make without asking.
 5. Update this file before finishing.
