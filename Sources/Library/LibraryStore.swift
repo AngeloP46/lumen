@@ -23,6 +23,8 @@ struct BatchResult: Identifiable {
 
 private let thumbQueue = DispatchQueue(label: "lumen.thumbs", qos: .utility)
 private let exportQueue = DispatchQueue(label: "lumen.batch-export", qos: .userInitiated)
+/// Serial: undo-history writes for every photo, in order (see `LibraryStore.save`).
+private let historyQueue = DispatchQueue(label: "lumen.history", qos: .utility)
 
 /// Imported originals live in Documents/Library/files; edits are JSON sidecars in Documents/Library/edits.
 @MainActor
@@ -123,6 +125,11 @@ final class LibraryStore: ObservableObject {
         library.save(edits, for: removed, history: EditHistory(current: edits, undo: [previous], redo: [next]))
         var otherHistory = EditSettings(); otherHistory.heals = [shared]
         library.save(EditSettings(), for: kept, history: EditHistory(current: EditSettings(), undo: [], redo: [otherHistory]))
+        historyQueue.sync {}
+        let sidecar = (try? Data(contentsOf: library.editURL(removed))).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+        let saved = library.history(for: removed, current: edits)
+        check(sidecar != nil && sidecar?["_undoHistory"] == nil && fm.fileExists(atPath: library.historyURL(removed).path)
+              && saved.undo == [previous] && saved.redo == [next], "undo history kept in its own file")
         var clipboard = EditSettings(); clipboard.heals = [copied]; library.clipboard = clipboard
         var recipe = EditSettings(); recipe.heals = [preset]
         library.userPresets = [UserPreset(name: "Legacy", settings: recipe)]
@@ -278,7 +285,10 @@ final class LibraryStore: ObservableObject {
     }
 
     /// CI only: as if the photo had never been opened.
-    func forgetEdits(_ item: LibraryItem) { try? FileManager.default.removeItem(at: editURL(item)) }
+    func forgetEdits(_ item: LibraryItem) {
+        historyQueue.sync {}
+        for u in [editURL(item), historyURL(item)] { try? FileManager.default.removeItem(at: u) }
+    }
 
     struct EditHistory: Codable {
         var current: EditSettings
@@ -286,12 +296,25 @@ final class LibraryStore: ObservableObject {
         var redo: [EditSettings]
     }
 
-    func history(for item: LibraryItem, current: EditSettings) -> EditHistory {
-        guard let data = try? Data(contentsOf: editURL(item)),
+    /// Undo/redo lives in its own file next to the edits (`<id>.history.json`), written on `historyQueue`.
+    /// The edits sidecar stays small, so the save that runs twice a second while editing is cheap and never
+    /// has to encode up to 200 snapshots on the main thread. Sidecars from 0.1.197–0.1.210 kept the history
+    /// inside the edits file under `_undoHistory`; it is still read from there until the next save moves it.
+    private func historyURL(_ item: LibraryItem) -> URL { editsDir.appendingPathComponent("\(item.id.uuidString).history.json") }
+
+    nonisolated private static func readHistory(file: URL, legacy: Data?) -> EditHistory? {
+        if let data = try? Data(contentsOf: file), let h = try? JSONDecoder().decode(EditHistory.self, from: data) { return h }
+        guard let data = legacy,
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let value = json["_undoHistory"],
-              let encoded = try? JSONSerialization.data(withJSONObject: value),
-              var history = try? JSONDecoder().decode(EditHistory.self, from: encoded),
+              let encoded = try? JSONSerialization.data(withJSONObject: value) else { return nil }
+        return try? JSONDecoder().decode(EditHistory.self, from: encoded)
+    }
+
+    func history(for item: LibraryItem, current: EditSettings) -> EditHistory {
+        let file = historyURL(item), legacy = try? Data(contentsOf: editURL(item))
+        // wait for any history write still queued for this photo, so reopening at once never loses steps
+        guard var history = historyQueue.sync(execute: { Self.readHistory(file: file, legacy: legacy) }),
               history.current == current else { return EditHistory(current: current, undo: [], redo: []) }
         history.undo = Array(history.undo.suffix(100))
         history.redo = Array(history.redo.suffix(100))
@@ -301,23 +324,24 @@ final class LibraryStore: ObservableObject {
     func save(_ s: EditSettings, for item: LibraryItem, history supplied: EditHistory? = nil) {
         // A debounced editor save may arrive after library deletion; never recreate its sidecar.
         guard items.contains(where: { $0.id == item.id }) else { return }
-        let previous = settings(for: item)
-        var history = supplied ?? self.history(for: item, current: previous)
-        // Library paste/batch changes are undoable too; editor saves already contain their history.
-        if supplied == nil && s != previous {
-            history.undo.append(previous)
-            history.redo.removeAll()
-        }
-        history.current = s
-        history.undo = Array(history.undo.suffix(100))
-        history.redo = Array(history.redo.suffix(100))
-        guard let settingsData = try? JSONEncoder().encode(s),
-              var json = (try? JSONSerialization.jsonObject(with: settingsData)) as? [String: Any],
-              let historyData = try? JSONEncoder().encode(history),
-              let historyJSON = try? JSONSerialization.jsonObject(with: historyData) else { return }
-        json["_undoHistory"] = historyJSON
-        if let data = try? JSONSerialization.data(withJSONObject: json) {
-            try? data.write(to: editURL(item), options: .atomic)
+        let url = editURL(item), file = historyURL(item)
+        // the old sidecar is read before it is overwritten: it may still hold a pre-move `_undoHistory`
+        let oldData = supplied == nil ? try? Data(contentsOf: url) : nil
+        let previous = supplied == nil ? oldData.map(Self.decodeSettings) ?? EditSettings() : nil
+        // small, fast and synchronous: what the photo looks like is never lost
+        if let data = try? JSONEncoder().encode(s) { try? data.write(to: url, options: .atomic) }
+        historyQueue.async {
+            var history: EditHistory
+            if let supplied { history = supplied } else {
+                // Library paste/batch changes are undoable too; editor saves already carry their history.
+                history = Self.readHistory(file: file, legacy: oldData).flatMap { $0.current == previous ? $0 : nil }
+                    ?? EditHistory(current: previous ?? s, undo: [], redo: [])
+                if let previous, s != previous { history.undo.append(previous); history.redo.removeAll() }
+            }
+            history.current = s
+            history.undo = Array(history.undo.suffix(100))
+            history.redo = Array(history.redo.suffix(100))
+            if let data = try? JSONEncoder().encode(history) { try? data.write(to: file, options: .atomic) }
         }
     }
 
@@ -441,22 +465,28 @@ final class LibraryStore: ObservableObject {
         var ids = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
         ids.formUnion(clipboard?.heals.map(\.id) ?? [])
         for other in items where other.id != item.id {
-            let url = editURL(other)
-            guard fm.fileExists(atPath: url.path) else { continue }
-            guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
-            ids.formUnion(HealStore.references(in: json))
+            for url in [editURL(other), historyURL(other)] {
+                guard fm.fileExists(atPath: url.path) else { continue }
+                guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
+                ids.formUnion(HealStore.references(in: json))
+            }
         }
         return ids
     }
 
     func delete(_ item: LibraryItem) {
         guard items.contains(where: { $0.id == item.id }) else { return }
+        // finish queued history writes first: they may name Heal patches, and must not recreate the file afterwards
+        historyQueue.sync {}
         var patches = HealStore.markDeleted(owner: fileURL(item))
-        if let data = try? Data(contentsOf: editURL(item)), let json = try? JSONSerialization.jsonObject(with: data) {
-            patches.formUnion(HealStore.references(in: json))
+        for url in [editURL(item), historyURL(item)] {
+            if let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) {
+                patches.formUnion(HealStore.references(in: json))
+            }
         }
-        let retained = retainedHealIDs(excluding: item)
-        for u in [fileURL(item), thumbURL(item), editURL(item)] { try? fm.removeItem(at: u) }
+        // reading every other photo's edits is only needed when this one has Heal patches to clean up
+        let retained = patches.isEmpty ? Set<UUID>() : retainedHealIDs(excluding: item)
+        for u in [fileURL(item), thumbURL(item), editURL(item), historyURL(item)] { try? fm.removeItem(at: u) }
         // The thumbnail queue is serial: this runs after any render already in flight for this photo.
         let thumb = thumbURL(item)
         thumbQueue.async { try? FileManager.default.removeItem(at: thumb) }
