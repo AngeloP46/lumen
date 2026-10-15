@@ -1278,6 +1278,71 @@ do {
     } else { check(false, "UI refresh checks: no photo could be opened") }
 }
 
+// Auto (15 Oct 2026): every value from the photo, subject metering, scene key, HDR, edge cases
+do {
+    func grid(_ w: Int = 32, _ h: Int = 24, _ f: (Int, Int) -> SIMD3<Float>) -> PixelGrid {
+        var d = [Float](); d.reserveCapacity(w * h * 4)
+        for y in 0..<h { for x in 0..<w { let c = f(x, y); d += [c.x, c.y, c.z, 1] } }
+        return PixelGrid(width: w, height: h, data: d)
+    }
+    func grey(_ v: Float) -> SIMD3<Float> { SIMD3(v, v, v) }
+    let base = EditSettings()
+    func auto(_ g: PixelGrid, subject: [Float]? = nil, hdr: Bool = false) -> EditSettings {
+        var s = base; s.hdr = hdr; return EditSession.autoSettings(grid: g, subject: subject, current: s)
+    }
+    func finite(_ s: EditSettings) -> Bool { EditSession.autoKeys.allSatisfy { s[keyPath: $0].isFinite } }
+    // flat (foggy) vs contrasty: contrast must differ, not a fixed +12
+    let flat = auto(grid { x, _ in grey(0.14 + Float(x % 4) * 0.01) })
+    let punchy = auto(grid { x, _ in grey(x % 2 == 0 ? 0.004 : 0.8) })
+    check(flat.contrast > punchy.contrast + 10, "Auto contrast must follow the photo (flat \(flat.contrast), punchy \(punchy.contrast))")
+    // colour: muted gets vibrance, already colourful and black-and-white get none
+    let muted = auto(grid { _, _ in SIMD3(0.2, 0.18, 0.16) })
+    let vivid = auto(grid { _, _ in SIMD3(0.4, 0.06, 0.04) })
+    let mono = auto(grid { x, _ in grey(0.05 + Float(x) * 0.01) })
+    check(muted.vibrance > 10 && vivid.vibrance == 0 && mono.vibrance == 0,
+          "Auto vibrance must follow the colour (muted \(muted.vibrance), vivid \(vivid.vibrance), grey \(mono.vibrance))")
+    check(base.clarity == mono.clarity, "Auto must not add Clarity to every photo")
+    // scene key: bright unclipped snow stays bright; dark scene with lights stays dark
+    let snow = auto(grid { x, y in grey(0.6 + Float((x + y) % 6) * 0.05) })
+    check(snow.exposure > -0.8, "Auto darkened a high-key scene too much: \(snow.exposure)")
+    let night = auto(grid { x, y in grey(x < 2 && y < 2 ? 0.95 : 0.01) })
+    check(night.exposure <= 1.0, "Auto brightened a night scene with lights too much: \(night.exposure)")
+    // subject metering: a dark subject in a bright frame is exposed brighter than the frame alone suggests
+    // (subject off-centre, so centre weighting alone would meter the bright surroundings)
+    let backlit = grid { x, _ in grey(x < 12 ? 0.03 : 0.45) }
+    let subject = (0..<(32 * 24)).map { i -> Float in i % 32 < 12 ? 1 : 0 }
+    check(auto(backlit, subject: subject).exposure > auto(backlit).exposure + 0.3, "Auto ignored the subject")
+    let speck = (0..<(32 * 24)).map { $0 == 5 ? Float(1) : 0 }
+    check(auto(backlit, subject: speck).exposure == auto(backlit).exposure, "A tiny subject must fall back to centre metering")
+    // HDR: highlights the HDR range can show are left alone
+    let bright = grid { x, _ in grey(x < 8 ? 2.2 : 0.16) }
+    check(auto(bright, hdr: true).highlights > auto(bright).highlights + 30,
+          "Auto pulled HDR highlights down like SDR (\(auto(bright, hdr: true).highlights) vs \(auto(bright).highlights))")
+    // edge cases: black, white, tiny, broken
+    let black = auto(grid { _, _ in grey(0.00002) })
+    check(finite(black) && black.exposure <= 1.5, "Auto on a black frame: \(black.exposure)")
+    let white = auto(grid { _, _ in grey(1) })
+    check(finite(white) && white.exposure <= 0 && white.exposure >= -2, "Auto on a white frame: \(white.exposure)")
+    check(auto(grid(2, 2) { _, _ in grey(0.3) }) == base, "Auto must leave a photo with too few stats unchanged")
+    check(auto(grid { _, _ in grey(.nan) }) == base, "Auto must leave a photo with broken stats unchanged")
+    // white balance: a blue cast is warmed, a warm cast cooled, neutral left alone; a frame full of one colour,
+    // a sunset and black-and-white keep their white balance
+    func varied(_ c: SIMD3<Float>) -> PixelGrid { grid { x, y in c * (0.6 + Float((x * 7 + y * 3) % 9) * 0.1) } }
+    let blueCast = auto(varied(SIMD3(0.11, 0.12, 0.15)))
+    let warmCast = auto(varied(SIMD3(0.15, 0.12, 0.11)))
+    let neutral = auto(varied(SIMD3(0.12, 0.12, 0.12)))
+    check(blueCast.temperature > 5 && warmCast.temperature < -5 && abs(neutral.temperature) < 3 && abs(neutral.tint) < 3,
+          "Auto white balance (blue \(blueCast.temperature), warm \(warmCast.temperature), neutral \(neutral.temperature)/\(neutral.tint))")
+    check(auto(varied(SIMD3(0.30, 0.03, 0.03))).temperature == 0, "One colour filling the frame must keep its white balance")
+    check(auto(varied(SIMD3(0.8, 0.4, 0.1))).temperature == 0, "A sunset must keep its warmth")
+    var bwBase = base; bwBase.blackAndWhite = true
+    check(EditSession.autoSettings(grid: varied(SIMD3(0.11, 0.12, 0.15)), subject: nil, current: bwBase).temperature == 0,
+          "Black-and-white photos keep their white balance")
+    check(abs(blueCast.temperature) <= 30 && abs(blueCast.tint) <= 20, "Auto white balance must stay within its limits")
+    let mixed = auto(grid { x, _ in x == 0 ? grey(.infinity) : grey(0.1) })
+    check(finite(mixed), "Auto must skip non-finite cells")
+}
+
 // Pro pack (2026-10-11): auto-level, global grading wheel, preset strength, paste some edits, clipping kernel
 do {
     if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f),

@@ -287,6 +287,12 @@ extension EditSession {
         return depths[(depths.count - 1) / 50]...depths[(depths.count - 1) * 49 / 50]
     }
 
+    /// Finds Vision's subject once (Auto meters it). Call off the main thread.
+    func ensureSubject(_ source: ImageSource) {
+        guard !source.hasTried(Self.aiSubject) else { return }
+        source.storeMask(Self.aiSubject, refined(computeSubject(source), source: source))
+    }
+
     /// Computes any automatic masks `s` needs and caches them on `source`. Call off the main thread.
     @discardableResult
     func prepareAutoMasks(_ s: EditSettings, source: ImageSource) -> Bool {
