@@ -674,7 +674,7 @@ final class EditorViewModel: ObservableObject {
     struct AutoRecord { var before: EditSettings; var after: EditSettings }
     @Published private(set) var autoRecord: AutoRecord?
 
-    private static func autoFields(_ s: EditSettings) -> [Double] { EditSession.autoKeys.map { s[$0] } }
+    private static func autoFields(_ s: EditSettings) -> [Double] { EditSession.autoKeys.map { s[keyPath: $0] } }
 
     /// On while the values Auto set are untouched; moving any of them yourself turns it off.
     var autoActive: Bool {
