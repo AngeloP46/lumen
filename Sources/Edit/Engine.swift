@@ -34,6 +34,8 @@ struct LumenKernels {
     var rangeMask: CIColorKernel?
     var lensRamp: CIColorKernel?
     var lensRefinedRamp: CIColorKernel?
+    /// Lens-like Lens Blur (optional: without them the older smooth blur is used).
+    var lensWeigh: CIColorKernel?, lensCompose: CIColorKernel?
     /// Edge refinement for AI masks (optional: without it masks keep their soft edges).
     var gfPack: CIColorKernel?, gfCoef: CIColorKernel?, gfApply: CIColorKernel?
     /// Sky seen through trees (optional: without them the sky mask is the scene model's alone).
@@ -59,6 +61,7 @@ struct LumenKernels {
                             combine: o, maskFinish: p, maskMul: q, overlay: r,
                             gain: k("lumenGain"), gainLocal: k("lumenGainLocal"), applyGain: k("lumenApplyGain"),
                             clip: k("lumenClip"), rangeMask: k("lumenRangeMask"), lensRamp: k("lumenLensRamp"), lensRefinedRamp: k("lumenLensRefinedRamp"),
+                            lensWeigh: k("lumenLensWeigh"), lensCompose: k("lumenLensCompose"),
                             gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
                             skyWeigh: k("lumenSkyWeigh"), leafWeigh: k("lumenLeafWeigh"), skyGaps: k("lumenSkyGaps"))
     }()

@@ -437,6 +437,24 @@ float4 lumenLensRefinedRamp(sample_t d, sample_t selection, float4 p) {
     return float4(radius, radius, radius, 1.0);
 }
 
+// Lens Blur, lens-like: only pixels that are themselves blurred (the background) feed the blur, carried as
+// premultiplied colour so blurring then dividing by alpha averages background only (no subject colour halo).
+float4 lumenLensWeigh(sample_t s, sample_t m) {
+    float w = clamp(m.r * 20.0, 0.0, 1.0);
+    return float4(s.rgb * w, w);
+}
+
+// Picks between the sharp photo and three disc-blurred layers (1/3, 2/3, full radius) by the blur map.
+float4 lumenLensCompose(sample_t s, sample_t m, sample_t b1, sample_t b2, sample_t b3) {
+    float t = clamp(m.r, 0.0, 1.0) * 3.0;
+    float3 l0 = s.rgb;
+    float3 l1 = b1.a > 0.02 ? b1.rgb / b1.a : l0;
+    float3 l2 = b2.a > 0.02 ? b2.rgb / b2.a : l1;
+    float3 l3 = b3.a > 0.02 ? b3.rgb / b3.a : l2;
+    float3 c = t < 1.0 ? mix(l0, l1, t) : (t < 2.0 ? mix(l1, l2, t - 1.0) : mix(l2, l3, t - 2.0));
+    return float4(c, s.a);
+}
+
 // Edge refinement (guided filter, He et al.): the photo's brightness guides a soft mask onto the real edges.
 // 1. pack guide I and mask p as (I, p, I*I) and (I*p); the caller box-blurs both. Alpha stays 1: Core Image treats
 //    alpha as coverage (premultiplied), so it can't carry data.

@@ -254,6 +254,18 @@ struct LensBlurSettings: Codable, Equatable {
     var subjectPoint: Pt? = nil
     var activated = false
     var controlsVersion: Int? = nil
+    /// 2 = gentler Blur amount scale (15 Oct 2026): today's 100 is the old 35. Older saves are converted on load.
+    var scaleVersion: Int? = 2
+
+    /// Blur radius per amount point, as a fraction of the photo's long edge (old scale: 0.018).
+    static let radiusScale = 0.018 * 0.35
+    /// Where Blur amount starts when Lens Blur is first used (the old 8, on the new scale).
+    static let startAmount = 23.0
+
+    /// The background is fully selected from here (just behind the subject)...
+    var fullFrom: Double { min(min(max(focusDistance, 0), 1) + max(focusWidth, 0.02), 1) }
+    /// ...and the blur starts rolling in from here: a wide soft edge, so it builds up gradually like a real lens.
+    var rampStart: Double { max(fullFrom - max(0.2, focusWidth * 2), 0) }
 
     init() {}
     /// Upgrade old untouched zeros once; subsequent explicit zero/reset choices remain off.
@@ -262,10 +274,10 @@ struct LensBlurSettings: Codable, Equatable {
             && focusDistance == 0.3 && focusWidth == 0.12
         let first = !activated || oldDefault
         activated = true; controlsVersion = 1
-        if first { amount = 8 }
+        if first { amount = Self.startAmount }
         return first
     }
-    private enum CodingKeys: String, CodingKey { case amount, focusDistance, focusWidth, maskID, subjectPoint, activated, controlsVersion }
+    private enum CodingKeys: String, CodingKey { case amount, focusDistance, focusWidth, maskID, subjectPoint, activated, controlsVersion, scaleVersion }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         amount = try c.decodeIfPresent(Double.self, forKey: .amount) ?? 0
@@ -274,6 +286,9 @@ struct LensBlurSettings: Codable, Equatable {
         maskID = try c.decodeIfPresent(UUID.self, forKey: .maskID)
         subjectPoint = try c.decodeIfPresent(Pt.self, forKey: .subjectPoint)
         controlsVersion = try c.decodeIfPresent(Int.self, forKey: .controlsVersion)
+        // saved on the old, stronger scale: keep the same look (old 35 = new 100)
+        if try c.decodeIfPresent(Int.self, forKey: .scaleVersion) == nil, amount > 0 { amount = min(amount / 0.35, 100) }
+        scaleVersion = 2
         // A saved old Lens Blur object is already a user choice, including zero.
         activated = try c.decodeIfPresent(Bool.self, forKey: .activated) ?? true
     }
