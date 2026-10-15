@@ -65,6 +65,11 @@ final class LumenUITests: XCTestCase {
         shot("lens-blur-inline-refinement")
         el("lens-blur-refine-done").tap()
         XCTAssertTrue(el("slider-Blur amount").exists)
+        // the linked background mask belongs to Lens Blur: Masks must not list it
+        el("tool-Masks").tap(); sleep(1)
+        XCTAssertFalse(app.buttons["Lens Blur background"].exists, "Lens Blur's mask must not appear in Masks")
+        el("tool-Lens Blur").tap()
+        XCTAssertTrue(el("slider-Blur amount").waitForExistence(timeout: 10))
         el("reset-Blur amount").tap()
         XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 0, accuracy: 0.1)
         sleep(2)

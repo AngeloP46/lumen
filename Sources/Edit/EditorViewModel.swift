@@ -114,6 +114,8 @@ final class EditorViewModel: ObservableObject {
     }
 
     var selectedMask: Mask? { settings.masks.first { $0.id == selectedMaskID } }
+    /// The masks the Masks tool lists: Lens Blur's linked background mask belongs to Lens Blur, not here.
+    var userMasks: [Mask] { settings.masks.filter { $0.id != settings.lensBlur.maskID } }
     var selectedComponent: MaskComponent? {
         guard let m = selectedMask else { return nil }
         return m.components.first { $0.id == selectedComponentID } ?? m.components.first
@@ -544,9 +546,21 @@ final class EditorViewModel: ObservableObject {
         if DemoMode.isOn { DemoMode.log("lens focus picked") }
     }
 
-    func refineLensBlur() {
+    /// Near/Far on the main Lens Blur page: edits the linked background mask's depth band without selecting it
+    /// (it is created the first time; Masks never lists it, it belongs to Lens Blur).
+    func updateLensDepth(_ change: (inout MaskComponent) -> Void) {
+        if settings.lensBlur.maskID.flatMap({ id in settings.masks.first { $0.id == id } }) == nil { refineLensBlur(select: false) }
+        guard let id = settings.lensBlur.maskID else { return }
+        updateMask(id) { m in
+            guard let i = m.components.firstIndex(where: { $0.kind == .depth }) else { return }
+            change(&m.components[i])
+        }
+    }
+
+    func refineLensBlur(select: Bool = true) {
         if let id = settings.lensBlur.maskID, settings.masks.contains(where: { $0.id == id }) {
-            selectMask(id); maskTab = .shape; return
+            if select { selectMask(id); maskTab = .shape }
+            return
         }
         var m = Mask.make(.depth)
         m.name = "Lens Blur background"
@@ -563,7 +577,7 @@ final class EditorViewModel: ObservableObject {
         s.masks.append(m)
         s.lensBlur.maskID = m.id
         settings = s
-        selectMask(m.id); maskTab = .shape
+        if select { selectMask(m.id); maskTab = .shape }
     }
 
     private func prepareAutoMasksIfNeeded() {
@@ -1116,7 +1130,7 @@ final class EditorViewModel: ObservableObject {
     func deleteMask(_ id: UUID) {
         settings.masks.removeAll { $0.id == id }
         if selectedMaskID == id {
-            if let last = settings.masks.last { selectMask(last.id) } else { selectedMaskID = nil; selectedComponentID = nil }
+            if let last = userMasks.last { selectMask(last.id) } else { selectedMaskID = nil; selectedComponentID = nil }
         }
     }
 

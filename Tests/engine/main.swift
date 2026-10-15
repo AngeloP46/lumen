@@ -271,6 +271,19 @@ if let file = files.first, let session = EditSession(url: file),
     }
     check(spread(values(output, background)) < spread(values(pattern, background)) * 0.45,
           "Lens Blur did not reduce background detail")
+    // Lens-like: a bright subject must not glow into the blurred background next to it.
+    let bright = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 128, height: 128))
+        .composited(over: CIImage(color: CIColor(red: 0.02, green: 0.02, blue: 0.02)).cropped(to: extent))
+    let edge = values(session.applyLensBlur(bright, settings: settings, source: src), CGRect(x: 130, y: 16, width: 8, height: 96))
+    let edgeMean = stride(from: 0, to: edge.count, by: 4).map { edge[$0] }.reduce(0, +) / Float(edge.count / 4)
+    check(edgeMean < 0.05, "Lens Blur let the subject's colour bleed into the background: \(edgeMean)")
+    // and a lone bright point in the background spreads into a round disc, not a soft dot
+    let point = CIImage(color: CIColor(red: 8, green: 8, blue: 8)).cropped(to: CGRect(x: 191, y: 63, width: 2, height: 2))
+        .composited(over: CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: extent))
+    let spot = values(session.applyLensBlur(point, settings: settings, source: src), CGRect(x: 184, y: 64, width: 16, height: 1))
+    let reds = stride(from: 0, to: spot.count, by: 4).map { spot[$0] }
+    print("Lens Blur point profile:", reds.map { String(format: "%.3f", $0) }.joined(separator: " "))
+    check(reds.max()! > 0.01 && reds.allSatisfy { $0.isFinite }, "Lens Blur point light vanished")
     settings.lensBlur.amount = 0
     check(values(session.applyLensBlur(pattern, settings: settings, source: src), background) == values(pattern, background),
           "Zero Lens Blur amount changed pixels")
@@ -410,7 +423,11 @@ if args.contains("--lens-blur") {
     if let d = source.depthField { s.lensBlur.focusDistance = Double(d.value(atNormalized: 0.5, 0.65)) }
     check(session.lensBlurMask(s, source: source) != nil, "Sony ARW blur map unavailable")
     if let before = session.renderCGImage(EditSettings(), source: source),
-       let after = session.renderCGImage(s, source: source),
+       let after = { () -> CGImage? in
+           let t0 = Date(); let cg = session.renderCGImage(s, source: source)
+           print(String(format: "Lens Blur Sony preview render %.0f ms (source %.0f px)", Date().timeIntervalSince(t0) * 1000,
+                        Double(max(source.extent.width, source.extent.height))))
+           return cg }(),
        let composite = sheet([("Sony ARW original", before), ("Lens Blur", after)]) {
         saveJPEG(composite, "lens-blur-sony-preview.jpg")
     } else { check(false, "Sony ARW blur preview failed") }

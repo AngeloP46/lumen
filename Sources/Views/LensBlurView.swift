@@ -15,9 +15,7 @@ struct LensBlurPanel: View {
     }
     private func depthValue(_ key: WritableKeyPath<MaskComponent, Double>) -> Binding<Double> {
         Binding(get: { depthComponent[keyPath: key] }, set: { value in
-            vm.refineLensBlur()
-            let c = depthComponent
-            vm.updateComponent(c.id) { $0[keyPath: key] = value; if $0.amount == 0 { $0.amount = 100 } }
+            vm.updateLensDepth { $0[keyPath: key] = value; if $0.amount == 0 { $0.amount = 100 } }
         })
     }
     private var amount: Binding<Double> {
@@ -66,10 +64,6 @@ struct LensBlurPanel: View {
                         Label(message, systemImage: message.hasPrefix("Subject selected") ? "checkmark.circle.fill" : "info.circle")
                             .font(.caption).foregroundStyle(Theme.accent).accessibilityIdentifier("lens-focus-feedback")
                     }
-                    if vm.settings.lensBlur.amount == 0 {
-                        Button("Enable blur at 8") { vm.enableLensBlur() }.font(.caption).frame(minHeight: 44)
-                            .accessibilityIdentifier("lens-blur-enable")
-                    }
                     LabeledSlider(title: "Blur amount", value: amount, neutral: 0, labelWidth: 94, onActive: { vm.lensSliderActive = $0 })
                         .disabled(vm.depthField == nil || vm.autoMaskBusy)
                     LumRangeEditor(low: depthValue(\.lumLow), high: depthValue(\.lumHigh),
@@ -80,13 +74,22 @@ struct LensBlurPanel: View {
                         Button("Refine with brush", action: refine).accessibilityIdentifier("lens-blur-refine")
                             .disabled(vm.depthField == nil || vm.autoMaskBusy)
                         Spacer()
+                        // preference, not an everyday control: shows red over the background while a slider moves
+                        Button { vm.lensPreviewEnabled.toggle() } label: {
+                            Image(systemName: vm.lensPreviewEnabled ? "square.dashed.inset.filled" : "square.dashed")
+                                .frame(width: 44, height: 44)
+                        }
+                        .foregroundStyle(vm.lensPreviewEnabled ? Theme.accent : .secondary)
+                        .accessibilityIdentifier("lens-blur-preview")
+                        .accessibilityLabel("Show background in red while sliding")
+                        .accessibilityValue(vm.lensPreviewEnabled ? "1" : "0")
                         Button("Reset") { vm.settings.reset(.lensBlur); vm.lensBlurPicking = false; vm.lensSelectionPreview = false }
                             .accessibilityIdentifier("lens-blur-reset")
                     }.font(.system(size: 13, weight: .medium)).frame(minHeight: 44)
-                    Toggle("Preview selection while sliding", isOn: $vm.lensPreviewEnabled)
-                        .font(.caption).accessibilityIdentifier("lens-blur-preview")
-                    Text("Select the background depth to blur. Near/Far soften its edges; detected subjects stay protected. Distance is estimated, not metres.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if vm.settings.lensBlur.subjectPoint == nil && vm.lensFocusMessage == nil && !vm.lensBlurPicking {
+                        Text("Select the subject to keep sharp, then set where the blur starts.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }.padding(.horizontal, 14).padding(.bottom, 8)
             }
         }

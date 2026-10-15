@@ -110,8 +110,30 @@ extension EditSession {
     }
 
     /// Radius scales with source pixels, so preview, detail and export show the same apparent blur.
-    /// Clamp the photo at its edge to avoid dark borders; keep the sharp foreground from the original.
+    /// Lens-like: round (disc) blur, so bright points become soft circles as with a real lens, and only the
+    /// background feeds it, so the subject's colour does not glow into the blurred area around its edges.
+    /// Three blur layers are mixed by the blur map, which keeps the blur growing with distance.
     static func maskedLensBlur(_ input: CIImage, mask: CIImage, radius: Double) -> CIImage {
+        let extent = input.extent
+        if let k = LumenKernels.shared, let weigh = k.lensWeigh, let compose = k.lensCompose,
+           CIFilter(name: "CIBokehBlur") != nil {
+            let m = mask.cropped(to: extent)
+            guard let weighted = weigh.apply(extent: extent, arguments: [input.clampedToExtent(), m.clampedToExtent()])
+            else { return smoothLensBlur(input, mask: mask, radius: radius) }
+            // a disc looks about as strong as a smooth blur of ~0.6x its radius: keep the familiar strength
+            let disc = radius * 1.6
+            let layers = [disc / 3, disc * 2 / 3, disc].map { r -> CIImage in
+                weighted.clampedToExtent().applyingFilter("CIBokehBlur", parameters: [
+                    kCIInputRadiusKey: max(r, 0.5), "inputRingAmount": 0, "inputRingSize": 0.1, "inputSoftness": 1.0
+                ]).cropped(to: extent)
+            }
+            if let out = compose.apply(extent: extent, arguments: [input, m] + layers) { return out.cropped(to: extent) }
+        }
+        return smoothLensBlur(input, mask: mask, radius: radius)
+    }
+
+    /// The first Lens Blur (smooth, Gaussian-like): the fallback when the lens-like kernels are unavailable.
+    static func smoothLensBlur(_ input: CIImage, mask: CIImage, radius: Double) -> CIImage {
         let extent = input.extent
         let filter = CIFilter(name: "CIMaskedVariableBlur")
         filter?.setValue(input.clampedToExtent(), forKey: kCIInputImageKey)
