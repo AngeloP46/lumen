@@ -491,7 +491,7 @@ final class EditorViewModel: ObservableObject {
         lensPreviewWork?.cancel(); lensSelectionPreview.toggle()
     }
     func enableLensBlur() {
-        var s = settings; s.lensBlur.amount = 8; s.lensBlur.activated = true; s.lensBlur.controlsVersion = 1
+        var s = settings; s.lensBlur.amount = LensBlurSettings.startAmount; s.lensBlur.activated = true; s.lensBlur.controlsVersion = 1
         s.setOn(.lensBlur, true); settings = s
     }
     private var lensFocusPending = false
@@ -529,7 +529,7 @@ final class EditorViewModel: ObservableObject {
               let distance = source?.depthField?.value(atNormalized: p.x, p.y) else { return }
         lastChange = .distantPast
         var s = settings
-        if s.lensBlur.amount == 0 { s.lensBlur.amount = 8 }
+        if s.lensBlur.amount == 0 { s.lensBlur.amount = LensBlurSettings.startAmount }
         s.lensBlur.activated = true; s.lensBlur.controlsVersion = 1; s.setOn(.lensBlur, true)
         s.lensBlur.focusDistance = Double(distance)
         s.lensBlur.subjectPoint = p
@@ -564,9 +564,9 @@ final class EditorViewModel: ObservableObject {
         }
         var m = Mask.make(.depth)
         m.name = "Lens Blur background"
-        m.components[0].lumLow = min(settings.lensBlur.focusDistance + settings.lensBlur.focusWidth, 1)
+        m.components[0].lumLow = settings.lensBlur.fullFrom
         m.components[0].lumHigh = 1
-        m.components[0].lumLowFeather = settings.lensBlur.focusWidth
+        m.components[0].lumLowFeather = settings.lensBlur.fullFrom - settings.lensBlur.rampStart
         m.components[0].lumHighFeather = 0
         if m.components[0].lumLow >= 0.999 { m.components[0].amount = 0 }
         var subject = MaskComponent.make(.subject, op: .subtract)

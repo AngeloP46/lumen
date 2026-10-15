@@ -90,7 +90,7 @@ extension EditSession {
         guard let depth = source.cachedMask(Self.aiDepth), let kernel = LumenKernels.shared?.lensRamp else { return nil }
         let subject = source.cachedMask(Self.subjectKey(blur.subjectPoint)) ?? Self.constant(0, source.extent)
         return kernel.apply(extent: source.extent,
-                            arguments: [depth, subject, CIVector(x: blur.focusDistance, y: blur.focusWidth, z: 0, w: 0)])
+                            arguments: [depth, subject, CIVector(x: blur.rampStart, y: 0, z: 0, w: 0)])
     }
 
     func applyLensBlur(_ input: CIImage, settings: EditSettings, source: ImageSource) -> CIImage {
@@ -104,7 +104,7 @@ extension EditSession {
         }
         // A no-op must bypass Core Image's colour conversions, not just blend with a black mask.
         guard let mask = lensBlurMask(s, source: source) else { return input }
-        let radius = min(max(settings.effective.lensBlur.amount, 0), 100) / 100 * Double(source.longEdge) * 0.018
+        let radius = min(max(settings.effective.lensBlur.amount, 0), 100) / 100 * Double(source.longEdge) * LensBlurSettings.radiusScale
         guard radius > 0 else { return input }
         return Self.maskedLensBlur(input, mask: mask, radius: radius)
     }

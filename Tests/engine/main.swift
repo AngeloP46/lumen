@@ -235,9 +235,10 @@ if let file = files.first, let session = EditSession(url: file),
    let sample = session.makeSource(maxEdge: 128, materialize: false) {
     let extent = CGRect(x: 0, y: 0, width: 256, height: 128)
     var pattern = CIImage(color: CIColor(red: 0.08, green: 0.08, blue: 0.08)).cropped(to: extent)
-    for x in stride(from: 0, to: 256, by: 8) {
+    // fine stripes (period 4 px): the gentler 15 Oct scale gives a ~2.6 px disc at amount 100 on this 256 px test
+    for x in stride(from: 0, to: 256, by: 4) {
         let stripe = CIImage(color: CIColor(red: 0.7, green: 0.7, blue: 0.7))
-            .cropped(to: CGRect(x: x, y: 0, width: 4, height: 128))
+            .cropped(to: CGRect(x: x, y: 0, width: 2, height: 128))
         pattern = stripe.composited(over: pattern)
     }
     func source(_ image: CIImage) -> ImageSource {
@@ -357,15 +358,19 @@ if let file = files.first, let session = EditSession(url: file),
     let oldBlur = try! JSONDecoder().decode(LensBlurSettings.self, from: Data("{\"amount\":0,\"focusDistance\":0.3,\"focusWidth\":0.12}".utf8))
     check(oldBlur.activated && oldBlur.amount == 0, "Saved legacy zero must not activate blur")
     var upgraded = oldBlur
-    check(upgraded.beginEditing() && upgraded.amount == 8, "Old untouched zero must start at 8 when Lens Blur is opened")
+    check(upgraded.beginEditing() && upgraded.amount == LensBlurSettings.startAmount, "Old untouched zero must start at the start amount when Lens Blur is opened")
     upgraded.amount = 0
     let savedOff = try! JSONDecoder().decode(LensBlurSettings.self, from: JSONEncoder().encode(upgraded))
     var reopened = savedOff
     check(!reopened.beginEditing() && reopened.amount == 0, "New explicit zero must survive migration/reopen")
     var existingOff = oldBlur; existingOff.focusDistance = 0.4
     check(!existingOff.beginEditing() && existingOff.amount == 0, "Previously adjusted zero must stay off")
+    let oldScale = try! JSONDecoder().decode(LensBlurSettings.self, from: Data("{\"amount\":35,\"activated\":true,\"controlsVersion\":1}".utf8))
+    check(abs(oldScale.amount - 100) < 0.01 && oldScale.scaleVersion == 2, "Old-scale 35 must become 100 on the gentler scale")
+    let newScale = try! JSONDecoder().decode(LensBlurSettings.self, from: JSONEncoder().encode(oldScale))
+    check(abs(newScale.amount - 100) < 0.01, "New-scale amounts must not be converted twice")
     var untouched = LensBlurSettings()
-    check(untouched.amount == 0 && untouched.beginEditing() && untouched.amount == 8, "New photos change only on explicit Lens Blur entry")
+    check(untouched.amount == 0 && untouched.beginEditing() && untouched.amount == LensBlurSettings.startAmount, "New photos change only on explicit Lens Blur entry")
 
     check(!LensBlurSettings().activated && LensBlurSettings().amount == 0, "Untouched photos must start unchanged")
     check(!EditSettings().hasEdits(.lensBlur), "Activation bookkeeping must not mark untouched photos edited")
