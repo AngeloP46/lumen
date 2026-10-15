@@ -235,9 +235,10 @@ if let file = files.first, let session = EditSession(url: file),
    let sample = session.makeSource(maxEdge: 128, materialize: false) {
     let extent = CGRect(x: 0, y: 0, width: 256, height: 128)
     var pattern = CIImage(color: CIColor(red: 0.08, green: 0.08, blue: 0.08)).cropped(to: extent)
-    for x in stride(from: 0, to: 256, by: 8) {
+    // fine stripes (period 4 px): the gentler 15 Oct scale gives a ~2.6 px disc at amount 100 on this 256 px test
+    for x in stride(from: 0, to: 256, by: 4) {
         let stripe = CIImage(color: CIColor(red: 0.7, green: 0.7, blue: 0.7))
-            .cropped(to: CGRect(x: x, y: 0, width: 4, height: 128))
+            .cropped(to: CGRect(x: x, y: 0, width: 2, height: 128))
         pattern = stripe.composited(over: pattern)
     }
     func source(_ image: CIImage) -> ImageSource {
@@ -271,6 +272,19 @@ if let file = files.first, let session = EditSession(url: file),
     }
     check(spread(values(output, background)) < spread(values(pattern, background)) * 0.45,
           "Lens Blur did not reduce background detail")
+    // Lens-like: a bright subject must not glow into the blurred background next to it.
+    let bright = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 128, height: 128))
+        .composited(over: CIImage(color: CIColor(red: 0.02, green: 0.02, blue: 0.02)).cropped(to: extent))
+    let edge = values(session.applyLensBlur(bright, settings: settings, source: src), CGRect(x: 130, y: 16, width: 8, height: 96))
+    let edgeMean = stride(from: 0, to: edge.count, by: 4).map { edge[$0] }.reduce(0, +) / Float(edge.count / 4)
+    check(edgeMean < 0.05, "Lens Blur let the subject's colour bleed into the background: \(edgeMean)")
+    // and a lone bright point in the background spreads into a round disc, not a soft dot
+    let point = CIImage(color: CIColor(red: 8, green: 8, blue: 8)).cropped(to: CGRect(x: 191, y: 63, width: 2, height: 2))
+        .composited(over: CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: extent))
+    let spot = values(session.applyLensBlur(point, settings: settings, source: src), CGRect(x: 184, y: 64, width: 16, height: 1))
+    let reds = stride(from: 0, to: spot.count, by: 4).map { spot[$0] }
+    print("Lens Blur point profile:", reds.map { String(format: "%.3f", $0) }.joined(separator: " "))
+    check(reds.max()! > 0.01 && reds.allSatisfy { $0.isFinite }, "Lens Blur point light vanished")
     settings.lensBlur.amount = 0
     check(values(session.applyLensBlur(pattern, settings: settings, source: src), background) == values(pattern, background),
           "Zero Lens Blur amount changed pixels")
@@ -344,15 +358,19 @@ if let file = files.first, let session = EditSession(url: file),
     let oldBlur = try! JSONDecoder().decode(LensBlurSettings.self, from: Data("{\"amount\":0,\"focusDistance\":0.3,\"focusWidth\":0.12}".utf8))
     check(oldBlur.activated && oldBlur.amount == 0, "Saved legacy zero must not activate blur")
     var upgraded = oldBlur
-    check(upgraded.beginEditing() && upgraded.amount == 8, "Old untouched zero must start at 8 when Lens Blur is opened")
+    check(upgraded.beginEditing() && upgraded.amount == LensBlurSettings.startAmount, "Old untouched zero must start at the start amount when Lens Blur is opened")
     upgraded.amount = 0
     let savedOff = try! JSONDecoder().decode(LensBlurSettings.self, from: JSONEncoder().encode(upgraded))
     var reopened = savedOff
     check(!reopened.beginEditing() && reopened.amount == 0, "New explicit zero must survive migration/reopen")
     var existingOff = oldBlur; existingOff.focusDistance = 0.4
     check(!existingOff.beginEditing() && existingOff.amount == 0, "Previously adjusted zero must stay off")
+    let oldScale = try! JSONDecoder().decode(LensBlurSettings.self, from: Data("{\"amount\":35,\"activated\":true,\"controlsVersion\":1}".utf8))
+    check(abs(oldScale.amount - 100) < 0.01 && oldScale.scaleVersion == 2, "Old-scale 35 must become 100 on the gentler scale")
+    let newScale = try! JSONDecoder().decode(LensBlurSettings.self, from: JSONEncoder().encode(oldScale))
+    check(abs(newScale.amount - 100) < 0.01, "New-scale amounts must not be converted twice")
     var untouched = LensBlurSettings()
-    check(untouched.amount == 0 && untouched.beginEditing() && untouched.amount == 8, "New photos change only on explicit Lens Blur entry")
+    check(untouched.amount == 0 && untouched.beginEditing() && untouched.amount == LensBlurSettings.startAmount, "New photos change only on explicit Lens Blur entry")
 
     check(!LensBlurSettings().activated && LensBlurSettings().amount == 0, "Untouched photos must start unchanged")
     check(!EditSettings().hasEdits(.lensBlur), "Activation bookkeeping must not mark untouched photos edited")
@@ -410,7 +428,11 @@ if args.contains("--lens-blur") {
     if let d = source.depthField { s.lensBlur.focusDistance = Double(d.value(atNormalized: 0.5, 0.65)) }
     check(session.lensBlurMask(s, source: source) != nil, "Sony ARW blur map unavailable")
     if let before = session.renderCGImage(EditSettings(), source: source),
-       let after = session.renderCGImage(s, source: source),
+       let after = { () -> CGImage? in
+           let t0 = Date(); let cg = session.renderCGImage(s, source: source)
+           print(String(format: "Lens Blur Sony preview render %.0f ms (source %.0f px)", Date().timeIntervalSince(t0) * 1000,
+                        Double(max(source.extent.width, source.extent.height))))
+           return cg }(),
        let composite = sheet([("Sony ARW original", before), ("Lens Blur", after)]) {
         saveJPEG(composite, "lens-blur-sony-preview.jpg")
     } else { check(false, "Sony ARW blur preview failed") }
