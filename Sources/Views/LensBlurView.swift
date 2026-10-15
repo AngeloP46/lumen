@@ -64,7 +64,7 @@ struct LensBlurPanel: View {
                         Label(message, systemImage: message.hasPrefix("Subject selected") ? "checkmark.circle.fill" : "info.circle")
                             .font(.caption).foregroundStyle(Theme.accent).accessibilityIdentifier("lens-focus-feedback")
                     }
-                    LabeledSlider(title: "Blur amount", value: amount, neutral: 0, labelWidth: 94, onActive: { vm.lensSliderActive = $0 })
+                    LabeledSlider(title: "Blur amount", value: amount, neutral: 0, labelWidth: 94, onActive: { vm.lensDragging = $0; vm.lensSliderActive = $0 })
                         .disabled(vm.depthField == nil)
                     LumRangeEditor(low: depthValue(\.lumLow), high: depthValue(\.lumHigh),
                                    lowFeather: depthValue(\.lumLowFeather), highFeather: depthValue(\.lumHighFeather),

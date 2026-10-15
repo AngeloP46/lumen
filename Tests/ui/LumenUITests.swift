@@ -44,6 +44,27 @@ final class LumenUITests: XCTestCase {
         shot("lens-blur-after-return")
     }
 
+    /// Owner, 15 Oct: sliding Blur amount fast back and forth closed the app (twice).
+    func testLensBlurFastSlidingKeepsAppRunning() {
+        launch(open: 0, tool: "Lens Blur", extra: ["-lumenDemoLensDepth", "1"])
+        let s = el("slider-Blur amount")
+        XCTAssertTrue(s.waitForExistence(timeout: 40))
+        for i in 0..<12 {
+            let (a, b): (CGFloat, CGFloat) = i % 2 == 0 ? (0.15, 0.95) : (0.95, 0.15)
+            s.coordinate(withNormalizedOffset: CGVector(dx: a, dy: 0.5))
+                .press(forDuration: 0.05, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: b, dy: 0.5)),
+                       withVelocity: .fast, thenHoldForDuration: 0)
+        }
+        sleep(2)
+        XCTAssertEqual(app.state, .runningForeground, "the app must survive fast Blur amount drags")
+        let before = Double(valueOf("reset-Blur amount")) ?? -1
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)))
+        sleep(1)
+        XCTAssertNotEqual(Double(valueOf("reset-Blur amount")) ?? -1, before, "the slider must still respond")
+        shot("lens-blur-after-fast-sliding")
+    }
+
     // MARK: helpers
 
     func testLensBlurRevisionsAndPhotoInfo() {

@@ -112,7 +112,15 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
         view.setNeedsDisplay()
     }
 
+    /// Frames the GPU has not finished yet. A fast slider drag asks for a new frame on every finger movement; with
+    /// heavy edits (Lens Blur) the GPU fell further and further behind until iOS closed the app (owner, 15 Oct).
+    /// Now at most two frames are queued; a request that arrives meanwhile is drawn when one finishes, always with
+    /// the newest edit, so nothing is lost and memory stays flat.
+    private var inFlight = 0
+    private var redrawWaiting = false
+
     func draw(in view: MTKView) {
+        guard inFlight < 2 else { redrawWaiting = true; return }
         guard let queue = LumenGPU.queue, let drawable = view.currentDrawable,
               let cb = queue.makeCommandBuffer() else { return }
         let size = view.drawableSize
@@ -150,6 +158,14 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
         }
         LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)
         cb.present(drawable)
+        inFlight += 1
+        cb.addCompletedHandler { [weak self, weak view] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.inFlight -= 1
+                if self.redrawWaiting { self.redrawWaiting = false; view?.setNeedsDisplay() }
+            }
+        }
         cb.commit()
     }
 }
