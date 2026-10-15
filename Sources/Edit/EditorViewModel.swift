@@ -648,18 +648,33 @@ final class EditorViewModel: ObservableObject {
         settings = s
     }
 
-    func auto() {
-        guard let session, let source else { return }
-        settings = session.autoSettings(source: source, current: settings)
+    /// Auto finds the subject first (Vision, a moment on the phone), so it runs off the main thread.
+    @Published private(set) var autoBusy = false
+
+    private func auto(done: @escaping (EditSettings) -> Void) {
+        guard let session, let source, !autoBusy else { return }
+        autoBusy = true
+        let start = settings
+        let skipSubject = DemoMode.isOn   // the simulator has no Vision subject; CI keeps Auto quick
+        workQueue.async {
+            if !skipSubject { session.ensureSubject(source) }
+            let result = session.autoSettings(source: source, current: start)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.autoBusy = false
+                // only Auto's own values: anything changed meanwhile (other tools, masks) is kept
+                var s = self.settings
+                for key in EditSession.autoKeys { s[keyPath: key] = result[keyPath: key] }
+                done(s)
+            }
+        }
     }
 
     /// What Auto changed, so the Auto button can show it is on and a second tap can take it back.
     struct AutoRecord { var before: EditSettings; var after: EditSettings }
     @Published private(set) var autoRecord: AutoRecord?
 
-    private static func autoFields(_ s: EditSettings) -> [Double] {
-        [s.exposure, s.contrast, s.highlights, s.shadows, s.whites, s.blacks, s.vibrance, s.clarity]
-    }
+    private static func autoFields(_ s: EditSettings) -> [Double] { EditSession.autoKeys.map { s[keyPath: $0] } }
 
     /// On while the values Auto set are untouched; moving any of them yourself turns it off.
     var autoActive: Bool {
@@ -672,15 +687,17 @@ final class EditorViewModel: ObservableObject {
         lastChange = .distantPast
         if autoActive, let r = autoRecord {
             var s = settings
-            let b = r.before
-            s.exposure = b.exposure; s.contrast = b.contrast; s.highlights = b.highlights; s.shadows = b.shadows
-            s.whites = b.whites; s.blacks = b.blacks; s.vibrance = b.vibrance; s.clarity = b.clarity
+            for key in EditSession.autoKeys { s[keyPath: key] = r.before[keyPath: key] }
             autoRecord = nil
             settings = s
         } else {
-            let before = settings
-            auto()
-            autoRecord = AutoRecord(before: before, after: settings)
+            auto { [weak self] s in
+                guard let self else { return }
+                let before = self.settings
+                self.lastChange = .distantPast
+                self.settings = s
+                self.autoRecord = AutoRecord(before: before, after: s)
+            }
         }
     }
 
