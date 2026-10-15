@@ -1,5 +1,12 @@
 # Lumen – project notes for Claude
 
+## Two builds: every change goes to both (Angelo, 15 October)
+- **main** = Angelo's personal app on SideStore: everything free, no paywall, no watermark, no StoreKit.
+- **sandbox** branch (PC folder `Lumen-Sandbox`) = the same app developed as a real **App Store product**: paid Pro features, paywall, trial, watermark on free exports, StoreKit, privacy policy. Read its `SANDBOX-BRIEF.md`, `HANDOFF.md` and `SANDBOX-LOG.md` before touching it.
+- Every bug fix and shared editor feature ships to **both**: release it on main first (branch → PR → merge), then port the same change to `sandbox` (branch from `sandbox`, PR into `sandbox`, run its compile check with APP_STORE OFF/ON), and log it in `SANDBOX-LOG.md`.
+- When porting a NEW feature, keep or add the sandbox's Pro gating where it fits, and ask Angelo if it is unclear whether it should be free or Pro. Never copy paywall/StoreKit/watermark code or the APP_STORE flag into main, and never push to main from `Lumen-Sandbox`.
+- Tell Angelo which of the two each change has reached.
+
 ## Status — 15 October (Claude review of the 14 October work)
 - Reviewed everything other AIs added since 70f1448: sound and safe overall.
 - Fixed: undo/redo history moved out of the edits sidecar into `edits/<id>.history.json`, encoded and written on a serial background queue (`historyQueue`). The edits file is written synchronously and stays small (previously every 0.5 s save rewrote up to 200 snapshots on the main thread). Old `_undoHistory` in sidecars is still read and moves on the next save. Deletion and Heal-reference scans include the history file; deleting a photo without Heal patches no longer reads every other photo's edits. CI: `testHealDeletionPrivacy` has a 9th check for the separate file.
