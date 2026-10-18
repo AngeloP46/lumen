@@ -24,7 +24,7 @@ permissions:
 jobs:
   test:
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
         with:
@@ -45,7 +45,7 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 pinned
         with:
           path: Models/.verified-packages
-          key: models-verified-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/ci/model-lock.json') }}
+          key: models-verified-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/ci/model-lock.json', '.github/ci/heal-convert/**') }}
       - name: AI models (depth, scene, heal)
         run: |
           bash .github/ci/get-depth-model.sh Models
@@ -71,6 +71,7 @@ jobs:
           export LUMEN_DEPTH_MODEL="$PWD/Models/DepthAnythingV2SmallF16.mlmodelc"
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
+          export LUMEN_HEAL_EXPECT_SIDE=1280
           export LUMEN_PEOPLE_SAMPLE="$PWD/people/bus.jpg"
           export LUMEN_TREES_SAMPLE="$PWD/people/building.jpg"
           EXTRA=""
