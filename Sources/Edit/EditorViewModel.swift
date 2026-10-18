@@ -1293,7 +1293,7 @@ final class EditorViewModel: ObservableObject {
         let patches = HealStore.retain(Set(s.heals.map(\.id)))
         workQueue.async {
             defer { patches.close() }
-            Diagnostics.shared.note("export \(o.format) edge \(o.maxEdge.map(String.init) ?? "full")")
+            Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
             let data = session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
             var url: URL?
             if let data {
