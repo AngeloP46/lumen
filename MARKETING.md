@@ -49,8 +49,14 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
 - Reddit is blocked for every Claude tool, including Claude in Chrome. Angelo posts there himself, using the
   ready-to-paste replies and search links in `deliverables\reddit-replies.md` (parent folder).
 - Forum threads with reply drafts are in `deliverables\forum-replies.md`. Nothing has been posted.
-- TikTok: clip 05 ("Flat RAW off my Sony A9", hook first, 10 s loop) is in `Content\TikTok`. Its caption is in
-  POSTING-NOTES.md. TikTok stays a side channel.
+- TikTok: Angelo found the animated clips (01-05) unengaging. The new format is photo-mode slideshows of his own
+  edits, with the payoff first, a number-plate close-up and "Rate it 1-10" at the end. The first one is
+  `Content\TikTok\06-huracan-slideshow`. AI-avatar "customer" testimonials are not made: they break the FTC/ASA
+  rules on fake endorsements and TikTok's AI rules. An AI presenter script that makes no customer claims is there for in-person demos.
+- Replies: David Addison declined (he dislikes Apple's Core Image RAW rendering; Lumen decodes with CIRAWFilter,
+  with Apple's sharpening off). He offered an intro to Greg McMillan (iPhoneography podcast), and Angelo asked for it on 18 Oct.
+- SEO page: `landing-page\edit-sony-raw-on-iphone.html` ("How to edit Sony RAW files on your iPhone"). It's built and
+  checked on mobile, but not linked or deployed. It goes live only when Angelo says so.
 
 ## Not wanted (product)
 - Lens corrections, AI denoise, cloud sync, Smart fill.
