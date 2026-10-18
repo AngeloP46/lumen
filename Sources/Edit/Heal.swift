@@ -511,7 +511,8 @@ extension EditSession {
     /// Remove people: everyone in the photo (with the heals already made), biggest first. Apple's on-device person
     /// segmentation (the People mask's), split here into separate people. Slow: call off the main thread.
     func findPeople(earlier: [HealSpot]) -> [FoundPerson] {
-        guard let img = decode(maxEdge: 2048, heals: earlier) else { return [] }
+        // 3072 (was 2048): the quarters and body boxes below look at parts of it, so small people keep some detail
+        guard let img = decode(maxEdge: 3072, heals: earlier) else { return [] }
         let e = img.extent
         guard let cg = ctx.createCGImage(img, from: e, format: .RGBA8, colorSpace: LumenGPU.displaySpace) else { return [] }
         // two of Apple's finders, put together: the segmentation (the People mask's) and the per-person one, which
@@ -520,8 +521,10 @@ extension EditSession {
         request.qualityLevel = .accurate
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
         let instances = VNGeneratePersonInstanceMaskRequest()
+        let bodies = VNDetectHumanRectanglesRequest()
+        bodies.upperBodyOnly = false
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-        try? handler.perform([request, instances])
+        try? handler.perform([request, instances, bodies])
         // each mask covers the whole photo (whatever its own shape): stretched over it, read back at up to 768 px
         let ext = CGRect(x: 0, y: 0, width: e.width, height: e.height)
         var found: [CIImage] = []
@@ -532,12 +535,38 @@ extension EditSession {
            let buffer = try? obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler) {
             found.append(Self.fit(Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])), to: ext))
         }
+        // People far away or half hidden are only a few pixels in the whole-photo pass, which Vision runs at about
+        // 1-2 MP: look again in four overlapping quarters, and in a box around every body the body finder sees
+        // (owner, 19 Oct: Remove people missed many people).
+        var looks: [CGRect] = []   // Core Image coordinates (y up) in `ext`
+        for fx in [0.0, 0.4] { for fy in [0.0, 0.4] {
+            looks.append(CGRect(x: e.width * fx, y: e.height * fy, width: e.width * 0.6, height: e.height * 0.6).integral)
+        } }
+        for b in (bodies.results ?? []).filter({ $0.confidence > 0.4 }).prefix(24) {
+            let r = VNImageRectForNormalizedRect(b.boundingBox, Int(e.width), Int(e.height))   // y up, like Core Image
+            guard r.width * r.height < 0.36 * e.width * e.height else { continue }   // the quarters cover big ones
+            let grownBox = r.insetBy(dx: -r.width * 0.25, dy: -r.height * 0.15).intersection(ext).integral
+            if grownBox.width >= 32, grownBox.height >= 32 { looks.append(grownBox) }
+        }
+        for r in looks {
+            let top = CGRect(x: r.minX, y: ext.height - r.maxY, width: r.width, height: r.height)   // CGImage: y down
+            guard let part = cg.cropping(to: top) else { continue }
+            let seg = VNGeneratePersonSegmentationRequest()
+            seg.qualityLevel = .accurate
+            seg.outputPixelFormat = kCVPixelFormatType_OneComponent8
+            try? VNImageRequestHandler(cgImage: part, options: [:]).perform([seg])
+            guard let buffer = seg.results?.first?.pixelBuffer else { continue }
+            // only what the closer look is sure of (Vision's soft edge in a crop is noisier than in the whole photo)
+            let m = Self.fit(Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])), to: r)
+                .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": 0.6])
+            found.append(m.composited(over: Self.constant(0, ext)).cropped(to: ext))
+        }
         guard var mask = found.first else { return [] }
         for m in found.dropFirst() {
             mask = m.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: mask]).cropped(to: ext)
         }
         let me = mask.extent
-        let s = 768 / max(e.width, e.height)
+        let s = 1024 / max(e.width, e.height)   // was 768: small people kept as pieces of their own
         let w = max(Int((e.width * s).rounded()), 8), h = max(Int((e.height * s).rounded()), 8)
         let small = mask.transformed(by: CGAffineTransform(translationX: -me.minX, y: -me.minY))
             .transformed(by: CGAffineTransform(scaleX: CGFloat(w) / me.width, y: CGFloat(h) / me.height))
@@ -548,7 +577,7 @@ extension EditSession {
     }
 
     /// Splits a person mask (8-bit, top row first) into separate people. Pieces less than ~1 % of the photo apart
-    /// count as one (an arm behind a lamp post stays with its body); crumbs are dropped. Biggest first, at most 12.
+    /// count as one (an arm behind a lamp post stays with its body); crumbs are dropped. Biggest first, at most 30.
     static func splitPeople(_ px: [UInt8], width w: Int, height h: Int) -> [FoundPerson] {
         let n = w * h
         guard n > 0, px.count >= n else { return [] }
@@ -589,7 +618,7 @@ extension EditSession {
             if p.count >= 20 { pieces.append(p) }
         }
         pieces.sort { $0.count > $1.count }
-        pieces = Array(pieces.prefix(12))
+        pieces = Array(pieces.prefix(30))
         let biggest = Double(pieces.first?.count ?? 1)
         var people: [FoundPerson] = []
         for (k, p) in pieces.enumerated() {
