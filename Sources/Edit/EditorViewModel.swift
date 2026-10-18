@@ -138,8 +138,10 @@ final class EditorViewModel: ObservableObject {
         memoryWarning = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
                                                                object: nil, queue: .main) { [weak self] _ in
             LumenGPU.context.clearCaches()
+            EditSession.releaseMaskModels()
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                if !self.healBusy && !self.healPreparing { EditSession.releaseHealModel() }
                 if self.zoomLevel <= 1.4 { self.detailSource = nil }
                 self.requestRender()
             }
@@ -812,6 +814,20 @@ final class EditorViewModel: ObservableObject {
         }
     }
     fileprivate var healWaitingForReload = false
+    private var healRelease: Task<Void, Never>?
+    /// The Heal model is only kept while Heal is being used: 30 s after leaving the tool (at once when the photo
+    /// closes) it is let go of, unless Heal is open again or still working.
+    func healToolChanged(open: Bool, now: Bool = false) {
+        healRelease?.cancel(); healRelease = nil
+        guard !open, EditSession.healModelReady || healPreparing else { return }
+        healRelease = Task { @MainActor [weak self] in
+            if !now { try? await Task.sleep(nanoseconds: 30_000_000_000) }
+            guard !Task.isCancelled else { return }
+            if let self, self.healBusy || self.healPreparing { return }
+            EditSession.releaseHealModel()
+            Diagnostics.shared.note("heal model released")
+        }
+    }
 
     func healBegin(_ p: Pt) { guard !healBusy else { return }; selectedHealID = nil; healMessage = nil; healStroke = [p] }
     func healExtend(_ p: Pt) {

@@ -548,13 +548,14 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "DETRResnet50SemanticSegmentationF16", withExtension: "mlmodelc")
     }()
-    private static let sceneModel: VNCoreMLModel? = {
+    private static let sceneStore = LoadedModel<VNCoreMLModel> {
         guard let url = sceneModelURL else { return nil }
         let cfg = MLModelConfiguration()
         cfg.computeUnits = .all
         guard let ml = try? MLModel(contentsOf: url, configuration: cfg) else { return nil }
         return try? VNCoreMLModel(for: ml)
-    }()
+    }
+    private static var sceneModel: VNCoreMLModel? { sceneStore.model }
     static var hasSceneModel: Bool { sceneModel != nil }
 
     /// Labels every part of the photo (sky, water, trees, buildings, road, ...) with Apple's on-device DETR
@@ -758,14 +759,20 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_DEPTH_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "DepthAnythingV2SmallF16", withExtension: "mlmodelc")
     }()
-    private static let depthModel: VNCoreMLModel? = {
+    private static let depthStore = LoadedModel<VNCoreMLModel> {
         guard let url = depthModelURL else { return nil }
         let cfg = MLModelConfiguration()
         cfg.computeUnits = .all
         guard let ml = try? MLModel(contentsOf: url, configuration: cfg) else { return nil }
         return try? VNCoreMLModel(for: ml)
-    }()
+    }
+    private static var depthModel: VNCoreMLModel? { depthStore.model }
     static var hasDepthModel: Bool { depthModel != nil }
+    /// Lets go of the scene and depth models when memory runs short (masks already worked out are kept).
+    static func releaseMaskModels() {
+        sceneStore.release()
+        depthStore.release()
+    }
 
     /// Estimates how far away every part of the photo is (on-device, any photo, no depth data needed).
     /// The model sees a landscape frame, so portrait photos are turned a quarter for it and the result turned back.
