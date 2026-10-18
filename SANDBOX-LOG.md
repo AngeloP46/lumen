@@ -168,3 +168,8 @@ Big LaMa is converted in CI at 1280 x 1280 (`.github/ci/heal-convert/`: IOPaint 
 recipe, float32), falling back to the pinned 800 px package if the conversion fails. `EditSession.healSide` is read
 from the model. Engine test on main: 1049 checks passed. Heal is Pro in the App Store build (unchanged gating).
 Before App Store release: check the phone's RAM and use 800 px on low-memory iPhones (6-8 GB), see the crash/memory work.
+
+## 18 Oct 2026: Heal fixes (from main #28, SideStore 0.1.256)
+No main-thread model load (fixes the freeze/kill on first Heal in 0.1.248), "Preparing Heal…" while the model loads in
+the background, full-resolution patches with real texture for big removals (lumenHealDetail kernel), and memory freed
+before Heal / Remove people. Engine test on main: 1051 checks passed.
