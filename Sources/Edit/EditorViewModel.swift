@@ -133,6 +133,7 @@ final class EditorViewModel: ObservableObject {
         guard !started else { return }
         started = true
         self.store = store
+        Diagnostics.shared.note("open photo \(item.displayName)")
         // iOS is short of memory: let go of everything that can be made again, before it closes the app
         memoryWarning = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
                                                                object: nil, queue: .main) { [weak self] _ in
@@ -393,6 +394,7 @@ final class EditorViewModel: ObservableObject {
         guard native > source.longEdge * 1.15 else { return }
         detailBuilding = true
         detailLoading = true
+        Diagnostics.shared.note("100% view: building full-size copy")
         // 4096 (was 6000): a 24 MP full-size source plus its layers pushed Lumen past iOS's 3.4 GB per-app limit
         // while zoomed in (owner's JetsamEvent, 18 Oct: killed at 3388 MB, per-process-limit).
         let edge = min(native, 4096)
@@ -803,7 +805,9 @@ final class EditorViewModel: ObservableObject {
         guard !healPreparing, !EditSession.healModelReady, EditSession.hasHealModel else { return }
         healPreparing = true
         DispatchQueue.global(qos: .userInitiated).async {
+            Diagnostics.shared.note("heal model loading")
             EditSession.prepareHealModel()
+            Diagnostics.shared.note("heal model ready \(EditSession.healModelReady)")
             Task { @MainActor [weak self] in self?.healPreparing = false }
         }
     }
@@ -831,9 +835,11 @@ final class EditorViewModel: ObservableObject {
         healBusy = true
         healBusyText = EditSession.healModelReady ? "Removing…" : "Preparing Heal…"
         freeMemoryForHeal()
+        Diagnostics.shared.note("heal start (model ready \(EditSession.healModelReady))")
         workQueue.async {
             let spot = session.makeHeal(strokes: [stroke], earlier: earlier)
             LumenGPU.context.clearCaches()
+            Diagnostics.shared.note(spot == nil ? "heal failed" : "heal done")
             let why = EditSession.healFailure ?? .failed
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -973,6 +979,7 @@ final class EditorViewModel: ObservableObject {
                     let text = "Removing \(i + 1) of \(chosen.count)…"
                     Task { @MainActor [weak self] in self?.healBusyText = text }
                 }
+                Diagnostics.shared.note("remove person \(i + 1) of \(chosen.count)")
                 let spot = session.makeHeal(person: person, earlier: earlier + made)
                 LumenGPU.context.clearCaches()
                 if let spot {
@@ -1286,6 +1293,7 @@ final class EditorViewModel: ObservableObject {
         let patches = HealStore.retain(Set(s.heals.map(\.id)))
         workQueue.async {
             defer { patches.close() }
+            Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
             let data = session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
             var url: URL?
             if let data {
