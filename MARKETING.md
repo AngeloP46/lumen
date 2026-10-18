@@ -35,8 +35,7 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
   1. Reddit: answer posts where people ask for a Lightroom alternative on iPhone. The r/SideProject post
      got caught by spam filters, so write helpful replies to people asking, not self-promo posts.
   2. Email small photography YouTubers and iPhone app sites, offering free Pro.
-- **Press:** pitches to 9to5Mac and DIYPhotography are drafted in Angelo's Gmail. They are on hold
-  until he pays Apple's $99 developer fee and TestFlight is ready.
+- **Press:** pitches to 9to5Mac and DIYPhotography were sent on 18 October with the others (see below).
 
 ## Outreach status (18 October)
 - **Sent 18 October:** 15 pitch emails went to 9 small YouTubers and 6 iPhone/photo news sites (including
@@ -46,7 +45,7 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
 - The Gmail connector wraps links in a google.com redirect. All 15 emails got that link, so a correction reply
   with the clean link went to each thread the same day. Send emails that contain links through Gmail web in Chrome.
 - The contact list lives outside this public repo: `deliverables\outreach-list.md` in the parent folder.
-  All 15 drafts (including the older 9to5Mac/DIYP ones, whose broken link is now fixed) name every tested format.
+  All 15 emails name every tested format.
 - Reddit is blocked for every Claude tool, including Claude in Chrome. Angelo posts there himself, using the
   ready-to-paste replies and search links in `deliverables\reddit-replies.md` (parent folder).
 - Forum threads with reply drafts are in `deliverables\forum-replies.md`. Nothing has been posted.
