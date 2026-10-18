@@ -71,7 +71,7 @@ jobs:
           export LUMEN_DEPTH_MODEL="$PWD/Models/DepthAnythingV2SmallF16.mlmodelc"
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
-          export LUMEN_HEAL_EXPECT_SIDE=1280
+          export LUMEN_HEAL_EXPECT_SIDE=800
           export LUMEN_PEOPLE_SAMPLE="$PWD/people/bus.jpg"
           export LUMEN_TREES_SAMPLE="$PWD/people/building.jpg"
           EXTRA=""

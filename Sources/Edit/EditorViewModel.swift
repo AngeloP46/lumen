@@ -393,7 +393,9 @@ final class EditorViewModel: ObservableObject {
         guard native > source.longEdge * 1.15 else { return }
         detailBuilding = true
         detailLoading = true
-        let edge = min(native, 6000)
+        // 4096 (was 6000): a 24 MP full-size source plus its layers pushed Lumen past iOS's 3.4 GB per-app limit
+        // while zoomed in (owner's JetsamEvent, 18 Oct: killed at 3388 MB, per-process-limit).
+        let edge = min(native, 4096)
         workQueue.async {
             let src = session.makeSource(maxEdge: edge, materialize: true)
             Task { @MainActor [weak self] in
