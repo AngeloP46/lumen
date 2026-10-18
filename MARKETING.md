@@ -15,7 +15,10 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
 
 ## Claims and comparisons
 - Compare only against **Lightroom mobile, Photomator and Darkroom**, never desktop Lightroom.
-- Don't claim "Lightroom-level" or ProRAW support until they have been tested.
+- Don't claim "Lightroom-level" until it has been tested.
+- RAW formats are all tested, so it's fine to say so. CI "RAW format matrix" opens, edits and exports Canon CR2 and CR3,
+  Nikon NEF, Fuji RAF, Sony ARW and DNG on every sandbox push (passing, e.g. run 38803054702). Angelo has
+  confirmed iPhone ProRAW works in Lumen on his phone (18 October).
 
 ## Goal
 - A paying hobby (about £1,300 in year one), not a salary.
@@ -39,7 +42,7 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
 - 13 pitch emails (9 small YouTubers, 4 iPhone news sites) are saved as Gmail drafts and **not sent**.
   They're waiting for TestFlight because they offer free Pro and a TestFlight invite.
 - The contact list lives outside this public repo: `deliverables\outreach-list.md` in the parent folder.
-  It also lists what to fix in the older 9to5Mac/DIYP drafts (an unverified ProRAW claim and a broken link).
+  All 15 drafts (including the older 9to5Mac/DIYP ones, whose broken link is now fixed) name every tested format.
 - Reddit can't be reached by Claude's own tools. It needs Claude in Chrome with Angelo signed in.
 
 ## Not wanted (product)
