@@ -230,6 +230,83 @@ func floatPixels(_ img: CIImage, width: Int = 64) -> [Float]? {
 }
 
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
+
+// ---- Memory budget (`--memory`, its own process so nothing else is counted): the 24 MP Sony ARW opened the way
+// the phone opens it (HDR), the 100 % view's full-size copy, a subject mask, a big heal and a full-size export.
+// iOS closes Lumen at about 3.4 GB (owner's JetsamEvent, 18 Oct: killed at 3388 MB). The Mac counts GPU memory a
+// little differently, so the budget leaves room; the point is to catch a change that suddenly needs much more.
+if args.contains("--memory") {
+    func footprintMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+    final class Peak: @unchecked Sendable { var mb = 0; var stop = false; let lock = NSLock() }
+    let peak = Peak()
+    Thread.detachNewThread {
+        while true {
+            peak.lock.lock(); let done = peak.stop; peak.mb = max(peak.mb, footprintMB()); peak.lock.unlock()
+            if done { break }
+            usleep(10_000)
+        }
+    }
+    func stepPeak(_ name: String, _ work: () -> Void) -> Int {
+        peak.lock.lock(); peak.mb = footprintMB(); peak.lock.unlock()
+        let t = now()
+        work()
+        LumenGPU.context.clearCaches()
+        peak.lock.lock(); let p = peak.mb; peak.lock.unlock()
+        print("MEMORY \(name): peak \(p) MB, after \(footprintMB()) MB, \(String(format: "%.1f", now() - t)) s")
+        return p
+    }
+    // budgets per step (MB); the whole run must stay under `total`
+    let budget: [String: Int] = ["open": 1400, "full-size view": 2200, "subject": 2200, "heal": 2600, "export": 2600]
+    let total = 2800
+    guard let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }),
+          let session = EditSession(url: arw, expandHDR: true) else {
+        check(false, "memory test needs the Sony ARW"); finishChecks()
+    }
+    print("MEMORY start \(footprintMB()) MB, photo \(Int(session.nativeSize.width))x\(Int(session.nativeSize.height))")
+    var preview: ImageSource?
+    var detail: ImageSource?
+    var peaks: [String: Int] = [:]
+    var s = EditSettings(); s.hdr = true; s.exposure = 0.3; s.clarity = 20
+    peaks["open"] = stepPeak("open") {
+        preview = session.makeSource(maxEdge: 2560, materialize: true)
+        if let p = preview { _ = session.renderCGImage(s, source: p) }
+    }
+    peaks["full-size view"] = stepPeak("full-size view") {
+        let edge = min(max(session.nativeSize.width, session.nativeSize.height), 4096)
+        detail = session.makeSource(maxEdge: edge, materialize: true)
+        if let d = detail { _ = session.renderCGImage(s, source: d) }
+    }
+    peaks["subject"] = stepPeak("subject") { if let p = preview { session.ensureSubject(p) } }
+    // the app lets go of the full-size copy before healing (freeMemoryForHeal)
+    detail = nil
+    if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil {
+        EditSession.prepareHealModel()
+        let stroke = BrushStroke(points: [Pt(x: 0.4, y: 0.35), Pt(x: 0.5, y: 0.5), Pt(x: 0.6, y: 0.65)], size: 0.08, erase: false, feather: nil)
+        var spot: HealSpot?
+        peaks["heal"] = stepPeak("heal") { spot = session.makeHeal(strokes: [stroke], earlier: []) }
+        check(spot != nil, "memory test: the heal failed")
+        if let spot { s.heals = [spot] }
+    }
+    peaks["export"] = stepPeak("export") { _ = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true) }
+    peak.lock.lock(); peak.stop = true; peak.lock.unlock()
+    for (name, mb) in peaks.sorted(by: { $0.key < $1.key }) {
+        let limit = budget[name] ?? total
+        check(mb <= limit, "memory: \(name) peaked at \(mb) MB, budget \(limit) MB")
+        if mb > limit * 8 / 10 { print("::warning::memory: \(name) at \(mb) MB is near its \(limit) MB budget") }
+    }
+    let top = peaks.values.max() ?? 0
+    check(top <= total, "memory: peak \(top) MB, budget \(total) MB")
+    print("::notice::memory peak \(top) MB (budget \(total) MB): " + peaks.sorted(by: { $0.key < $1.key }).map { "\($0.key) \($0.value)" }.joined(separator: ", "))
+    _ = preview
+    finishChecks()
+}
 // Lens Blur: controlled foreground/background detail, independent of model accuracy.
 if let file = files.first, let session = EditSession(url: file),
    let sample = session.makeSource(maxEdge: 128, materialize: false) {
