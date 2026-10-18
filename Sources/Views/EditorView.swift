@@ -66,6 +66,7 @@ struct EditorView: View {
 #endif
     @State private var showEdits = false
     @State private var showPhotoInfo = false
+    @State private var showDiagnostics = false
     @State private var showPasteSome = false
     @State private var wbMark: CGPoint?
 
@@ -206,6 +207,7 @@ struct EditorView: View {
 #endif
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .sheet(isPresented: $showEdits) { EditsSheet(vm: vm) }
+        .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
         .sheet(isPresented: $showPhotoInfo) { PhotoInfoView(item: item, url: store.fileURL(item)) }
         .sheet(isPresented: $showPasteSome) {
             if let c = store.clipboard { PasteSomeSheet(clip: c) { vm.paste($0, from: c) } }
@@ -793,6 +795,7 @@ struct EditorView: View {
                         Label("Sliders: full list", systemImage: sliderStyle == "list" ? "checkmark" : "slider.horizontal.3")
                     }
                 } label: { Label("View", systemImage: "eye") }
+                Button { showDiagnostics = true } label: { Label("Send diagnostics…", systemImage: "stethoscope") }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 15, weight: .medium))
