@@ -535,31 +535,33 @@ extension EditSession {
            let buffer = try? obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler) {
             found.append(Self.fit(Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])), to: ext))
         }
-        // People far away or half hidden are only a few pixels in the whole-photo pass, which Vision runs at about
-        // 1-2 MP: look again in four overlapping quarters, and in a box around every body the body finder sees
-        // (owner, 19 Oct: Remove people missed many people).
-        var looks: [CGRect] = []   // Core Image coordinates (y up) in `ext`
-        for fx in [0.0, 0.4] { for fy in [0.0, 0.4] {
-            looks.append(CGRect(x: e.width * fx, y: e.height * fy, width: e.width * 0.6, height: e.height * 0.6).integral)
-        } }
-        for b in (bodies.results ?? []).filter({ $0.confidence > 0.4 }).prefix(24) {
-            let r = VNImageRectForNormalizedRect(b.boundingBox, Int(e.width), Int(e.height))   // y up, like Core Image
-            guard r.width * r.height < 0.36 * e.width * e.height else { continue }   // the quarters cover big ones
-            let grownBox = r.insetBy(dx: -r.width * 0.25, dy: -r.height * 0.15).intersection(ext).integral
-            if grownBox.width >= 32, grownBox.height >= 32 { looks.append(grownBox) }
-        }
-        for r in looks {
-            let top = CGRect(x: r.minX, y: ext.height - r.maxY, width: r.width, height: r.height)   // CGImage: y down
-            guard let part = cg.cropping(to: top) else { continue }
-            let seg = VNGeneratePersonSegmentationRequest()
-            seg.qualityLevel = .accurate
-            seg.outputPixelFormat = kCVPixelFormatType_OneComponent8
-            try? VNImageRequestHandler(cgImage: part, options: [:]).perform([seg])
-            guard let buffer = seg.results?.first?.pixelBuffer else { continue }
-            // only what the closer look is sure of (Vision's soft edge in a crop is noisier than in the whole photo)
-            let m = Self.fit(Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])), to: r)
-                .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": 0.6])
-            found.append(m.composited(over: Self.constant(0, ext)).cropped(to: ext))
+        // A person the whole-photo pass mostly missed (far away, half hidden; Vision runs it at about 1-2 MP) gets a
+        // closer look: segmentation again on a crop around each body the body finder sees, kept inside that body's
+        // box so neighbours never merge (owner, 19 Oct: Remove people missed many people). Whole-photo quarters
+        // were tried first: their softer edges joined people up into one.
+        if let base = found.first {
+            for b in (bodies.results ?? []).filter({ $0.confidence > 0.4 }).prefix(24) {
+                let r = VNImageRectForNormalizedRect(b.boundingBox, Int(e.width), Int(e.height)).intersection(ext).integral
+                guard r.width >= 24, r.height >= 24 else { continue }
+                // already found: most of the box's middle is covered
+                var v = [Float](repeating: 0, count: 4)
+                let mid = r.insetBy(dx: r.width * 0.3, dy: r.height * 0.2)
+                let avg = base.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: mid)])
+                ctx.render(avg, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                if v[0] > 0.35 { continue }
+                let look = r.insetBy(dx: -r.width * 0.25, dy: -r.height * 0.15).intersection(ext).integral
+                let top = CGRect(x: look.minX, y: ext.height - look.maxY, width: look.width, height: look.height)   // y down
+                guard let part = cg.cropping(to: top) else { continue }
+                let seg = VNGeneratePersonSegmentationRequest()
+                seg.qualityLevel = .accurate
+                seg.outputPixelFormat = kCVPixelFormatType_OneComponent8
+                try? VNImageRequestHandler(cgImage: part, options: [:]).perform([seg])
+                guard let buffer = seg.results?.first?.pixelBuffer else { continue }
+                let m = Self.fit(Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])), to: look)
+                    .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": 0.5])
+                    .cropped(to: r.insetBy(dx: -r.width * 0.05, dy: -r.height * 0.05))
+                found.append(m.composited(over: Self.constant(0, ext)).cropped(to: ext))
+            }
         }
         guard var mask = found.first else { return [] }
         for m in found.dropFirst() {
