@@ -521,3 +521,11 @@ float4 lumenOverlay(sample_t s, sample_t m, float4 colour) {
 }
 
 }}
+
+// Heal detail (2026-10-18, owner: big removals looked blurry): the model's fill at full size plus the fine texture
+// (photo minus its blurred copy) from a matching spot next to the hole, inside the hole; the photo elsewhere.
+float4 lumenHealDetail(sample_t base, sample_t real, sample_t tex, sample_t texBlur, sample_t m) {
+    float3 filled = base.rgb + (tex.rgb - texBlur.rgb);
+    float k = clamp(m.r, 0.0, 1.0);
+    return float4(clamp(mix(real.rgb, filled, k), 0.0, 1.0), 1.0);
+}

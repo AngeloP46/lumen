@@ -1918,6 +1918,58 @@ do {
             }
         }
 
+        // 3b. a big removal on gravel (2026-10-18, owner: big removals looked blurry): the patch keeps the photo's grain
+        do {
+            let w = 4000, h = 3000
+            var px = [UInt8](repeating: 0, count: w * h * 4)
+            var rng = SystemRandomNumberGenerator()
+            for i in 0..<(w * h) {
+                let v = UInt8(clamping: 110 + Int.random(in: -45...45, using: &rng))
+                px[i * 4] = v; px[i * 4 + 1] = UInt8(clamping: Int(v) - 8); px[i * 4 + 2] = UInt8(clamping: Int(v) - 20); px[i * 4 + 3] = 255
+            }
+            let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+            if let g = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: cs,
+                                 bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+                g.setFillColor(CGColor(red: 0.9, green: 0.05, blue: 0.05, alpha: 1))
+                g.fillEllipse(in: CGRect(x: 2000 - 300, y: 1500 - 300, width: 600, height: 600))
+                let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("heal-gravel.png")
+                if let cg = g.makeImage(), let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) {
+                    CGImageDestinationAddImage(dest, cg, nil); CGImageDestinationFinalize(dest)
+                }
+                if let session = EditSession(url: url), let before = session.decode(maxEdge: nil) {
+                    let stroke = BrushStroke(points: [Pt(x: 0.49, y: 0.5), Pt(x: 0.51, y: 0.5)], size: 0.17, erase: false, feather: nil)
+                    let t0 = now()
+                    if let spot = session.makeHeal(strokes: [stroke], earlier: []) {
+                        print("::notice::gravel heal in \(Int((now() - t0) * 1000)) ms, square \(Int(spot.w * Double(w))) px")
+                        session.heals = [spot]
+                        if let after = session.decode(maxEdge: nil) {
+                            // grain = mean step between neighbouring pixels along a row, in a 120 px window
+                            func grain(_ img: CIImage, _ cx: Int, _ cy: Int) -> Float {
+                                var row = [Float](repeating: 0, count: 120 * 4 * 8)
+                                let e = img.extent
+                                LumenGPU.context.render(img, toBitmap: &row, rowBytes: 120 * 16,
+                                                        bounds: CGRect(x: e.minX + CGFloat(cx - 60), y: e.maxY - CGFloat(cy) - 4, width: 120, height: 8),
+                                                        format: .RGBAf, colorSpace: nil)
+                                var s: Float = 0, k = 0
+                                for r in 0..<8 { for x in 1..<120 { s += abs(row[(r * 120 + x) * 4] - row[(r * 120 + x - 1) * 4]); k += 1 } }
+                                return s / Float(k)
+                            }
+                            let inside = grain(after, 2000, 1500), outside = grain(after, 600, 600)
+                            let c = pixel(after, 2000, 1500)
+                            print("::notice::gravel heal grain inside \(inside) vs outside \(outside), centre \(c.prefix(3))")
+                            check(c[0] < c[1] + 0.25, "the red disc on gravel should be gone (\(c.prefix(3)))")
+                            check(inside > 0.5 * outside, "a big heal on gravel should keep the grain (inside \(inside), outside \(outside))")
+                            let crop = CGRect(x: 2000 - 700, y: 1500 - 700, width: 1400, height: 1400)
+                            if let a = smallRender(before.cropped(to: crop), width: 380), let b = smallRender(after.cropped(to: crop), width: 380) {
+                                savePreview("gravel-heal", [("big red disc on gravel", a), ("healed", b)])
+                            }
+                        }
+                        session.heals = []
+                    } else { check(false, "gravel heal: makeHeal failed (\(EditSession.healFailure.map { "\($0)" } ?? "?"))") }
+                }
+            }
+        }
+
         // 4. Remove people on a street photo: everyone found, upright, and one of them removed
         if let path = ProcessInfo.processInfo.environment["LUMEN_PEOPLE_SAMPLE"],
            let session = EditSession(url: URL(fileURLWithPath: path)),
