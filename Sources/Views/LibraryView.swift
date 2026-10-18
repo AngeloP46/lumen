@@ -44,6 +44,7 @@ struct LibraryView: View {
     @State private var selection: Set<UUID> = []
     @State private var confirmDelete = false
     @State private var showBatchExport = false
+    @State private var showDiagnostics = false
     @State private var notice: String?
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
@@ -167,6 +168,7 @@ struct LibraryView: View {
             } message: {
                 Text("Their edits are removed too. The originals in Photos or Files are not touched.")
             }
+            .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
             .sheet(isPresented: $showBatchExport) {
                 let list = selectedItems
                 ExportOptionsSheet(count: list.count, hdrAvailable: list.contains { store.settings(for: $0).hdr }) { o in
@@ -270,6 +272,8 @@ struct LibraryView: View {
                 Picker("Sort by", selection: $sortRaw) {
                     ForEach(LibrarySort.allCases) { Label($0.rawValue, systemImage: $0 == .taken ? "camera" : "square.and.arrow.down").tag($0.rawValue) }
                 }
+                Divider()
+                Button { showDiagnostics = true } label: { Label("Send diagnostics…", systemImage: "stethoscope") }
             } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
             .accessibilityIdentifier("btn-library-filter")
         }
