@@ -25,6 +25,10 @@ private let thumbQueue = DispatchQueue(label: "lumen.thumbs", qos: .utility)
 private let exportQueue = DispatchQueue(label: "lumen.batch-export", qos: .userInitiated)
 /// Serial: undo-history writes for every photo, in order (see `LibraryStore.save`).
 private let historyQueue = DispatchQueue(label: "lumen.history", qos: .utility)
+/// History waiting to be written, by file (only touched on `historyQueue`). Editing saves twice a second and each
+/// history holds up to 200 snapshots, so writing every one rewrote megabytes a second while a slider moved; now the
+/// newest is written at most every 2 s, and at once when the photo closes or is deleted.
+nonisolated(unsafe) private var pendingHistory: [URL: LibraryStore.EditHistory] = [:]
 
 /// Imported originals live in Documents/Library/files; edits are JSON sidecars in Documents/Library/edits.
 @MainActor
@@ -125,7 +129,7 @@ final class LibraryStore: ObservableObject {
         library.save(edits, for: removed, history: EditHistory(current: edits, undo: [previous], redo: [next]))
         var otherHistory = EditSettings(); otherHistory.heals = [shared]
         library.save(EditSettings(), for: kept, history: EditHistory(current: EditSettings(), undo: [], redo: [otherHistory]))
-        historyQueue.sync {}
+        historyQueue.sync { LibraryStore.writePendingHistory() }
         let sidecar = (try? Data(contentsOf: library.editURL(removed))).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
         let saved = library.history(for: removed, current: edits)
         check(sidecar != nil && sidecar?["_undoHistory"] == nil && fm.fileExists(atPath: library.historyURL(removed).path)
@@ -286,7 +290,7 @@ final class LibraryStore: ObservableObject {
 
     /// CI only: as if the photo had never been opened.
     func forgetEdits(_ item: LibraryItem) {
-        historyQueue.sync {}
+        historyQueue.sync { Self.writePendingHistory() }
         for u in [editURL(item), historyURL(item)] { try? FileManager.default.removeItem(at: u) }
     }
 
@@ -314,7 +318,7 @@ final class LibraryStore: ObservableObject {
     func history(for item: LibraryItem, current: EditSettings) -> EditHistory {
         let file = historyURL(item), legacy = try? Data(contentsOf: editURL(item))
         // wait for any history write still queued for this photo, so reopening at once never loses steps
-        guard var history = historyQueue.sync(execute: { Self.readHistory(file: file, legacy: legacy) }),
+        guard var history = historyQueue.sync(execute: { pendingHistory[file] ?? Self.readHistory(file: file, legacy: legacy) }),
               history.current == current else { return EditHistory(current: current, undo: [], redo: []) }
         history.undo = Array(history.undo.suffix(100))
         history.redo = Array(history.redo.suffix(100))
@@ -334,15 +338,33 @@ final class LibraryStore: ObservableObject {
             var history: EditHistory
             if let supplied { history = supplied } else {
                 // Library paste/batch changes are undoable too; editor saves already carry their history.
-                history = Self.readHistory(file: file, legacy: oldData).flatMap { $0.current == previous ? $0 : nil }
+                history = (pendingHistory[file] ?? Self.readHistory(file: file, legacy: oldData)).flatMap { $0.current == previous ? $0 : nil }
                     ?? EditHistory(current: previous ?? s, undo: [], redo: [])
                 if let previous, s != previous { history.undo.append(previous); history.redo.removeAll() }
             }
             history.current = s
             history.undo = Array(history.undo.suffix(100))
             history.redo = Array(history.redo.suffix(100))
+            let scheduled = pendingHistory[file] != nil
+            pendingHistory[file] = history
+            if !scheduled {
+                historyQueue.asyncAfter(deadline: .now() + 2) { Self.writePendingHistory(file) }
+            }
+        }
+    }
+
+    /// Writes waiting history now (one file, or all). On `historyQueue` only.
+    nonisolated private static func writePendingHistory(_ only: URL? = nil) {
+        let files = only.map { [$0] } ?? Array(pendingHistory.keys)
+        for file in files {
+            guard let history = pendingHistory.removeValue(forKey: file) else { continue }
             if let data = try? JSONEncoder().encode(history) { try? data.write(to: file, options: .atomic) }
         }
+    }
+
+    /// The editor is closing: write its history now instead of in up to 2 s.
+    func flushHistory() {
+        historyQueue.async { Self.writePendingHistory() }
     }
 
     func delete(_ list: [LibraryItem]) {
@@ -477,7 +499,7 @@ final class LibraryStore: ObservableObject {
     func delete(_ item: LibraryItem) {
         guard items.contains(where: { $0.id == item.id }) else { return }
         // finish queued history writes first: they may name Heal patches, and must not recreate the file afterwards
-        historyQueue.sync {}
+        historyQueue.sync { Self.writePendingHistory() }
         var patches = HealStore.markDeleted(owner: fileURL(item))
         for url in [editURL(item), historyURL(item)] {
             if let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) {
