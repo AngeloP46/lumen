@@ -218,8 +218,8 @@ extension EditSession {
     }
 
     /// The picture with mirror images of itself all round: context for a square that runs past the photo's edges.
-    static func mirrorPadded(_ img: CIImage) -> CIImage {
-        let e = img.extent
+    static func mirrorPadded(_ img: CIImage, about frame: CGRect? = nil) -> CIImage {
+        let e = frame ?? img.extent
         var out = img
         for dx in -1...1 {
             for dy in -1...1 where dx != 0 || dy != 0 {
@@ -255,13 +255,22 @@ extension EditSession {
         // photo pixels either way.
         let picture: (CGFloat) -> (CIImage, CGRect)? = { [self] f in
             let L = max(W, H)
-            guard var full = decode(maxEdge: f < 0.95 ? (L * f).rounded(.up) : nil, heals: earlier) else { return nil }
-            let fx = full.extent.width / W, fy = full.extent.height / H
+            guard let full = decode(maxEdge: f < 0.95 ? (L * f).rounded(.up) : nil, heals: earlier) else { return nil }
+            let d = full.extent, fx = d.width / W, fy = d.height / H
             // the region above was measured on `nativeSize`; it must be the picture as decoded
-            guard abs(fx - fy) < 0.01, fx > 0 else { return nil }
-            if abs(fx - 1) > 0.001 { full = full.transformed(by: CGAffineTransform(scaleX: W / full.extent.width, y: H / full.extent.height)) }
-            guard abs(full.extent.width - W) < 2, abs(full.extent.height - H) < 2 else { return nil }
-            return (full.extent.insetBy(dx: -1, dy: -1).contains(ciRegion) ? full : Self.mirrorPadded(full), full.extent)
+            guard abs(fx - fy) < 0.01, fx > 0, abs(d.width / fx - W) < 2 / fx + 2 else { return nil }
+            // Only the part of the photo inside the square is rendered, once, into a small buffer; the mirror image
+            // past the photo's edges is made from that buffer. Mirroring the decode itself made Core Image decode
+            // the RAW for each reflected copy (the memory test's 2 GB heal spike).
+            let inside = CGRect(x: ciRegion.minX * fx, y: ciRegion.minY * fy, width: ciRegion.width * fx, height: ciRegion.height * fy)
+                .intersection(d).integral
+            guard inside.width >= 1, inside.height >= 1,
+                  let piece = ctx.createCGImage(full, from: inside, format: .RGBAh, colorSpace: LumenGPU.workingSpace) else { return nil }
+            let toPhoto = CGAffineTransform(scaleX: 1 / fx, y: 1 / fy)
+            let real = CGRect(x: 0, y: 0, width: W, height: H)
+            let img = CIImage(cgImage: piece, options: [.colorSpace: LumenGPU.workingSpace])
+                .transformed(by: CGAffineTransform(translationX: inside.minX, y: inside.minY)).transformed(by: toPhoto)
+            return (real.insetBy(dx: -1, dy: -1).contains(ciRegion) ? img : Self.mirrorPadded(img, about: real), real)
         }
         // Rendered once, at the model's size, in half floats (HDR values above 1 kept), inside this closure so the
         // full-size photo is let go of before the model runs. Before 19 Oct the full-size graph was rendered twice
