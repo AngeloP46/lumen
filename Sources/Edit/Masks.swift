@@ -556,7 +556,13 @@ extension EditSession {
         return try? VNCoreMLModel(for: ml)
     }
     private static var sceneModel: VNCoreMLModel? { sceneStore.model }
-    static var hasSceneModel: Bool { sceneModel != nil }
+    /// Only looks for the compiled model's files (screens ask this while drawing): loading it there froze the
+    /// app while the model compiled (code review, 19 Oct). An empty stand-in folder (UI-test builds) has none.
+    static var hasSceneModel: Bool { modelFilesExist(sceneModelURL) }
+    static func modelFilesExist(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return FileManager.default.fileExists(atPath: url.appendingPathComponent("coremldata.bin").path)
+    }
 
     /// Labels every part of the photo (sky, water, trees, buildings, road, ...) with Apple's on-device DETR
     /// segmentation model (448 x 448, the photo stretched to fit).
@@ -767,7 +773,7 @@ extension EditSession {
         return try? VNCoreMLModel(for: ml)
     }
     private static var depthModel: VNCoreMLModel? { depthStore.model }
-    static var hasDepthModel: Bool { depthModel != nil }
+    static var hasDepthModel: Bool { modelFilesExist(depthModelURL) }
     /// Lets go of the scene and depth models when memory runs short (masks already worked out are kept).
     static func releaseMaskModels() {
         sceneStore.release()
