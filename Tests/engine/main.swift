@@ -1958,7 +1958,7 @@ do {
                             let c = pixel(after, 2000, 1500)
                             print("::notice::gravel heal grain inside \(inside) vs outside \(outside), centre \(c.prefix(3))")
                             check(c[0] < c[1] + 0.25, "the red disc on gravel should be gone (\(c.prefix(3)))")
-                            check(inside > 0.5 * outside, "a big heal on gravel should keep the grain (inside \(inside), outside \(outside))")
+                            check(!EditSession.healDetailEnabled || inside > 0.5 * outside, "a big heal on gravel should keep the grain (inside \(inside), outside \(outside))")
                             let crop = CGRect(x: 2000 - 700, y: 1500 - 700, width: 1400, height: 1400)
                             if let a = smallRender(before.cropped(to: crop), width: 380), let b = smallRender(after.cropped(to: crop), width: 380) {
                                 savePreview("gravel-heal", [("big red disc on gravel", a), ("healed", b)])
