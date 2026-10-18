@@ -54,9 +54,9 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
   `Content\TikTok\06-huracan-slideshow`. AI-avatar "customer" testimonials are not made: they break the FTC/ASA
   rules on fake endorsements and TikTok's AI rules. An AI presenter script that makes no customer claims is there for in-person demos.
 - Replies: David Addison declined (he dislikes Apple's Core Image RAW rendering; Lumen decodes with CIRAWFilter,
-  with Apple's sharpening off). He offered an intro to Greg McMillan (iPhoneography podcast), and Angelo asked for it on 18 Oct.
+  with Apple's sharpening off). He offered an intro to Greg McMillan (iPhoneography podcast), and Angelo asked for it on 18 Oct. David sent greg@iphoneography.ca, and the pitch to Greg is in Gmail Drafts waiting for Angelo's OK.
 - SEO page: `landing-page\edit-sony-raw-on-iphone.html` ("How to edit Sony RAW files on your iPhone"). It's built and
-  checked on mobile, but not linked or deployed. It goes live only when Angelo says so.
+  LIVE since 18 Oct at https://lumen-raweditor.netlify.app/edit-sony-raw-on-iphone.html (with a sitemap). It isn't linked from the homepage.
 - Batch 2: 19 more small YouTubers (car photography, iPad/mobile editing, Sony/Fuji), SENT 18 Oct through Gmail web; list in
   `deliverables\outreach-batch-2.md` (parent folder).
 
