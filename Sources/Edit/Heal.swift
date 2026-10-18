@@ -269,7 +269,7 @@ extension EditSession {
         // 5. a square bigger than the model's: keep the patch at (nearly) full resolution, with the photo's own fine
         //    texture, instead of the model's softer answer stretched over it (owner: big removals looked blurry)
         let stored = side > n * 1.05
-            ? Self.detailed(out, photo: picture, region: ciRegion, scale: scale, hole: hole, n: n) ?? out
+            ? Self.detailed(out, photo: picture, realExtent: full.extent, region: ciRegion, scale: scale, hole: hole, n: n) ?? out
             : out
 
         // 6. keep it: the rebuilt square and where to blend it in, checked again as it will be read back
@@ -308,7 +308,11 @@ extension EditSession {
     /// The model's fill (`fill`, n x n, divided by `scale`) at the square's real resolution: its shapes and colours,
     /// plus fine texture (grain, gravel, grass, leaves) copied from the best-matching spot right next to the hole, and
     /// the untouched photo everywhere outside the hole. nil keeps the model's answer as it is.
-    static func detailed(_ fill: CIImage, photo: CIImage, region: CGRect, scale: Double, hole: CGImage, n: CGFloat) -> CIImage? {
+    /// `photo` may be mirror-padded past the photo's edges (context for the model); texture is only ever copied from
+    /// `realExtent`, the real photo. (0.1.256 copied from the mirror image below the photo: a person removed at the
+    /// bottom edge came back as a faint upside-down outline of themselves.)
+    static func detailed(_ fill: CIImage, photo: CIImage, realExtent: CGRect, region: CGRect, scale: Double, hole: CGImage,
+                         n: CGFloat) -> CIImage? {
         guard let kernel = LumenKernels.shared?.healDetail, let energyK = LumenKernels.shared?.healEnergy else { return nil }
         let side = min(region.width, maxPatchSide)
         let toSide = side / region.width            // photo pixels -> stored patch pixels
@@ -338,7 +342,9 @@ extension EditSession {
         let fillMean = mean(fill, mask: holeCI, area: CGRect(x: 0, y: 0, width: n, height: n))
         // the photo at model scale (model pixels, the square at 0,0) for scoring
         let wholeN = whole.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: 1 / up, kCIInputAspectRatioKey: 1.0])
-        let photoN = wholeN.extent.insetBy(dx: 2, dy: 2)
+        let k = n / region.width                     // photo pixels -> model pixels
+        let photoN = CGRect(x: (realExtent.minX - region.minX) * k, y: (realExtent.minY - region.minY) * k,
+                            width: realExtent.width * k, height: realExtent.height * k).insetBy(dx: 2, dy: 2)
         var best: (CGPoint, Float)?
         for f in [1.1, 1.5, 2.0] as [CGFloat] {
             for (ux, uy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)] as [(CGFloat, CGFloat)] {
