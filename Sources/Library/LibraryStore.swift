@@ -589,12 +589,68 @@ final class LibraryStore: ObservableObject {
     // MARK: Import
 
     func importFiles(_ urls: [URL]) {
-        for url in urls {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            do { try add(copying: url, name: url.deletingPathExtension().lastPathComponent) }
-            catch { lastError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)" }
+        // CI demo runs expect the photos at once
+        if DemoMode.isOn {
+            for url in urls {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                do { try add(copying: url, name: url.deletingPathExtension().lastPathComponent) }
+                catch { lastError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)" }
+            }
+            return
         }
+        // Copies happen off the main thread (50 RAWs from an SD card froze the app while they copied), through a file
+        // coordinator so iCloud Drive files are downloaded first instead of failing, with the same progress bar as Photos.
+        guard !urls.isEmpty else { return }
+        if activeImports == 0 { importTotal = 0; importDone = 0 }
+        activeImports += 1
+        importing = true
+        importTotal += urls.count
+        let dir = filesDir
+        Task.detached(priority: .userInitiated) { [weak self] in
+            for url in urls {
+                let result = Self.copyIn(url, to: dir)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.importDone += 1
+                    switch result {
+                    case .success(let (id, fileName, taken)):
+                        let item = LibraryItem(id: id, displayName: url.deletingPathExtension().lastPathComponent,
+                                               fileName: fileName, added: Date(), taken: taken)
+                        self.items.insert(item, at: 0)
+                        self.saveIndex()
+                        self.refreshThumbnail(item)
+                    case .failure(let error):
+                        self.lastError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)"
+                    }
+                }
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.activeImports -= 1
+                if self.activeImports == 0 { self.importing = false }
+            }
+        }
+    }
+
+    /// Copies one picked file into the library (off the main thread). A copy that fails part-way is removed.
+    nonisolated private static func copyIn(_ url: URL, to dir: URL) -> Result<(UUID, String, Date?), Error> {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let id = UUID()
+        let ext = url.pathExtension.lowercased()
+        let fileName = ext.isEmpty ? id.uuidString : "\(id.uuidString).\(ext)"
+        let dst = dir.appendingPathComponent(fileName)
+        var failure: Error?
+        var coordError: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordError) { readable in
+            do { try FileManager.default.copyItem(at: readable, to: dst) } catch { failure = error }
+        }
+        if let error = failure ?? coordError {
+            try? FileManager.default.removeItem(at: dst)
+            return .failure(error)
+        }
+        return .success((id, fileName, dateTaken(dst)))
     }
 
     func importPicked(_ picked: [PhotosPickerItem]) async {
