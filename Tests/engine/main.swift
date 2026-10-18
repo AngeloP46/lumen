@@ -286,8 +286,17 @@ if args.contains("--memory") {
     peaks["subject"] = stepPeak("subject") { if let p = preview { session.ensureSubject(p) } }
     // the app lets go of the full-size copy before healing (freeMemoryForHeal)
     detail = nil
+    // where a heal's memory goes: the full-size decode of the area, and the model itself
+    _ = stepPeak("heal: full decode, 1 square") {
+        if let full = session.decode(maxEdge: nil) {
+            let r = CGRect(x: 1000, y: 1000, width: 2400, height: 2400)
+            let sq = full.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
+                .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: 800.0 / 2400.0, kCIInputAspectRatioKey: 1.0])
+            _ = LumenGPU.context.createCGImage(sq, from: CGRect(x: 0, y: 0, width: 800, height: 800))
+        }
+    }
     if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil {
-        EditSession.prepareHealModel()
+        _ = stepPeak("heal: model load") { EditSession.prepareHealModel() }
         let stroke = BrushStroke(points: [Pt(x: 0.4, y: 0.35), Pt(x: 0.5, y: 0.5), Pt(x: 0.6, y: 0.65)], size: 0.08, erase: false, feather: nil)
         var spot: HealSpot?
         peaks["heal"] = stepPeak("heal") { spot = session.makeHeal(strokes: [stroke], earlier: []) }
