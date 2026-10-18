@@ -162,3 +162,9 @@ Final validation (14 Oct): e4698a9 policy regression checks, simulator APP_STORE
 15 Oct (Claude, shared feature from main PR #11): Auto rewritten — every value measured from the photo (no fixed contrast/vibrance/clarity), subject/centre metering with scene-key protection, HDR-aware highlights, gentle auto white balance, edge cases guarded; runs off the main thread. Auto now only sets Light and Color values (Clarity no longer touched), which ProGate treats as free, so Auto on its own no longer makes a free photo Pro. Engine test now compiles Auto.swift. No Store code touched.
 
 15 Oct evening (Claude, shared fix from main PR #14, SideStore 0.1.242): crash when dragging Lens Blur amount fast. Canvas keeps at most two GPU frames in flight; Lens Blur renders at half resolution while its slider moves; histogram renders skip Lens Blur; disc radius capped; memory warnings clear Core Image caches. No Store code touched.
+
+## 18 Oct 2026: Heal at 1280 px (from main #26, SideStore 0.1.248)
+Big LaMa is converted in CI at 1280 x 1280 (`.github/ci/heal-convert/`: IOPaint big-lama.pt, MD5-verified, CoreMLaMa
+recipe, float32), falling back to the pinned 800 px package if the conversion fails. `EditSession.healSide` is read
+from the model. Engine test on main: 1049 checks passed. Heal is Pro in the App Store build (unchanged gating).
+Before App Store release: check the phone's RAM and use 800 px on low-memory iPhones (6-8 GB), see the crash/memory work.
