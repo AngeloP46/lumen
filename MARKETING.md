@@ -35,5 +35,12 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
 - **Press:** pitches to 9to5Mac and DIYPhotography are drafted in Angelo's Gmail. They are on hold
   until he pays Apple's $99 developer fee and TestFlight is ready.
 
+## Outreach status (18 October)
+- 13 pitch emails (9 small YouTubers, 4 iPhone news sites) are saved as Gmail drafts and **not sent**.
+  They're waiting for TestFlight because they offer free Pro and a TestFlight invite.
+- The contact list lives outside this public repo: `deliverables\outreach-list.md` in the parent folder.
+  It also lists what to fix in the older 9to5Mac/DIYP drafts (an unverified ProRAW claim and a broken link).
+- Reddit can't be reached by Claude's own tools. It needs Claude in Chrome with Angelo signed in.
+
 ## Not wanted (product)
 - Lens corrections, AI denoise, cloud sync, Smart fill.
