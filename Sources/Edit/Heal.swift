@@ -155,6 +155,29 @@ extension EditSession {
         return CGRect(x: place(area.midX, W), y: place(area.midY, H), width: side, height: side)
     }
 
+    /// A mask on the model's square (`region` in photo pixels, y down, `k` square pixels per photo pixel) plus its
+    /// mirror images across every photo edge the square runs past, matching `mirrorPadded`'s context there.
+    static func withMirrors(_ mask: CGImage, region: CGRect, width W: CGFloat, height H: CGFloat, k: CGFloat, n: CGFloat,
+                            ctx: CIContext) -> CGImage {
+        let xs: [CGFloat?] = [nil] + (region.minX < 0 ? [0] : []) + (region.maxX > W ? [W] : [])
+        let ys: [CGFloat?] = [nil] + (region.minY < 0 ? [0] : []) + (region.maxY > H ? [H] : [])
+        guard xs.count > 1 || ys.count > 1 else { return mask }
+        let base = CIImage(cgImage: mask, options: [.colorSpace: NSNull()])
+        let sq = CGRect(x: 0, y: 0, width: n, height: n)
+        var out = base
+        for ex in xs {
+            for ey in ys where ex != nil || ey != nil {
+                // square x: X' = 2(e - minX)k - X; square y (up): Y' = 2n - 2(e - minY)k - Y
+                let t = CGAffineTransform(a: ex == nil ? 1 : -1, b: 0, c: 0, d: ey == nil ? 1 : -1,
+                                          tx: ex.map { 2 * ($0 - region.minX) * k } ?? 0,
+                                          ty: ey.map { 2 * n - 2 * ($0 - region.minY) * k } ?? 0)
+                out = base.transformed(by: t).applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: out])
+            }
+        }
+        out = out.composited(over: constant(0, sq)).cropped(to: sq)
+        return ctx.createCGImage(out, from: sq, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) ?? mask
+    }
+
     /// The picture with mirror images of itself all round: context for a square that runs past the photo's edges.
     static func mirrorPadded(_ img: CIImage) -> CIImage {
         let e = img.extent
@@ -187,15 +210,33 @@ extension EditSession {
         let k = n / side
 
         // 2. the photo there, full resolution, with the earlier heals, scaled to the model's 800 x 800
-        guard let full = decode(maxEdge: nil, heals: earlier) else { return nil }
-        // the region above was measured on `nativeSize`; it must be the picture as decoded
-        guard abs(full.extent.width - W) < 2, abs(full.extent.height - H) < 2 else { return nil }
         let ciRegion = CGRect(x: region.minX, y: H - region.maxY, width: side, height: side)  // Core Image: y up
-        let picture = full.extent.insetBy(dx: -1, dy: -1).contains(ciRegion) ? full : Self.mirrorPadded(full)
-        let crop = picture.cropped(to: ciRegion)
-            .transformed(by: CGAffineTransform(translationX: -ciRegion.minX, y: -ciRegion.minY))
-            .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0])
-            .cropped(to: CGRect(x: 0, y: 0, width: n, height: n))
+        // The full-size decode, as context where the square runs past the photo (mirror image), seen from the square.
+        let picture: () -> (CIImage, CGRect)? = { [self] in
+            guard let full = decode(maxEdge: nil, heals: earlier) else { return nil }
+            // the region above was measured on `nativeSize`; it must be the picture as decoded
+            guard abs(full.extent.width - W) < 2, abs(full.extent.height - H) < 2 else { return nil }
+            return (full.extent.insetBy(dx: -1, dy: -1).contains(ciRegion) ? full : Self.mirrorPadded(full), full.extent)
+        }
+        // Rendered once, at the model's size, in half floats (HDR values above 1 kept), inside this closure so the
+        // full-size photo is let go of before the model runs. Before 19 Oct the full-size graph was rendered twice
+        // (peak, then the model's input) and kept alive through the model run: one heal peaked at 5.3 GB on a
+        // 24 MP photo in the memory test (iPhone limit ~3.4 GB).
+        let rendered: (CGImage, CGRect)? = { [self] in
+            guard case let (photo, real)? = picture(),
+                  let linear = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) else { return nil }
+            let lazyCrop = photo.cropped(to: ciRegion)
+                .transformed(by: CGAffineTransform(translationX: -ciRegion.minX, y: -ciRegion.minY))
+                .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0])
+                .cropped(to: CGRect(x: 0, y: 0, width: n, height: n))
+            guard let cg = ctx.createCGImage(lazyCrop, from: CGRect(x: 0, y: 0, width: n, height: n), format: .RGBAh, colorSpace: linear)
+            else { return nil }
+            return (cg, real)
+        }()
+        ctx.clearCaches()
+        guard case let (cropCG, realExtent)? = rendered else { return nil }
+        let crop = CIImage(cgImage: cropCG)
+        Self.healProbe?("heal: square rendered, full-size photo released")
         // HDR highlights go above 1: squeeze the patch so its brightest pixel is 1 (8-bit for the model), undo later
         var peak = [Float](repeating: 0, count: 4)
         let mx = crop.applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: CIVector(cgRect: crop.extent)])
@@ -214,8 +255,14 @@ extension EditSession {
         else { return nil }
 
         // 3. the hole (white = rebuild), and the softer, slightly wider area the result is blended in with
-        guard let hole = drawHole(region, k, 6, 0), let blend = drawHole(region, k, 10, 4),
-              let outer = drawHole(region, k, 34, 0) else { return nil }
+        // Where the square runs past the photo, the context there is a mirror image, so the area to rebuild is
+        // mirrored too: otherwise a person at the edge has an unmasked mirror copy right next to the hole and the
+        // model paints them back in (code review, 19 Oct).
+        let mirrorHole: (CGImage?) -> CGImage? = { img in
+            img.flatMap { Self.withMirrors($0, region: region, width: W, height: H, k: k, n: n, ctx: self.ctx) }
+        }
+        guard let hole = mirrorHole(drawHole(region, k, 6, 0)), let blend = mirrorHole(drawHole(region, k, 10, 4)),
+              let outer = mirrorHole(drawHole(region, k, 34, 0)) else { return nil }
 
         // 4. the model; an answer that is black (or far darker than its surroundings) inside the hole is a numeric
         //    failure, not a fill: try once more on the CPU, and never keep a broken patch
@@ -274,7 +321,7 @@ extension EditSession {
         // 5. a square bigger than the model's: keep the patch at (nearly) full resolution, with the photo's own fine
         //    texture, instead of the model's softer answer stretched over it (owner: big removals looked blurry)
         let stored = Self.healDetailEnabled && side > n * 1.05
-            ? Self.detailed(out, photo: picture, realExtent: full.extent, region: ciRegion, scale: scale, hole: hole, n: n) ?? out
+            ? picture().flatMap { Self.detailed(out, photo: $0.0, realExtent: realExtent, region: ciRegion, scale: scale, hole: hole, n: n) } ?? out
             : out
 
         Self.healProbe?("heal: patch made")
