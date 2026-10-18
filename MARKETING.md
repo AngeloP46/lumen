@@ -45,7 +45,11 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
   people want it.
 - The contact list lives outside this public repo: `deliverables\outreach-list.md` in the parent folder.
   All 15 drafts (including the older 9to5Mac/DIYP ones, whose broken link is now fixed) name every tested format.
-- Reddit can't be reached by Claude's own tools. It needs Claude in Chrome with Angelo signed in.
+- Reddit is blocked for every Claude tool, including Claude in Chrome. Angelo posts there himself, using the
+  ready-to-paste replies and search links in `deliverables\reddit-replies.md` (parent folder).
+- Forum threads with reply drafts are in `deliverables\forum-replies.md`. Nothing has been posted.
+- TikTok: clip 05 ("Flat RAW off my Sony A9", hook first, 10 s loop) is in `Content\TikTok`. Its caption is in
+  POSTING-NOTES.md. TikTok stays a side channel.
 
 ## Not wanted (product)
 - Lens corrections, AI denoise, cloud sync, Smart fill.
