@@ -173,3 +173,9 @@ Before App Store release: check the phone's RAM and use 800 px on low-memory iPh
 No main-thread model load (fixes the freeze/kill on first Heal in 0.1.248), "Preparing Heal…" while the model loads in
 the background, full-resolution patches with real texture for big removals (lumenHealDetail kernel), and memory freed
 before Heal / Remove people. Engine test on main: 1051 checks passed.
+
+## 19 Oct 2026: Heal made safe (from main #30 and #31, SideStore 0.1.266)
+Texture step switched off (`healDetailEnabled = false`: it copied streaks and a flipped ghost of the person from the
+mirrored edge), back to the pinned 800 px Heal model (the 1280 px model pushed Lumen past iOS's ~3.4 GB per-app limit:
+owner's JetsamEvent, killed at 3388 MB) and the 100 % view's full-size copy capped at 4096 px. The 1280 conversion stays
+in `.github/ci/heal-convert/` for later, once memory allows. Heal stays Pro. No Store code touched.
