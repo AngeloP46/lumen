@@ -195,6 +195,7 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.session = s
                 self.source = src
+                self.sourceHeals = heals.map(\.id)
                 self.unhealedSource = nil   // belonged to the previous photo
                 self.isLoading = false
                 self.loadFailed = (src == nil)
@@ -208,8 +209,14 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    /// The heals the current preview source was decoded with.
+    private var sourceHeals: [UUID] = []
+
     /// HDR on or off changes how the file is decoded (RAW: more highlight range; gain-map JPEG/HEIC: the HDR version),
-    /// so decode it again. Automatic masks already found are kept.
+    /// and heals are painted in while decoding, so decode it again. Automatic masks already found are kept only when
+    /// the heals are the same: after a heal, depth, subject, sky and the rest are worked out again from the healed
+    /// photo. (Before 19 Oct they were kept, so Lens Blur still saw a removed person as near and left a sharp,
+    /// person-shaped hole in the blur: owner's screenshot.)
     private func reloadSource() {
         guard let store, session != nil else { return }
         loadGeneration += 1
@@ -218,13 +225,14 @@ final class EditorViewModel: ObservableObject {
         let wantsHDR = settings.hdr
         let heals = settings.effective.heals
         let previous = source
+        let sameHeals = heals.map(\.id) == sourceHeals || DemoMode.value("-lumenDemoLensDepth") != nil
         workQueue.async {
             let s = EditSession(url: url, expandHDR: wantsHDR)
             s?.heals = heals
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self, generation == self.loadGeneration, let s, let src else { return }
-                if let previous, previous.size == src.size {
+                if sameHeals, let previous, previous.size == src.size {
                     let (masks, tried) = previous.snapshotMasks()
                     for key in tried { src.storeMask(key, masks[key]) }
                     src.storeDepth(previous.depthField)
@@ -232,6 +240,7 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.session = s
                 self.source = src
+                self.sourceHeals = heals.map(\.id)
                 self.sourceSize = src.size
                 self.detailSource = nil
                 if DemoMode.isOn { DemoMode.log("reloaded hdr \(wantsHDR)") }
