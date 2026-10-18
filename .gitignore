@@ -6,3 +6,4 @@ Payload/
 xcuserdata/
 Config/Info.plist
 Models/
+__pycache__/
