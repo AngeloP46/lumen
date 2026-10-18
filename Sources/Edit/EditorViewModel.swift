@@ -676,6 +676,9 @@ final class EditorViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.autoMaskBusy = false
+                // the photo was decoded again meanwhile (HDR, a heal): these results belong to the old copy, so the
+                // new one is analysed now (it was skipped while this job was busy)
+                guard self.source === source else { self.prepareAutoMasksIfNeeded(); return }
                 self.autoMaskMissing = missing
                 if self.lensFocusPending, self.settings.lensBlur == askedBlur { self.finishLensFocus() }
                 self.syncDetailMasks()
