@@ -43,6 +43,8 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
   9to5Mac and DIYP). They offer free Pro and early/TestFlight access. Angelo is holding off on the $99 Apple
   fee until there's interest. Replies get the free SideStore build first, and the $99 gets paid only if
   people want it.
+- The Gmail connector wraps links in a google.com redirect. All 15 emails got that link, so a correction reply
+  with the clean link went to each thread the same day. Send emails that contain links through Gmail web in Chrome.
 - The contact list lives outside this public repo: `deliverables\outreach-list.md` in the parent folder.
   All 15 drafts (including the older 9to5Mac/DIYP ones, whose broken link is now fixed) name every tested format.
 - Reddit is blocked for every Claude tool, including Claude in Chrome. Angelo posts there himself, using the
