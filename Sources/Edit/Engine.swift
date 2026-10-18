@@ -41,7 +41,7 @@ struct LumenKernels {
     /// Sky seen through trees (optional: without them the sky mask is the scene model's alone).
     var skyWeigh: CIColorKernel?, leafWeigh: CIColorKernel?, skyGaps: CIColorKernel?
     /// Full-resolution texture for big heals (optional: without it big heals keep the model's softer fill).
-    var healDetail: CIColorKernel?
+    var healDetail: CIColorKernel?, healEnergy: CIColorKernel?
 
     static let shared: LumenKernels? = {
         var url = LumenGPU.libraryURL
@@ -66,7 +66,7 @@ struct LumenKernels {
                             lensWeigh: k("lumenLensWeigh"), lensCompose: k("lumenLensCompose"),
                             gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
                             skyWeigh: k("lumenSkyWeigh"), leafWeigh: k("lumenLeafWeigh"), skyGaps: k("lumenSkyGaps"),
-                            healDetail: k("lumenHealDetail"))
+                            healDetail: k("lumenHealDetail"), healEnergy: k("lumenHealEnergy"))
     }()
 }
 

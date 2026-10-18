@@ -309,7 +309,7 @@ extension EditSession {
     /// plus fine texture (grain, gravel, grass, leaves) copied from the best-matching spot right next to the hole, and
     /// the untouched photo everywhere outside the hole. nil keeps the model's answer as it is.
     static func detailed(_ fill: CIImage, photo: CIImage, region: CGRect, scale: Double, hole: CGImage, n: CGFloat) -> CIImage? {
-        guard let kernel = LumenKernels.shared?.healDetail else { return nil }
+        guard let kernel = LumenKernels.shared?.healDetail, let energyK = LumenKernels.shared?.healEnergy else { return nil }
         let side = min(region.width, maxPatchSide)
         let toSide = side / region.width            // photo pixels -> stored patch pixels
         let up = side / n                            // model pixels -> stored patch pixels
@@ -358,8 +358,22 @@ extension EditSession {
         let texBlur = blurredWhole.transformed(by: move).cropped(to: sq)
         let holeUp = holeCI.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: up, kCIInputAspectRatioKey: 1.0])
             .clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 1.5 * up]).cropped(to: sq)
-        healDiagnostics += String(format: ", detail from %.0f,%.0f", d.x, d.y)
-        return kernel.apply(extent: sq, arguments: [base, real, tex, texBlur, holeUp])
+        // how much texture the hole's surroundings really have (a lens-blurred background has almost none) against
+        // the source's: copy only that much, and never a step bigger than the surroundings' own (no pasted edges)
+        let energy = energyK.apply(extent: photoBox, arguments: [whole, blurredWhole]) ?? constant(0, sq)
+        let ringN = holeCI.applyingFilter("CIMorphologyMaximum", parameters: [kCIInputRadiusKey: max(4, bbox.width * 0.12)])
+        let ringOnly = ringN.applyingFilter("CIDifferenceBlendMode", parameters: [kCIInputBackgroundImageKey: holeCI])
+        let up2 = CGAffineTransform(scaleX: up, y: up)
+        let eRing = mean(energy, mask: ringOnly.transformed(by: up2), area: sq)[0]
+        let srcMask = holeCI.transformed(by: CGAffineTransform(translationX: d.x, y: d.y)).transformed(by: up2)
+        let eSrc = mean(energy, mask: srcMask, area: bbox.offsetBy(dx: d.x, dy: d.y).applying(up2))[0]
+        let gain = eSrc > 1e-7 ? min(1, (eRing / eSrc).squareRoot()) : 0
+        let maxStep = 2.5 * eRing.squareRoot()
+        healDiagnostics += String(format: ", detail from %.0f,%.0f gain %.2f step %.3f", d.x, d.y, gain, maxStep)
+        guard gain > 0.05, maxStep > 0.002 else { return base.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: real, kCIInputMaskImageKey: holeUp]).cropped(to: sq) }
+        return kernel.apply(extent: sq, arguments: [base, real, tex, texBlur, holeUp,
+                                                    CIVector(x: CGFloat(gain), y: CGFloat(maxStep), z: 0, w: 0)])
     }
 
     /// Mean RGB of `img` where `mask` (red channel) is white, within `area`.

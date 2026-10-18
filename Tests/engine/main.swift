@@ -1970,6 +1970,56 @@ do {
             }
         }
 
+        // 3c. a big removal on a soft, lens-blurred background with sharp lines nearby (owner, 18 Oct, 0.1.256: the copied
+        //     texture pasted diagonal streaks and grain into the bokeh): the patch must stay as smooth as its surroundings
+        do {
+            let w = 4000, h = 3000
+            let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+            if let g = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: cs,
+                                 bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+                for x in stride(from: 0, to: w, by: 8) {
+                    let t = CGFloat(x) / CGFloat(w)
+                    g.setFillColor(CGColor(red: 0.25 + 0.2 * t, green: 0.35 + 0.1 * t, blue: 0.2, alpha: 1))
+                    g.fill(CGRect(x: x, y: 0, width: 8, height: h))
+                }
+                g.setStrokeColor(CGColor(red: 0.05, green: 0.05, blue: 0.05, alpha: 1)); g.setLineWidth(6)
+                for i in 0..<6 {   // sharp diagonal lines all round the disc (where texture could be copied from)
+                    let o = CGFloat(i) * 90
+                    g.move(to: CGPoint(x: 600 + o, y: 200)); g.addLine(to: CGPoint(x: 3400 + o, y: 2800)); g.strokePath()
+                }
+                g.setFillColor(CGColor(red: 0.9, green: 0.05, blue: 0.05, alpha: 1))
+                g.fillEllipse(in: CGRect(x: 1700, y: 1200, width: 600, height: 600))
+                let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("heal-bokeh.png")
+                if let cg = g.makeImage(), let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) {
+                    CGImageDestinationAddImage(dest, cg, nil); CGImageDestinationFinalize(dest)
+                }
+                if let session = EditSession(url: url), let before = session.decode(maxEdge: nil) {
+                    let stroke = BrushStroke(points: [Pt(x: 0.49, y: 0.5), Pt(x: 0.51, y: 0.5)], size: 0.17, erase: false, feather: nil)
+                    if let spot = session.makeHeal(strokes: [stroke], earlier: []) {
+                        print("::notice::bokeh heal: \(EditSession.healDiagnostics)")
+                        session.heals = [spot]
+                        if let after = session.decode(maxEdge: nil) {
+                            var row = [Float](repeating: 0, count: 120 * 4 * 8)
+                            let e = after.extent
+                            LumenGPU.context.render(after, toBitmap: &row, rowBytes: 120 * 16,
+                                                    bounds: CGRect(x: e.minX + 1940, y: e.maxY - 1504, width: 120, height: 8),
+                                                    format: .RGBAf, colorSpace: nil)
+                            var s: Float = 0, k = 0
+                            for r in 0..<8 { for x in 1..<120 { s += abs(row[(r * 120 + x) * 4 + 1] - row[(r * 120 + x - 1) * 4 + 1]); k += 1 } }
+                            let step = s / Float(k)
+                            print("::notice::bokeh heal grain inside \(step)")
+                            check(step < 0.012, "a heal on a smooth background should stay smooth, no copied lines or grain (\(step))")
+                            let crop = CGRect(x: 2000 - 700, y: 1500 - 700, width: 1400, height: 1400)
+                            if let a = smallRender(before.cropped(to: crop), width: 380), let b = smallRender(after.cropped(to: crop), width: 380) {
+                                savePreview("bokeh-heal", [("big disc on a soft background", a), ("healed", b)])
+                            }
+                        }
+                        session.heals = []
+                    } else { check(false, "bokeh heal: makeHeal failed") }
+                }
+            }
+        }
+
         // 4. Remove people on a street photo: everyone found, upright, and one of them removed
         if let path = ProcessInfo.processInfo.environment["LUMEN_PEOPLE_SAMPLE"],
            let session = EditSession(url: URL(fileURLWithPath: path)),
