@@ -35,15 +35,22 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
   1. Reddit: answer posts where people ask for a Lightroom alternative on iPhone. The r/SideProject post
      got caught by spam filters, so write helpful replies to people asking, not self-promo posts.
   2. Email small photography YouTubers and iPhone app sites, offering free Pro.
-- **Press:** pitches to 9to5Mac and DIYPhotography are drafted in Angelo's Gmail. They are on hold
-  until he pays Apple's $99 developer fee and TestFlight is ready.
+- **Press:** pitches to 9to5Mac and DIYPhotography were sent on 18 October with the others (see below).
 
 ## Outreach status (18 October)
-- 13 pitch emails (9 small YouTubers, 4 iPhone news sites) are saved as Gmail drafts and **not sent**.
-  They're waiting for TestFlight because they offer free Pro and a TestFlight invite.
+- **Sent 18 October:** 15 pitch emails went to 9 small YouTubers and 6 iPhone/photo news sites (including
+  9to5Mac and DIYP). They offer free Pro and early/TestFlight access. Angelo is holding off on the $99 Apple
+  fee until there's interest. Replies get the free SideStore build first, and the $99 gets paid only if
+  people want it.
+- The Gmail connector wraps links in a google.com redirect. All 15 emails got that link, so a correction reply
+  with the clean link went to each thread the same day. Send emails that contain links through Gmail web in Chrome.
 - The contact list lives outside this public repo: `deliverables\outreach-list.md` in the parent folder.
-  All 15 drafts (including the older 9to5Mac/DIYP ones, whose broken link is now fixed) name every tested format.
-- Reddit can't be reached by Claude's own tools. It needs Claude in Chrome with Angelo signed in.
+  All 15 emails name every tested format.
+- Reddit is blocked for every Claude tool, including Claude in Chrome. Angelo posts there himself, using the
+  ready-to-paste replies and search links in `deliverables\reddit-replies.md` (parent folder).
+- Forum threads with reply drafts are in `deliverables\forum-replies.md`. Nothing has been posted.
+- TikTok: clip 05 ("Flat RAW off my Sony A9", hook first, 10 s loop) is in `Content\TikTok`. Its caption is in
+  POSTING-NOTES.md. TikTok stays a side channel.
 
 ## Not wanted (product)
 - Lens corrections, AI denoise, cloud sync, Smart fill.
