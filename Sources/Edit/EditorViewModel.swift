@@ -290,6 +290,7 @@ final class EditorViewModel: ObservableObject {
     func flushSave() {
         saveWork?.cancel()
         store?.save(settings, for: item, history: LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack))
+        store?.flushHistory()
     }
 
     // MARK: Rendering
