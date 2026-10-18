@@ -25,7 +25,20 @@ extension EditSession {
         cfg.computeUnits = units
         return try? MLModel(contentsOf: url, configuration: cfg)
     }
-    static var hasHealModel: Bool { healModel != nil }
+    /// Whether this build has the Heal model. Only looks for the file: loading the model compiles it for the GPU,
+    /// which takes many seconds the first time (the 1280 px one), and doing that on the main thread froze the app
+    /// until iOS closed it (owner, 18 Oct, 0.1.248). Load it with `prepareHealModel()` off the main thread.
+    static var hasHealModel: Bool {
+        guard let url = healModelURL else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+    /// Whether the model is loaded and ready (set once `prepareHealModel()` has finished).
+    nonisolated(unsafe) static var healModelReady = false
+    /// Loads (and on first launch compiles) the Heal model. Slow: call it in the background, early.
+    static func prepareHealModel() {
+        _ = healModel
+        healModelReady = healModel != nil
+    }
     /// What the last heal measured (engine test diagnostics).
     nonisolated(unsafe) static var healDiagnostics = ""
     nonisolated(unsafe) static var healAlpha: Float = 1
@@ -37,7 +50,14 @@ extension EditSession {
 
     /// The model's fixed input size, read from the model: 1280 for the Big LaMa CI converts (sharper large removals),
     /// 800 for the older package the build falls back to.
-    static let healSide: Int = healModel?.modelDescription.inputDescriptionsByName["image"]?.imageConstraint?.pixelsWide ?? 800
+    /// Read from `side.txt`, which CI writes next to the compiled model, so asking doesn't load the model.
+    static let healSide: Int = {
+        if let url = healModelURL?.appendingPathComponent("side.txt"),
+           let text = try? String(contentsOf: url, encoding: .utf8), let n = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)), n > 0 {
+            return n
+        }
+        return healModel?.modelDescription.inputDescriptionsByName["image"]?.imageConstraint?.pixelsWide ?? 800
+    }()
 
     /// Rebuilds the painted spot. `earlier` = the heals already made (the new one is built on top of them).
     /// Returns nil when the model is missing or fails. Slow (about a second): call off the main thread.
@@ -246,16 +266,23 @@ extension EditSession {
         guard plausible(out) else { return nil }
         Self.healFailure = .failed
 
-        // 5. keep it: the rebuilt square and where to blend it in, checked again as it will be read back
+        // 5. a square bigger than the model's: keep the patch at (nearly) full resolution, with the photo's own fine
+        //    texture, instead of the model's softer answer stretched over it (owner: big removals looked blurry)
+        let stored = side > n * 1.05
+            ? Self.detailed(out, photo: picture, region: ciRegion, scale: scale, hole: hole, n: n) ?? out
+            : out
+
+        // 6. keep it: the rebuilt square and where to blend it in, checked again as it will be read back
         let id = UUID()
         try? FileManager.default.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         do {
             guard try HealStore.write(id, owner: originalURL, body: {
-                try ctx.writePNGRepresentation(of: out, to: HealStore.patchURL(id), format: .RGBA8, colorSpace: srgb)
+                try ctx.writePNGRepresentation(of: stored, to: HealStore.patchURL(id), format: .RGBA8, colorSpace: srgb)
                 try Self.writeGrayPNG(blend, to: HealStore.maskURL(id))
             }) else { return nil }
         } catch { return nil }
-        guard let back = CIImage(contentsOf: HealStore.patchURL(id)), plausible(back) else {
+        guard let read = CIImage(contentsOf: HealStore.patchURL(id)), case let back = Self.toModelSide(read, n),
+              plausible(back) else {
             HealStore.remove([id])
             return nil
         }
@@ -264,6 +291,103 @@ extension EditSession {
         return HealSpot(id: id, strokes: strokes, x: Double(region.minX / W), y: Double(region.minY / H),
                         w: Double(side / W), h: Double(side / H), scale: scale,
                         person: person.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] })
+    }
+
+    /// Longest side a stored patch is kept at (a 24 MP photo's whole-width square would be a 100 MB PNG).
+    static let maxPatchSide: CGFloat = 2560
+
+    /// A patch read back, at the model's size (for the same checks the model's answer passed).
+    static func toModelSide(_ img: CIImage, _ n: CGFloat) -> CIImage {
+        let e = img.extent
+        guard abs(e.width - n) > 0.5 else { return img }
+        return img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+            .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: n / e.width, kCIInputAspectRatioKey: 1.0])
+            .cropped(to: CGRect(x: 0, y: 0, width: n, height: n))
+    }
+
+    /// The model's fill (`fill`, n x n, divided by `scale`) at the square's real resolution: its shapes and colours,
+    /// plus fine texture (grain, gravel, grass, leaves) copied from the best-matching spot right next to the hole, and
+    /// the untouched photo everywhere outside the hole. nil keeps the model's answer as it is.
+    static func detailed(_ fill: CIImage, photo: CIImage, region: CGRect, scale: Double, hole: CGImage, n: CGFloat) -> CIImage? {
+        guard let kernel = LumenKernels.shared?.healDetail else { return nil }
+        let side = min(region.width, maxPatchSide)
+        let toSide = side / region.width            // photo pixels -> stored patch pixels
+        let up = side / n                            // model pixels -> stored patch pixels
+        let sq = CGRect(x: 0, y: 0, width: side, height: side)
+        let inv = CGFloat(1 / scale)
+        // the whole photo in patch coordinates (the square at 0,0), divided by scale like the model's input
+        var whole = photo.transformed(by: CGAffineTransform(translationX: -region.minX, y: -region.minY))
+        if toSide < 0.999 {
+            whole = whole.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: toSide, kCIInputAspectRatioKey: 1.0])
+        }
+        whole = whole.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: inv, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: inv, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: inv, w: 0)])
+        let photoBox = whole.extent                  // where real photo exists, in patch pixels
+        let real = whole.cropped(to: sq)
+        let base = fill.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: up, kCIInputAspectRatioKey: 1.0])
+            .cropped(to: sq)
+        // the detail the model can't give at its size: the photo minus a copy blurred to the model's resolution
+        let blurredWhole = whole.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 0.6 * up])
+            .cropped(to: photoBox)
+
+        // where to copy the texture from: the hole moved by about its own size in 8 directions, anywhere in the photo
+        // (a big hole leaves no room inside its own square), clear of the hole, closest in colour to the model's fill
+        let holeCI = expandRed(CIImage(cgImage: hole, options: [.colorSpace: NSNull()]))
+        guard let bbox = holeBox(hole) else { return nil }
+        let fillMean = mean(fill, mask: holeCI, area: CGRect(x: 0, y: 0, width: n, height: n))
+        // the photo at model scale (model pixels, the square at 0,0) for scoring
+        let wholeN = whole.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: 1 / up, kCIInputAspectRatioKey: 1.0])
+        let photoN = wholeN.extent.insetBy(dx: 2, dy: 2)
+        var best: (CGPoint, Float)?
+        for f in [1.1, 1.5, 2.0] as [CGFloat] {
+            for (ux, uy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)] as [(CGFloat, CGFloat)] {
+                let d = CGPoint(x: ux * bbox.width * f, y: uy * bbox.height * f)
+                let moved = bbox.offsetBy(dx: d.x, dy: d.y)
+                guard photoN.contains(moved), !moved.intersects(bbox) else { continue }
+                let shifted = holeCI.transformed(by: CGAffineTransform(translationX: d.x, y: d.y))
+                let m = mean(wholeN, mask: shifted, area: moved)
+                let score = zip(m, fillMean).map { abs($0 - $1) }.reduce(0, +)
+                if best == nil || score < best!.1 { best = (d, score) }
+            }
+        }
+        guard let (d, _) = best else { healDiagnostics += ", detail: no texture source"; return nil }
+        // the copied texture, moved onto the hole (model pixels -> patch pixels), faded in at the hole's edge
+        let move = CGAffineTransform(translationX: -d.x * up, y: -d.y * up)
+        let tex = whole.transformed(by: move).cropped(to: sq)
+        let texBlur = blurredWhole.transformed(by: move).cropped(to: sq)
+        let holeUp = holeCI.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: up, kCIInputAspectRatioKey: 1.0])
+            .clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 1.5 * up]).cropped(to: sq)
+        healDiagnostics += String(format: ", detail from %.0f,%.0f", d.x, d.y)
+        return kernel.apply(extent: sq, arguments: [base, real, tex, texBlur, holeUp])
+    }
+
+    /// Mean RGB of `img` where `mask` (red channel) is white, within `area`.
+    private static func mean(_ img: CIImage, mask: CIImage, area r: CGRect) -> [Float] {
+        let m = mask.composited(over: constant(0, r)).cropped(to: r)
+        let w = img.cropped(to: r).applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: m])
+        var a = [Float](repeating: 0, count: 4), b = [Float](repeating: 0, count: 4)
+        LumenGPU.context.render(w.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: r)]),
+                                toBitmap: &a, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        LumenGPU.context.render(m.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: r)]),
+                                toBitmap: &b, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        guard b[0] > 1e-5 else { return [0, 0, 0] }
+        return [a[0] / b[0], a[1] / b[0], a[2] / b[0]]
+    }
+
+
+    /// The hole's bounding box in Core Image coordinates (y up) on the n x n square.
+    private static func holeBox(_ hole: CGImage) -> CGRect? {
+        let w = hole.width, h = hole.height
+        var px = [UInt8](repeating: 0, count: w * h)
+        guard let g = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        g.draw(hole, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var x0 = w, y0 = h, x1 = -1, y1 = -1
+        for y in 0..<h { for x in 0..<w where px[y * w + x] > 127 { x0 = min(x0, x); x1 = max(x1, x); y0 = min(y0, y); y1 = max(y1, y) } }
+        guard x1 >= x0 else { return nil }
+        // bitmap rows run top-down here; Core Image counts from the bottom
+        return CGRect(x: x0, y: h - 1 - y1, width: x1 - x0 + 1, height: y1 - y0 + 1)
     }
 
     /// Renders `img` into a new pixel buffer byte for byte (no colour conversion).

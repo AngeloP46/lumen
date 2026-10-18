@@ -794,6 +794,17 @@ final class EditorViewModel: ObservableObject {
     @Published var selectedHealID: UUID?
     /// What the busy badge on the photo says.
     @Published private(set) var healBusyText = "Removing…"
+    /// The Heal model is loading in the background (shown in the Heal panel).
+    @Published private(set) var healPreparing = false
+    /// Loads the Heal model off the main thread the first time the Heal tool opens.
+    func prepareHeal() {
+        guard !healPreparing, !EditSession.healModelReady, EditSession.hasHealModel else { return }
+        healPreparing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            EditSession.prepareHealModel()
+            Task { @MainActor [weak self] in self?.healPreparing = false }
+        }
+    }
     fileprivate var healWaitingForReload = false
 
     func healBegin(_ p: Pt) { guard !healBusy else { return }; selectedHealID = nil; healMessage = nil; healStroke = [p] }
@@ -816,9 +827,11 @@ final class EditorViewModel: ObservableObject {
         let stroke = BrushStroke(points: healStroke, size: healSize, erase: false, feather: nil)
         let earlier = settings.effective.heals
         healBusy = true
-        healBusyText = "Removing…"
+        healBusyText = EditSession.healModelReady ? "Removing…" : "Preparing Heal…"
+        freeMemoryForHeal()
         workQueue.async {
             let spot = session.makeHeal(strokes: [stroke], earlier: earlier)
+            LumenGPU.context.clearCaches()
             let why = EditSession.healFailure ?? .failed
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -834,6 +847,15 @@ final class EditorViewModel: ObservableObject {
                 self.settings.heals.append(spot)
             }
         }
+    }
+
+    /// A heal decodes the full-resolution photo and runs the large Heal model: let go of the copies that can be made
+    /// again first (the 100 % view's full-resolution source, the heal-free "before" preview, GPU caches). With all of
+    /// them alive iOS closed the app during big heals (owner, 18 Oct, Lumen at 3.3 GB in the JetsamEvent report).
+    func freeMemoryForHeal() {
+        detailSource = nil
+        unhealedSource = nil
+        LumenGPU.context.clearCaches()
     }
 
     /// Keeps a heal-free preview while the photo has heals (built in the background, dropped when there are none).
@@ -940,6 +962,7 @@ final class EditorViewModel: ObservableObject {
         let earlier = settings.effective.heals
         healBusy = true
         healBusyText = chosen.count == 1 ? "Removing…" : "Removing 1 of \(chosen.count)…"
+        freeMemoryForHeal()
         workQueue.async {
             var made: [HealSpot] = []
             var failures: [HealFailure] = []
@@ -948,7 +971,9 @@ final class EditorViewModel: ObservableObject {
                     let text = "Removing \(i + 1) of \(chosen.count)…"
                     Task { @MainActor [weak self] in self?.healBusyText = text }
                 }
-                if let spot = session.makeHeal(person: person, earlier: earlier + made) {
+                let spot = session.makeHeal(person: person, earlier: earlier + made)
+                LumenGPU.context.clearCaches()
+                if let spot {
                     made.append(spot)
                 } else {
                     failures.append(EditSession.healFailure ?? .failed)
