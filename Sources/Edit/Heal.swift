@@ -178,6 +178,45 @@ extension EditSession {
         return ctx.createCGImage(out, from: sq, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) ?? mask
     }
 
+    /// A removed person's cast shadow on the model's square: ground clearly darker than what is around them
+    /// (`around`, the mean brightness just outside the hole), reached from their feet without climbing above their
+    /// waist. nil when there is none, or when what is found is too small or so big it is more likely dark ground.
+    static func shadowMask(hole: CGImage, person box: CGRect, photo: CIImage, around: Float, n: CGFloat, ctx: CIContext) -> CIImage? {
+        guard around > 0.08, box.width > 4, box.height > 4 else { return nil }
+        let sq = CGRect(x: 0, y: 0, width: n, height: n)
+        let holeCI = expandRed(CIImage(cgImage: hole, options: [.colorSpace: NSNull()]))
+        // dark enough to be shadow: under 62 % of the surroundings' brightness
+        let dark = photo.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0])
+            .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": around * 0.62])
+            .applyingFilter("CIColorInvert")
+        // never above the waist (y up: below box.minY + half its height), and the person themselves can be crossed
+        let low = CGRect(x: 0, y: 0, width: n, height: max(0, box.minY + box.height * 0.5))
+        let allowed = dark.cropped(to: low).composited(over: constant(0, sq))
+            .applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: holeCI]).cropped(to: sq)
+        // start from the feet
+        let feet = CGRect(x: box.minX - box.width * 0.2, y: box.minY - box.height * 0.05, width: box.width * 1.4, height: box.height * 0.3)
+        var grown = holeCI.cropped(to: feet).composited(over: constant(0, sq)).cropped(to: sq)
+        // spread through the allowed area, 5 px a step (materialized every 10 steps to keep the graph small)
+        for step in 1...60 {
+            grown = grown.applyingFilter("CIMorphologyMaximum", parameters: [kCIInputRadiusKey: 5])
+                .applyingFilter("CIMinimumCompositing", parameters: [kCIInputBackgroundImageKey: allowed]).cropped(to: sq)
+            if step % 10 == 0, let cg = ctx.createCGImage(grown, from: sq, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) {
+                grown = expandRed(CIImage(cgImage: cg, options: [.colorSpace: NSNull()]))
+            }
+        }
+        let shadow = grown.applyingFilter("CIDifferenceBlendMode", parameters: [kCIInputBackgroundImageKey: holeCI])
+            .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": 0.5]).cropped(to: sq)
+        func area(_ img: CIImage) -> Float {
+            var v = [Float](repeating: 0, count: 4)
+            let a = img.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: sq)])
+            ctx.render(a, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+            return v[0]
+        }
+        let s = area(shadow), h = area(holeCI)
+        guard s > h * 0.03, s < h * 1.6 else { return nil }
+        return shadow
+    }
+
     /// The picture with mirror images of itself all round: context for a square that runs past the photo's edges.
     static func mirrorPadded(_ img: CIImage) -> CIImage {
         let e = img.extent
@@ -269,8 +308,29 @@ extension EditSession {
         let mirrorHole: (CGImage?) -> CGImage? = { img in
             img.flatMap { Self.withMirrors($0, region: region, width: W, height: H, k: k, n: n, ctx: self.ctx) }
         }
-        guard let hole = mirrorHole(drawHole(region, k, 6, 0)), let blend = mirrorHole(drawHole(region, k, 10, 4)),
-              let outer = mirrorHole(drawHole(region, k, 34, 0)) else { return nil }
+        guard var hole = mirrorHole(drawHole(region, k, 6, 0)), var blend = mirrorHole(drawHole(region, k, 10, 4)),
+              var outer = mirrorHole(drawHole(region, k, 34, 0)) else { return nil }
+        // Remove people: the person's shadow goes too (owner's photo, 19 Oct: the shadow was left on the paving)
+        if let p = person {
+            let sqBox = CGRect(x: (p.minX * W - region.minX) * k, y: n - (p.maxY * H - region.minY) * k,
+                               width: p.width * W * k, height: p.height * H * k)   // the person on the square, y up
+            let photo = CIImage(cgImage: cgImage)
+            let around = Self.meanBetween(photo, outer: outer, inner: blend)
+            if let shadow = Self.shadowMask(hole: hole, person: sqBox, photo: photo, around: around, n: n, ctx: ctx) {
+                func add(_ mask: CGImage, grow: CGFloat, soften: CGFloat) -> CGImage {
+                    var m = shadow.applyingFilter("CIMorphologyMaximum", parameters: [kCIInputRadiusKey: grow])
+                    if soften > 0 { m = Self.blur(m, soften, CGRect(x: 0, y: 0, width: n, height: n)) }
+                    let both = m.applyingFilter("CIMaximumCompositing", parameters: [
+                        kCIInputBackgroundImageKey: Self.expandRed(CIImage(cgImage: mask, options: [.colorSpace: NSNull()]))])
+                        .cropped(to: CGRect(x: 0, y: 0, width: n, height: n))
+                    return ctx.createCGImage(both, from: both.extent, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) ?? mask
+                }
+                hole = add(hole, grow: 6, soften: 0)
+                blend = add(blend, grow: 10, soften: 4)
+                outer = add(outer, grow: 34, soften: 0)
+                Self.healProbe?("heal: shadow added")
+            }
+        }
 
         // 4. the model; an answer that is black (or far darker than its surroundings) inside the hole is a numeric
         //    failure, not a fill: try once more on the CPU, and never keep a broken patch
