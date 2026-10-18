@@ -57,8 +57,8 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
   with Apple's sharpening off). He offered an intro to Greg McMillan (iPhoneography podcast), and Angelo asked for it on 18 Oct.
 - SEO page: `landing-page\edit-sony-raw-on-iphone.html` ("How to edit Sony RAW files on your iPhone"). It's built and
   checked on mobile, but not linked or deployed. It goes live only when Angelo says so.
-- Batch 2: 19 more small YouTubers (car photography, iPad/mobile editing, Sony/Fuji) with pitches, NOT SENT, in
-  `deliverables\outreach-batch-2.md` (parent folder). They wait for Angelo's go-ahead.
+- Batch 2: 19 more small YouTubers (car photography, iPad/mobile editing, Sony/Fuji), SENT 18 Oct through Gmail web; list in
+  `deliverables\outreach-batch-2.md` (parent folder).
 
 ## Not wanted (product)
 - Lens corrections, AI denoise, cloud sync, Smart fill.
