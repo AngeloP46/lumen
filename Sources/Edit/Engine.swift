@@ -6,6 +6,23 @@ import ImageIO
 import UniformTypeIdentifiers
 
 /// GPU objects shared by the whole app (preview view, thumbnails, export).
+/// An AI model loaded the first time it is needed and let go of with `release()` (when its tool closes or memory is
+/// short). Before 19 Oct each model was a `static let`, so once used it stayed in memory until the app closed.
+/// Code that is using the model holds its own reference, so releasing never pulls it from under a running job.
+final class LoadedModel<M>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: M?
+    private var tried = false
+    private let load: () -> M?
+    init(_ load: @escaping () -> M?) { self.load = load }
+    var model: M? {
+        lock.lock(); defer { lock.unlock() }
+        if !tried { value = load(); tried = true }
+        return value
+    }
+    func release() { lock.lock(); value = nil; tried = false; lock.unlock() }
+}
+
 enum LumenGPU {
     static let device: MTLDevice? = MTLCreateSystemDefaultDevice()
     static let queue: MTLCommandQueue? = device?.makeCommandQueue()

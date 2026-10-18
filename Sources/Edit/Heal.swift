@@ -16,9 +16,18 @@ extension EditSession {
     }()
     /// `.all` is what the conversion was verified with. (0.1.137 used .cpuAndGPU: black. The dark fills on red
     /// paint / yellow plates in 0.1.139-145 were not the compute units but the output's alpha channel, see run().)
-    private static let healModel: MLModel? = loadHealModel(.all)
-    /// Full precision, slower: tried when the first answer looks wrong.
-    private static let healModelCPU: MLModel? = loadHealModel(.cpuOnly)
+    private static let healStore = LoadedModel { loadHealModel(.all) }
+    private static var healModel: MLModel? { healStore.model }
+    /// Full precision, slower: tried when the first answer looks wrong, and let go of straight after.
+    private static let healCPUStore = LoadedModel { loadHealModel(.cpuOnly) }
+    private static var healModelCPU: MLModel? { healCPUStore.model }
+    /// Lets go of the Heal model (hundreds of MB while loaded): when the Heal tool closes or memory runs short.
+    /// It loads again the next time Heal is used (quicker than the first time: iOS keeps the compiled copy).
+    static func releaseHealModel() {
+        healStore.release()
+        healCPUStore.release()
+        healModelReady = false
+    }
     private static func loadHealModel(_ units: MLComputeUnits) -> MLModel? {
         guard let url = healModelURL else { return nil }
         let cfg = MLModelConfiguration()
@@ -260,6 +269,7 @@ extension EditSession {
         }
         if answer == nil || !plausible(answer!), let cpu = Self.healModelCPU {
             answer = run(cpu)
+            Self.healCPUStore.release()
         }
         guard let out = answer else { return nil }
         Self.healFailure = .looksWrong
