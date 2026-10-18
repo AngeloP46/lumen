@@ -35,7 +35,9 @@ extension EditSession {
         String(bytes: [24, 16, 8, 0].map { UInt8((t >> $0) & 0xFF) }, encoding: .ascii) ?? "\(t)"
     }
 
-    static let healSide = 800   // the model's fixed input size
+    /// The model's fixed input size, read from the model: 1280 for the Big LaMa CI converts (sharper large removals),
+    /// 800 for the older package the build falls back to.
+    static let healSide: Int = healModel?.modelDescription.inputDescriptionsByName["image"]?.imageConstraint?.pixelsWide ?? 800
 
     /// Rebuilds the painted spot. `earlier` = the heals already made (the new one is built on top of them).
     /// Returns nil when the model is missing or fails. Slow (about a second): call off the main thread.

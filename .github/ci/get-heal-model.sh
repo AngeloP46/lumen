@@ -1,5 +1,5 @@
 #!/bin/bash
-# Immutable source package + pinned SHA-256 verification; compile afresh.
+# Heal model: Big LaMa converted in CI at 1280 px (see heal-convert/), falling back to the pinned 800 px package.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-python3 "$here/get-model.py" heal "$1"
+bash "$here/heal-convert/build-heal.sh" "$1"

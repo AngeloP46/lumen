@@ -1742,6 +1742,10 @@ do {
             // 2. the model: paint over the disc and it is rebuilt from the stripes around it
             if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil {
                 check(EditSession.hasHealModel, "the heal model should load from LUMEN_HEAL_MODEL")
+                print("::notice::heal model input \(EditSession.healSide) px")
+                if let want = ProcessInfo.processInfo.environment["LUMEN_HEAL_EXPECT_SIDE"].flatMap(Int.init) {
+                    check(EditSession.healSide == want, "the heal model should be \(want) px (is \(EditSession.healSide))")
+                }
                 let stroke = BrushStroke(points: [Pt(x: 0.49, y: 0.5), Pt(x: 0.51, y: 0.5)], size: 0.12, erase: false, feather: nil)
                 session.heals = []
                 let t0 = now()
