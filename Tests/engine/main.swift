@@ -269,6 +269,7 @@ if args.contains("--memory") {
           let session = EditSession(url: arw, expandHDR: true) else {
         check(false, "memory test needs the Sony ARW"); finishChecks()
     }
+    EditSession.healProbe = { print("MEMORY   \($0): \(footprintMB()) MB") }
     print("MEMORY start \(footprintMB()) MB, photo \(Int(session.nativeSize.width))x\(Int(session.nativeSize.height))")
     var preview: ImageSource?
     var detail: ImageSource?

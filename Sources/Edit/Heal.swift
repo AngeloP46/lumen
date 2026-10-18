@@ -39,6 +39,8 @@ extension EditSession {
         _ = healModel
         healModelReady = healModel != nil
     }
+    /// Called at each step of a heal (app: the diagnostics log; engine test: prints memory), to see where memory goes.
+    nonisolated(unsafe) static var healProbe: ((String) -> Void)?
     /// What the last heal measured (engine test diagnostics).
     nonisolated(unsafe) static var healDiagnostics = ""
     nonisolated(unsafe) static var healAlpha: Float = 1
@@ -251,7 +253,9 @@ extension EditSession {
             let inHole = Self.meanInside(o, mask: hole, invert: false)
             return inHole.isFinite && !(band > 0.06 && inHole < band * 0.3)
         }
+        Self.healProbe?("heal: input ready")
         var answer = run(model)
+        Self.healProbe?("heal: model answered \(answer == nil ? "nothing" : "")")
         if let a = answer {
             Self.healDiagnostics = String(format: "band %.3f, ring %.3f, input hole %.3f, output hole %.3f, output ring %.3f, scale %.3f, raw output min alpha %.3f, square %.0f px, buffer %@",
                                           band, ring, Self.meanInside(CIImage(cgImage: cgImage), mask: hole, invert: false),
@@ -259,6 +263,7 @@ extension EditSession {
                                           Self.healAlpha, side, Self.fourCC(model.modelDescription.outputDescriptionsByName["output"]?.imageConstraint?.pixelFormatType ?? 0))
         }
         if answer == nil || !plausible(answer!), let cpu = Self.healModelCPU {
+            Self.healProbe?("heal: first answer rejected, trying the CPU model")
             answer = run(cpu)
         }
         guard let out = answer else { return nil }
@@ -272,6 +277,7 @@ extension EditSession {
             ? Self.detailed(out, photo: picture, realExtent: full.extent, region: ciRegion, scale: scale, hole: hole, n: n) ?? out
             : out
 
+        Self.healProbe?("heal: patch made")
         // 6. keep it: the rebuilt square and where to blend it in, checked again as it will be read back
         let id = UUID()
         try? FileManager.default.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
