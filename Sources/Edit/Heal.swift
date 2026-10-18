@@ -212,9 +212,15 @@ extension EditSession {
         // 2. the photo there, full resolution, with the earlier heals, scaled to the model's 800 x 800
         let ciRegion = CGRect(x: region.minX, y: H - region.maxY, width: side, height: side)  // Core Image: y up
         // The full-size decode, as context where the square runs past the photo (mirror image), seen from the square.
-        let picture: () -> (CIImage, CGRect)? = { [self] in
-            guard let full = decode(maxEdge: nil, heals: earlier) else { return nil }
+        // `scale` < 1 decodes a smaller copy (the square is shrunk to the model's size anyway); the result is in
+        // photo pixels either way.
+        let picture: (CGFloat) -> (CIImage, CGRect)? = { [self] f in
+            let L = max(W, H)
+            guard var full = decode(maxEdge: f < 0.95 ? (L * f).rounded(.up) : nil, heals: earlier) else { return nil }
+            let fx = full.extent.width / W, fy = full.extent.height / H
             // the region above was measured on `nativeSize`; it must be the picture as decoded
+            guard abs(fx - fy) < 0.01, fx > 0 else { return nil }
+            if abs(fx - 1) > 0.001 { full = full.transformed(by: CGAffineTransform(scaleX: W / full.extent.width, y: H / full.extent.height)) }
             guard abs(full.extent.width - W) < 2, abs(full.extent.height - H) < 2 else { return nil }
             return (full.extent.insetBy(dx: -1, dy: -1).contains(ciRegion) ? full : Self.mirrorPadded(full), full.extent)
         }
@@ -223,7 +229,9 @@ extension EditSession {
         // (peak, then the model's input) and kept alive through the model run: one heal peaked at 5.3 GB on a
         // 24 MP photo in the memory test (iPhone limit ~3.4 GB).
         let rendered: (CGImage, CGRect)? = { [self] in
-            guard case let (photo, real)? = picture(),
+            // twice the model's resolution is plenty for a sharp downscale, and a 24 MP decode for a big square
+            // was most of a heal's memory (2.3 GB spike in the memory test)
+            guard case let (photo, real)? = picture(min(1, 2 * k)),
                   let linear = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) else { return nil }
             let lazyCrop = photo.cropped(to: ciRegion)
                 .transformed(by: CGAffineTransform(translationX: -ciRegion.minX, y: -ciRegion.minY))
@@ -321,7 +329,7 @@ extension EditSession {
         // 5. a square bigger than the model's: keep the patch at (nearly) full resolution, with the photo's own fine
         //    texture, instead of the model's softer answer stretched over it (owner: big removals looked blurry)
         let stored = Self.healDetailEnabled && side > n * 1.05
-            ? picture().flatMap { Self.detailed(out, photo: $0.0, realExtent: realExtent, region: ciRegion, scale: scale, hole: hole, n: n) } ?? out
+            ? picture(1).flatMap { Self.detailed(out, photo: $0.0, realExtent: realExtent, region: ciRegion, scale: scale, hole: hole, n: n) } ?? out
             : out
 
         Self.healProbe?("heal: patch made")
