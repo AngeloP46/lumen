@@ -179,3 +179,14 @@ Texture step switched off (`healDetailEnabled = false`: it copied streaks and a 
 mirrored edge), back to the pinned 800 px Heal model (the 1280 px model pushed Lumen past iOS's ~3.4 GB per-app limit:
 owner's JetsamEvent, killed at 3388 MB) and the 100 % view's full-size copy capped at 4096 px. The 1280 conversion stays
 in `.github/ci/heal-convert/` for later, once memory allows. Heal stays Pro. No Store code touched.
+
+## 19 Oct 2026: Diagnostics and the stability batch (from main #32 and #34, SideStore 0.1.274 / 0.1.288)
+- ⋯ → Send diagnostics… (editor and library): memory log plus MetricKit crash/hang reports in Library/Diagnostics,
+  shared only when the user chooses. Nothing leaves the phone otherwise (privacy policy: no change needed, nothing is
+  collected or sent by the app).
+- AI models load when needed and are released (Heal 30 s after leaving the tool, all on a memory warning).
+- Undo history written at most every 2 s.
+- Memory guard before the 100 % view, Heal and export build big copies.
+- After a heal, depth/subject/sky masks are re-measured from the healed photo (Lens Blur no longer leaves a sharp hole
+  where a removed person was).
+No Store code touched; Pro gating unchanged.
