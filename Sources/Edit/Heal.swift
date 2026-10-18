@@ -289,63 +289,61 @@ extension EditSession {
     /// plus fine texture (grain, gravel, grass, leaves) copied from the best-matching spot right next to the hole, and
     /// the untouched photo everywhere outside the hole. nil keeps the model's answer as it is.
     static func detailed(_ fill: CIImage, photo: CIImage, region: CGRect, scale: Double, hole: CGImage, n: CGFloat) -> CIImage? {
+        guard let kernel = LumenKernels.shared?.healDetail else { return nil }
         let side = min(region.width, maxPatchSide)
         let toSide = side / region.width            // photo pixels -> stored patch pixels
         let up = side / n                            // model pixels -> stored patch pixels
         let sq = CGRect(x: 0, y: 0, width: side, height: side)
         let inv = CGFloat(1 / scale)
-        var real = photo.cropped(to: region)
-            .transformed(by: CGAffineTransform(translationX: -region.minX, y: -region.minY))
+        // the whole photo in patch coordinates (the square at 0,0), divided by scale like the model's input
+        var whole = photo.transformed(by: CGAffineTransform(translationX: -region.minX, y: -region.minY))
         if toSide < 0.999 {
-            real = real.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: toSide, kCIInputAspectRatioKey: 1.0])
+            whole = whole.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: toSide, kCIInputAspectRatioKey: 1.0])
         }
-        real = real.applyingFilter("CIColorMatrix", parameters: [
+        whole = whole.applyingFilter("CIColorMatrix", parameters: [
             "inputRVector": CIVector(x: inv, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: inv, z: 0, w: 0),
-            "inputBVector": CIVector(x: 0, y: 0, z: inv, w: 0)]).cropped(to: sq)
+            "inputBVector": CIVector(x: 0, y: 0, z: inv, w: 0)])
+        let photoBox = whole.extent                  // where real photo exists, in patch pixels
+        let real = whole.cropped(to: sq)
         let base = fill.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: up, kCIInputAspectRatioKey: 1.0])
             .cropped(to: sq)
         // the detail the model can't give at its size: the photo minus a copy blurred to the model's resolution
-        guard let kernel = LumenKernels.shared?.healDetail else { return nil }
-        let blurred = real.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 0.6 * up]).cropped(to: sq)
+        let blurredWhole = whole.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 0.6 * up])
+            .cropped(to: photoBox)
 
-        // where to copy the texture from: the hole moved sideways/up/down by about its own size, clear of the hole,
-        // inside the square, and closest in colour to what the model painted in the hole
+        // where to copy the texture from: the hole moved by about its own size in 8 directions, anywhere in the photo
+        // (a big hole leaves no room inside its own square), clear of the hole, closest in colour to the model's fill
         let holeCI = expandRed(CIImage(cgImage: hole, options: [.colorSpace: NSNull()]))
         guard let bbox = holeBox(hole) else { return nil }
-        let fillMean = mean(fill, mask: holeCI, n: n)
-        let realN = toModel(real, side: side, n: n)
+        let fillMean = mean(fill, mask: holeCI, area: CGRect(x: 0, y: 0, width: n, height: n))
+        // the photo at model scale (model pixels, the square at 0,0) for scoring
+        let wholeN = whole.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: 1 / up, kCIInputAspectRatioKey: 1.0])
+        let photoN = wholeN.extent.insetBy(dx: 2, dy: 2)
         var best: (CGPoint, Float)?
-        for f in [1.15, 1.6, 2.2] as [CGFloat] {
+        for f in [1.1, 1.5, 2.0] as [CGFloat] {
             for (ux, uy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)] as [(CGFloat, CGFloat)] {
                 let d = CGPoint(x: ux * bbox.width * f, y: uy * bbox.height * f)
                 let moved = bbox.offsetBy(dx: d.x, dy: d.y)
-                guard moved.minX >= 0, moved.minY >= 0, moved.maxX <= n, moved.maxY <= n else { continue }
-                // the colour of the photo where the moved hole lands (the input, at model size, is `fill`'s ring here)
+                guard photoN.contains(moved), !moved.intersects(bbox) else { continue }
                 let shifted = holeCI.transformed(by: CGAffineTransform(translationX: d.x, y: d.y))
-                guard overlap(holeCI, shifted, n: n) < 0.01 else { continue }
-                let m = mean(realN, mask: shifted, n: n)
+                let m = mean(wholeN, mask: shifted, area: moved)
                 let score = zip(m, fillMean).map { abs($0 - $1) }.reduce(0, +)
                 if best == nil || score < best!.1 { best = (d, score) }
             }
         }
-        guard let (d, _) = best else { return nil }
+        guard let (d, _) = best else { healDiagnostics += ", detail: no texture source"; return nil }
         // the copied texture, moved onto the hole (model pixels -> patch pixels), faded in at the hole's edge
         let move = CGAffineTransform(translationX: -d.x * up, y: -d.y * up)
-        let tex = real.clampedToExtent().transformed(by: move).cropped(to: sq)
-        let texBlur = blurred.clampedToExtent().transformed(by: move).cropped(to: sq)
+        let tex = whole.transformed(by: move).cropped(to: sq)
+        let texBlur = blurredWhole.transformed(by: move).cropped(to: sq)
         let holeUp = holeCI.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: up, kCIInputAspectRatioKey: 1.0])
             .clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 1.5 * up]).cropped(to: sq)
+        healDiagnostics += String(format: ", detail from %.0f,%.0f", d.x, d.y)
         return kernel.apply(extent: sq, arguments: [base, real, tex, texBlur, holeUp])
     }
 
-    private static func toModel(_ img: CIImage, side: CGFloat, n: CGFloat) -> CIImage {
-        img.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: n / side, kCIInputAspectRatioKey: 1.0])
-            .cropped(to: CGRect(x: 0, y: 0, width: n, height: n))
-    }
-
-    /// Mean RGB of `img` where `mask` (n x n, red channel) is white.
-    private static func mean(_ img: CIImage, mask: CIImage, n: CGFloat) -> [Float] {
-        let r = CGRect(x: 0, y: 0, width: n, height: n)
+    /// Mean RGB of `img` where `mask` (red channel) is white, within `area`.
+    private static func mean(_ img: CIImage, mask: CIImage, area r: CGRect) -> [Float] {
         let m = mask.composited(over: constant(0, r)).cropped(to: r)
         let w = img.cropped(to: r).applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: m])
         var a = [Float](repeating: 0, count: 4), b = [Float](repeating: 0, count: 4)
@@ -357,16 +355,6 @@ extension EditSession {
         return [a[0] / b[0], a[1] / b[0], a[2] / b[0]]
     }
 
-    /// Share of the square where both masks are white.
-    private static func overlap(_ a: CIImage, _ b: CIImage, n: CGFloat) -> Float {
-        let r = CGRect(x: 0, y: 0, width: n, height: n)
-        let both = a.composited(over: constant(0, r)).cropped(to: r)
-            .applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: b.composited(over: constant(0, r)).cropped(to: r)])
-        var v = [Float](repeating: 0, count: 4)
-        LumenGPU.context.render(both.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: r)]),
-                                toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
-        return v[0]
-    }
 
     /// The hole's bounding box in Core Image coordinates (y up) on the n x n square.
     private static func holeBox(_ hole: CGImage) -> CGRect? {
