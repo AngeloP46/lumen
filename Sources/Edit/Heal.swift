@@ -268,7 +268,7 @@ extension EditSession {
 
         // 5. a square bigger than the model's: keep the patch at (nearly) full resolution, with the photo's own fine
         //    texture, instead of the model's softer answer stretched over it (owner: big removals looked blurry)
-        let stored = side > n * 1.05
+        let stored = Self.healDetailEnabled && side > n * 1.05
             ? Self.detailed(out, photo: picture, realExtent: full.extent, region: ciRegion, scale: scale, hole: hole, n: n) ?? out
             : out
 
@@ -292,6 +292,11 @@ extension EditSession {
                         w: Double(side / W), h: Double(side / H), scale: scale,
                         person: person.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] })
     }
+
+    /// Full-resolution texture for big heals. OFF since 18 Oct (owner's photos on 0.1.256/0.1.26x): it left a faint
+    /// outline of the removed person at the hole's soft edge and could copy the wrong texture. Back to the model's
+    /// fill until it is reworked and checked on real photos.
+    static let healDetailEnabled = false
 
     /// Longest side a stored patch is kept at (a 24 MP photo's whole-width square would be a 100 MB PNG).
     static let maxPatchSide: CGFloat = 2560
