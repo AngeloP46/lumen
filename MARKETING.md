@@ -39,8 +39,10 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
   until he pays Apple's $99 developer fee and TestFlight is ready.
 
 ## Outreach status (18 October)
-- 13 pitch emails (9 small YouTubers, 4 iPhone news sites) are saved as Gmail drafts and **not sent**.
-  They're waiting for TestFlight because they offer free Pro and a TestFlight invite.
+- **Sent 18 October:** 15 pitch emails went to 9 small YouTubers and 6 iPhone/photo news sites (including
+  9to5Mac and DIYP). They offer free Pro and early/TestFlight access. Angelo is holding off on the $99 Apple
+  fee until there's interest. Replies get the free SideStore build first, and the $99 gets paid only if
+  people want it.
 - The contact list lives outside this public repo: `deliverables\outreach-list.md` in the parent folder.
   All 15 drafts (including the older 9to5Mac/DIYP ones, whose broken link is now fixed) name every tested format.
 - Reddit can't be reached by Claude's own tools. It needs Claude in Chrome with Angelo signed in.
