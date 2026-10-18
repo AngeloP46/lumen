@@ -158,11 +158,15 @@ struct HealPanel: View {
     @ObservedObject var vm: EditorViewModel
 
     var body: some View {
-        if let people = vm.peopleFound {
-            picker(people)
-        } else {
-            controls
+        Group {
+            if let people = vm.peopleFound {
+                picker(people)
+            } else {
+                controls
+            }
         }
+        // load the Heal model in the background as soon as the tool opens (it takes a while the first time)
+        .onAppear { vm.prepareHeal() }
     }
 
     /// Remove people, after the search: who goes.
@@ -203,6 +207,13 @@ struct HealPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             if !EditSession.hasHealModel {
                 note("Heal isn't available in this build.")
+            } else if vm.healPreparing {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Preparing Heal… the first time after an update can take up to a minute.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityIdentifier("heal-preparing")
             } else if let msg = vm.healMessage {
                 note(msg)
             } else {

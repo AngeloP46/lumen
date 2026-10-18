@@ -29,6 +29,7 @@ if [ ! -d "$pkg" ]; then
     echo "::warning::Big LaMa ${side}px conversion failed: using the pinned 800 px Heal model"
     rm -rf "$work"
     python3 "$here/../get-model.py" heal "$out"
+    echo 800 > "$out/LaMa.mlmodelc/side.txt"
     exit 0
   fi
   rm -rf "$work"
@@ -36,4 +37,5 @@ fi
 rm -rf "$out/LaMa.mlmodelc" "$out/.heal-compile"; mkdir -p "$out/.heal-compile"
 xcrun coremlcompiler compile "$pkg" "$out/.heal-compile"
 mv "$out/.heal-compile/LaMa.mlmodelc" "$out/LaMa.mlmodelc"; rm -rf "$out/.heal-compile"
+echo "$side" > "$out/LaMa.mlmodelc/side.txt"
 echo "Compiled Heal model: Big LaMa ${side}px ($key)"

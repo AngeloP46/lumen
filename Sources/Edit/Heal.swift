@@ -25,7 +25,20 @@ extension EditSession {
         cfg.computeUnits = units
         return try? MLModel(contentsOf: url, configuration: cfg)
     }
-    static var hasHealModel: Bool { healModel != nil }
+    /// Whether this build has the Heal model. Only looks for the file: loading the model compiles it for the GPU,
+    /// which takes many seconds the first time (the 1280 px one), and doing that on the main thread froze the app
+    /// until iOS closed it (owner, 18 Oct, 0.1.248). Load it with `prepareHealModel()` off the main thread.
+    static var hasHealModel: Bool {
+        guard let url = healModelURL else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+    /// Whether the model is loaded and ready (set once `prepareHealModel()` has finished).
+    nonisolated(unsafe) static var healModelReady = false
+    /// Loads (and on first launch compiles) the Heal model. Slow: call it in the background, early.
+    static func prepareHealModel() {
+        _ = healModel
+        healModelReady = healModel != nil
+    }
     /// What the last heal measured (engine test diagnostics).
     nonisolated(unsafe) static var healDiagnostics = ""
     nonisolated(unsafe) static var healAlpha: Float = 1
@@ -37,7 +50,14 @@ extension EditSession {
 
     /// The model's fixed input size, read from the model: 1280 for the Big LaMa CI converts (sharper large removals),
     /// 800 for the older package the build falls back to.
-    static let healSide: Int = healModel?.modelDescription.inputDescriptionsByName["image"]?.imageConstraint?.pixelsWide ?? 800
+    /// Read from `side.txt`, which CI writes next to the compiled model, so asking doesn't load the model.
+    static let healSide: Int = {
+        if let url = healModelURL?.appendingPathComponent("side.txt"),
+           let text = try? String(contentsOf: url, encoding: .utf8), let n = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)), n > 0 {
+            return n
+        }
+        return healModel?.modelDescription.inputDescriptionsByName["image"]?.imageConstraint?.pixelsWide ?? 800
+    }()
 
     /// Rebuilds the painted spot. `earlier` = the heals already made (the new one is built on top of them).
     /// Returns nil when the model is missing or fails. Slow (about a second): call off the main thread.
