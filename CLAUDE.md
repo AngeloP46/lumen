@@ -2,6 +2,8 @@
 
 Read this first. It records what exists, how it's built and shipped, and what to do next.
 
+**App Store pricing, Free vs Pro, claims and marketing plan:** read `MARKETING.md` (Angelo's decisions, 18 October; it replaces older price notes in `HANDOFF.md`).
+
 ## Housekeeping (do this every session)
 - Before finishing any session, update the **Status**, **Things to verify** and **Troubleshooting** sections below with what changed or was learned, then commit and push (`git add -A; git commit; git push`) so the next session starts current.
 - Keep this file factual and short; remove items once they're fixed or verified. Never put passwords, tokens or Apple ID credentials in it.
