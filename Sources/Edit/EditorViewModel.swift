@@ -393,13 +393,19 @@ final class EditorViewModel: ObservableObject {
     private func buildDetail() {
         guard let session, let source, !detailBuilding else { return }
         let native = max(session.nativeSize.width, session.nativeSize.height)
-        guard native > source.longEdge * 1.15 else { return }
-        detailBuilding = true
-        detailLoading = true
-        Diagnostics.shared.note("100% view: building full-size copy")
         // 4096 (was 6000): a 24 MP full-size source plus its layers pushed Lumen past iOS's 3.4 GB per-app limit
         // while zoomed in (owner's JetsamEvent, 18 Oct: killed at 3388 MB, per-process-limit).
-        let edge = min(native, 4096)
+        // A 4096 px copy with its layers needs roughly 700 MB: with less room left than that allows, build a
+        // smaller one, or none (the preview stays, a little softer, instead of iOS closing the app).
+        let left = Diagnostics.availableMB
+        let edge = left > 2000 ? min(native, 4096) : left > 1300 ? min(native, 3072) : 0
+        guard edge > source.longEdge * 1.15 else {
+            Diagnostics.shared.note("100% view: no full-size copy, only \(left) MB left")
+            return
+        }
+        detailBuilding = true
+        detailLoading = true
+        Diagnostics.shared.note("100% view: building \(Int(edge)) px copy")
         workQueue.async {
             let src = session.makeSource(maxEdge: edge, materialize: true)
             Task { @MainActor [weak self] in
@@ -880,6 +886,8 @@ final class EditorViewModel: ObservableObject {
         detailSource = nil
         unhealedSource = nil
         LumenGPU.context.clearCaches()
+        // short of room: the mask models go too (masks already worked out are kept; they load again when needed)
+        if Diagnostics.availableMB < 1500 { EditSession.releaseMaskModels() }
     }
 
     /// Keeps a heal-free preview while the photo has heals (built in the background, dropped when there are none).
@@ -1307,6 +1315,10 @@ final class EditorViewModel: ObservableObject {
         let s = settings
         let name = item.displayName
         let patches = HealStore.retain(Set(s.heals.map(\.id)))
+        // a full-size export decodes the whole photo again: let go of the copies that can be made again first
+        unhealedSource = nil
+        if Diagnostics.availableMB < 2000 { detailSource = nil; EditSession.releaseMaskModels() }
+        LumenGPU.context.clearCaches()
         workQueue.async {
             defer { patches.close() }
             Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
@@ -1319,6 +1331,7 @@ final class EditorViewModel: ObservableObject {
             }
             Task { @MainActor [weak self] in
                 self?.isExporting = false
+                self?.refreshUnhealed()
                 if let url { self?.exported = ExportResult(url: url) } else { self?.message = "Export failed." }
             }
         }
