@@ -251,6 +251,11 @@ extension EditSession {
             img = Self.downscaled(img, k)
             hdrImg = hdrImg.map { Self.downscaled($0, k) }
         }
+        // the camera's details go with the photo (Core Image writes an image's properties into the file): date taken,
+        // camera, lens, exposure, GPS. Before 19 Oct exports had none, so Photos dated them the day they were exported.
+        let meta = exportMetadata()
+        img = img.settingProperties(meta)
+        hdrImg = hdrImg.map { $0.settingProperties(meta) }
         switch format {
         case .jpeg:
             if let hdrImg, #available(iOS 18.0, macOS 15.0, *) {
@@ -273,6 +278,33 @@ extension EditSession {
             return try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q)
         case .tiff: return try? ctx.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:])
         }
+    }
+
+    /// The original file's EXIF / TIFF / GPS / IPTC details, for an exported file. Orientation is dropped (the pixels
+    /// are already turned), and so are sizes, colour and maker notes, which describe the original's pixels.
+    func exportMetadata() -> [String: Any] {
+        guard let src = CGImageSourceCreateWithURL(originalURL as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [String: Any] else { return [:] }
+        var out: [String: Any] = [:]
+        for key in [kCGImagePropertyExifDictionary, kCGImagePropertyExifAuxDictionary, kCGImagePropertyGPSDictionary,
+                    kCGImagePropertyIPTCDictionary] as [CFString] {
+            if var d = props[key as String] as? [String: Any] {
+                if key == kCGImagePropertyExifDictionary {
+                    for k in [kCGImagePropertyExifPixelXDimension, kCGImagePropertyExifPixelYDimension, kCGImagePropertyExifMakerNote,
+                              kCGImagePropertyExifColorSpace, kCGImagePropertyExifSubjectArea] as [CFString] { d[k as String] = nil }
+                }
+                out[key as String] = d
+            }
+        }
+        if var tiff = props[kCGImagePropertyTIFFDictionary as String] as? [String: Any] {
+            for k in [kCGImagePropertyTIFFOrientation, kCGImagePropertyTIFFXResolution, kCGImagePropertyTIFFYResolution,
+                      kCGImagePropertyTIFFResolutionUnit, kCGImagePropertyTIFFCompression,
+                      kCGImagePropertyTIFFPhotometricInterpretation] as [CFString] { tiff[k as String] = nil }
+            tiff[kCGImagePropertyTIFFSoftware as String] = "Lumen"
+            out[kCGImagePropertyTIFFDictionary as String] = tiff
+        }
+        out[kCGImagePropertyOrientation as String] = 1
+        return out
     }
 
     static func downscaled(_ img: CIImage, _ k: CGFloat) -> CIImage {

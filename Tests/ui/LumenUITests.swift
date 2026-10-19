@@ -33,8 +33,8 @@ final class LumenUITests: XCTestCase {
         }
         let first = drag(0.4, 0.7)
         for other in ["Detail", "Masks", "Curve"] {
-            el("tool-\(other)").tap(); sleep(1)
-            el("tool-Lens Blur").tap(); sleep(2)
+            tapTool(other); sleep(1)
+            tapTool("Lens Blur"); sleep(2)
             let before = Double(valueOf("reset-Blur amount")) ?? -1
             XCTAssertEqual(before, first, accuracy: 0.6, "amount must be kept after visiting \(other)")
             let after = drag(0.6, 0.3)
@@ -115,9 +115,9 @@ final class LumenUITests: XCTestCase {
         el("lens-blur-refine-done").tap()
         XCTAssertTrue(el("slider-Blur amount").exists)
         // the linked background mask belongs to Lens Blur: Masks must not list it
-        el("tool-Masks").tap(); sleep(1)
+        tapTool("Masks"); sleep(1)
         XCTAssertFalse(app.buttons["Lens Blur background"].exists, "Lens Blur's mask must not appear in Masks")
-        el("tool-Lens Blur").tap()
+        tapTool("Lens Blur")
         XCTAssertTrue(el("slider-Blur amount").waitForExistence(timeout: 10))
         el("reset-Blur amount").tap()
         XCTAssertEqual(Double(valueOf("reset-Blur amount")) ?? -1, 0, accuracy: 0.1)
@@ -159,6 +159,20 @@ final class LumenUITests: XCTestCase {
     func items() -> XCUIElementQuery { app.descendants(matching: .any).matching(identifier: "library-item") }
 
     func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
+
+    /// Taps a tool in the bottom bar, scrolling the bar first when the tool is off screen (since Lens Blur joined,
+    /// the bar scrolls and Masks/Heal/Presets start past the right edge on the test iPhone).
+    func tapTool(_ name: String) {
+        let b = el("tool-\(name)")
+        _ = b.waitForExistence(timeout: 10)
+        for _ in 0..<6 where !b.isHittable || b.frame.maxX > app.frame.maxX || b.frame.minX < app.frame.minX {
+            let left = b.frame.midX > app.frame.midX
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: b.frame.midY))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: left ? -160 : 160, dy: 0)))
+            usleep(400_000)
+        }
+        b.tap()
+    }
 
     func waitGone(_ e: XCUIElement, timeout: TimeInterval) -> Bool {
         let p = NSPredicate(format: "exists == false")
@@ -483,7 +497,7 @@ final class LumenUITests: XCTestCase {
         launch(open: 0, tool: "Light", extra: ["-lumenDemoCrop", "1"])
         sleep(2)   // the demo picks the 1:1 ratio after a moment
         XCTAssertEqual(shownImageAspect(), 1.0, accuracy: 0.03, "Light should show the 1:1 crop")
-        el("tool-Masks").tap()
+        tapTool("Masks")
         sleep(2)
         XCTAssertEqual(shownImageAspect(), 1.0, accuracy: 0.03, "Masks should show the same 1:1 crop, not the uncropped photo")
         shot("masks-cropped")
@@ -581,7 +595,7 @@ final class LumenUITests: XCTestCase {
         XCTAssertLessThan(z, 0.85, "in Masks pinching in should make the photo smaller than the screen, got \(z); events: \(events().suffix(12).joined(separator: " | ")); photo \(valueOf("photo")) frame \(el("photo").frame)")
         XCTAssertGreaterThan(z, 0.25, "but not smaller than the limit, got \(z)")
         shot("masks-zoomed-out")
-        el("tool-Light").tap()
+        tapTool("Light")
         sleep(1)
         XCTAssertEqual(zoomLevel(), 1.0, accuracy: 0.05, "leaving Masks should bring the photo back to fit")
     }
@@ -591,7 +605,7 @@ final class LumenUITests: XCTestCase {
     func testPhotoIsRedrawnAtTheNewSizeAfterEveryToolSwitch() {
         launch(open: 0, tool: "Light")
         for t in ["Crop", "Detail", "Color", "Presets", "Masks", "Light"] {
-            el("tool-\(t)").tap()
+            tapTool(t)
             sleep(2)
             let draws = events().filter { $0.contains(" draw canvas ") }
             guard let last = draws.last else { XCTFail("no frame drawn after switching to \(t)"); continue }
@@ -609,7 +623,7 @@ final class LumenUITests: XCTestCase {
         launch(open: 0, tool: "Light")
         var tops: [String: CGFloat] = ["Light": el("panel").frame.minY]   // Light is open already (tapping it would close it)
         for t in ["Color", "Detail", "Grade", "Curve", "Presets"] {
-            el("tool-\(t)").tap()
+            tapTool(t)
             sleep(1)
             tops[t] = el("panel").frame.minY
         }
@@ -782,7 +796,7 @@ final class LumenUITests: XCTestCase {
         sleep(4)
         let second = el("photo").label
         XCTAssertNotEqual(first, second, "swiping left should open the next photo (\(first) -> \(second))")
-        if !el("reset-Highlights").exists, el("tool-Light").exists { el("tool-Light").tap(); sleep(1) }
+        if !el("reset-Highlights").exists, el("tool-Light").exists { tapTool("Light"); sleep(1) }
         XCTAssertTrue(el("reset-Highlights").waitForExistence(timeout: 10), "Light panel should show Highlights on photo 2")
         XCTAssertEqual(valueOf("reset-Highlights"), "0", "photo 2 must not show photo 1's Highlights edit")
         shot("swipe-photo2")
@@ -790,7 +804,7 @@ final class LumenUITests: XCTestCase {
         sleep(2)
         XCTAssertTrue(el("photo").waitForExistence(timeout: 45), "the first photo never finished loading again")
         XCTAssertEqual(el("photo").label, first, "swiping right should return to the first photo")
-        if !el("reset-Highlights").exists, el("tool-Light").exists { el("tool-Light").tap(); sleep(1) }
+        if !el("reset-Highlights").exists, el("tool-Light").exists { tapTool("Light"); sleep(1) }
         XCTAssertTrue(el("reset-Highlights").waitForExistence(timeout: 10), "Light panel should show Highlights on photo 1")
         XCTAssertEqual(Int(valueOf("reset-Highlights")) ?? 0, edited, "photo 1 should keep its Highlights edit")
         shot("swipe-photo1-again")
@@ -812,7 +826,7 @@ final class LumenUITests: XCTestCase {
         el("library-item").tap()
         XCTAssertTrue(el("photo").waitForExistence(timeout: 30), "tapping the thumbnail should reopen the editor")
         sleep(3)
-        if !el("slider-Highlights").exists, el("tool-Light").exists { el("tool-Light").tap(); sleep(1) }
+        if !el("slider-Highlights").exists, el("tool-Light").exists { tapTool("Light"); sleep(1) }
         XCTAssertTrue(el("reset-Highlights").waitForExistence(timeout: 10), "Light panel should show Highlights")
         XCTAssertEqual(Int(valueOf("reset-Highlights")) ?? 0, edited, "the Highlights edit should be saved and restored")
         shot("reopened")
@@ -827,7 +841,7 @@ final class LumenUITests: XCTestCase {
         for name in ["Presets", "Crop", "Light", "Color", "Grade", "Curve", "Detail", "Masks", "Heal"] {
             if name != "Presets" {
                 XCTAssertTrue(el("tool-\(name)").waitForExistence(timeout: 10), "tool button \(name) should exist")
-                el("tool-\(name)").tap()
+                tapTool(name)
                 sleep(2)
             }
             let panel = el("panel")
@@ -1010,7 +1024,7 @@ final class LumenUITests: XCTestCase {
         items().element(boundBy: 1).tap()
         XCTAssertTrue(el("photo").waitForExistence(timeout: 40))
         sleep(2)
-        if !el("reset-Shadows").exists, el("tool-Light").exists { el("tool-Light").tap(); sleep(1) }
+        if !el("reset-Shadows").exists, el("tool-Light").exists { tapTool("Light"); sleep(1) }
         XCTAssertEqual(valueOf("reset-Shadows"), edited, "the pasted Shadows edit should be on the second photo")
     }
 
@@ -1332,7 +1346,7 @@ final class LumenUITests: XCTestCase {
         sleep(2)
         let screen = app.windows.firstMatch.frame
         for name in ["Crop", "Light", "Color", "Grade", "Curve", "Detail", "Masks", "Presets"] {
-            if name != "Presets" { el("tool-\(name)").tap(); sleep(2) }
+            if name != "Presets" { tapTool(name); sleep(2) }
             let panel = el("panel").frame, bar = el("tool-Light").frame, photo = el("photo").frame
             XCTAssertTrue(el("panel").exists, "\(name) should open a panel in landscape")
             XCTAssertGreaterThan(panel.minX, photo.maxX - 2, "\(name): the panel sits beside the photo, not over it (\(panel) vs \(photo))")
@@ -1353,7 +1367,7 @@ final class LumenUITests: XCTestCase {
         if let d = drawn() { XCTAssertEqual(d.bottom, d.height, accuracy: 2, "folded: no gap under the photo (\(d))") }
         el("tools-expand").tap()
         sleep(1)
-        el("tool-Masks").tap()
+        tapTool("Masks")
         sleep(1)
         XCTAssertTrue(el("tools-collapse").exists, "every tool's panel offers the fold button")
     }
@@ -1452,7 +1466,7 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         XCTAssertTrue(el("grade-wheel").waitForExistence(timeout: 5), "Global has its own big wheel")
         shot("grade-global")
-        el("tool-Masks").tap()
+        tapTool("Masks")
         sleep(1)
         XCTAssertTrue(app.buttons["People"].waitForExistence(timeout: 5), "People is one of the mask types")
         shot("mask-types")
