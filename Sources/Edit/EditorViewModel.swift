@@ -95,6 +95,8 @@ final class EditorViewModel: ObservableObject {
 
     // Undo / redo
     private var undoStack: [EditSettings] = []
+    /// The saved undo history has been read (it loads in the background when the photo opens).
+    private var historyLoaded = false
     private var redoStack: [EditSettings] = []
     private var applyingHistory = false
     private var lastChange = Date.distantPast
@@ -152,9 +154,6 @@ final class EditorViewModel: ObservableObject {
         if DemoMode.isOn, DemoMode.value("-lumenDemoLegacyLens") != nil {
             loaded.lensBlur = LensBlurSettings(); loaded.lensBlur.activated = true
         }
-        let history = store.history(for: item, current: loaded)
-        undoStack = history.undo
-        redoStack = history.redo
         // brush strokes painted before strokes kept their own softness: fix them at the softness they show now,
         // so moving the Feather slider never changes strokes already on the photo
         for mi in loaded.masks.indices {
@@ -168,6 +167,15 @@ final class EditorViewModel: ObservableObject {
         }
         settings = loaded
         applyingHistory = false
+        // undo history arrives a moment later (read in the background, not while the photo is opening); edits made
+        // meanwhile go on top of it
+        let opened = loaded
+        store.loadHistory(for: item, current: opened) { [weak self] history in
+            guard let self else { return }
+            self.undoStack = Array((history.undo + self.undoStack).suffix(100))
+            if self.settings == opened { self.redoStack = history.redo }
+            self.historyLoaded = true
+        }
         let url = store.fileURL(item)
         let wantsHDR = settings.hdr
         let heals = settings.effective.heals
@@ -300,7 +308,9 @@ final class EditorViewModel: ObservableObject {
     private func scheduleSave() {
         saveWork?.cancel()
         let s = settings, item = item
-        let history = LibraryStore.EditHistory(current: s, undo: undoStack, redo: redoStack)
+        // before the saved history has arrived, let the store add this step to the file's own history (writing ours
+        // would drop the older steps)
+        let history: LibraryStore.EditHistory? = historyLoaded ? LibraryStore.EditHistory(current: s, undo: undoStack, redo: redoStack) : nil
         let work = DispatchWorkItem { [weak store] in
             Task { @MainActor in store?.save(s, for: item, history: history) }
         }
@@ -310,7 +320,7 @@ final class EditorViewModel: ObservableObject {
 
     func flushSave() {
         saveWork?.cancel()
-        store?.save(settings, for: item, history: LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack))
+        store?.save(settings, for: item, history: historyLoaded ? LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack) : nil)
         store?.flushHistory()
     }
 

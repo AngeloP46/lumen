@@ -366,6 +366,20 @@ final class LibraryStore: ObservableObject {
         return history
     }
 
+    /// The same, read off the main thread (up to 200 snapshots to decode, and the queue may first be finishing another
+    /// photo's write): `done` runs on the main thread.
+    func loadHistory(for item: LibraryItem, current: EditSettings, done: @escaping @MainActor (EditHistory) -> Void) {
+        let file = historyURL(item), url = editURL(item)
+        historyQueue.async {
+            let legacy = try? Data(contentsOf: url)
+            var history = pendingHistory[file] ?? Self.readHistory(file: file, legacy: legacy)
+            if history?.current != current { history = nil }
+            let result = history.map { EditHistory(current: $0.current, undo: Array($0.undo.suffix(100)), redo: Array($0.redo.suffix(100))) }
+                ?? EditHistory(current: current, undo: [], redo: [])
+            Task { @MainActor in done(result) }
+        }
+    }
+
     func save(_ s: EditSettings, for item: LibraryItem, history supplied: EditHistory? = nil) {
         // A debounced editor save may arrive after library deletion; never recreate its sidecar.
         guard items.contains(where: { $0.id == item.id }) else { return }

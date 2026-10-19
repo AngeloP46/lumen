@@ -2113,6 +2113,51 @@ do {
             }
         }
 
+        // 3b. A glint far brighter than white next to the spot: the model must not see a nearly black square, the
+        //     fill must match the grey around it, and the glint must stay as bright as it was
+        do {
+            let W: CGFloat = 2000, H: CGFloat = 1500
+            let frame = CGRect(x: 0, y: 0, width: W, height: H)
+            let grey = CIImage(color: CIColor(red: 0.4, green: 0.4, blue: 0.4)).cropped(to: frame)
+            let disc = CIFilter(name: "CIRadialGradient", parameters: [
+                "inputCenter": CIVector(x: W / 2, y: H / 2), "inputRadius0": 55, "inputRadius1": 60,
+                "inputColor0": CIColor(red: 0.6, green: 0.1, blue: 0.1), "inputColor1": CIColor(red: 0, green: 0, blue: 0, alpha: 0)])!.outputImage!
+            let glintRect = CGRect(x: W / 2 + 110, y: H / 2 - 3, width: 6, height: 6)
+            let glint = CIImage(color: CIColor(red: 20, green: 20, blue: 20)).cropped(to: glintRect)
+            let scene = glint.composited(over: disc.cropped(to: frame).composited(over: grey))
+            let url = outDir.appendingPathComponent("glint.exr")
+            if let space = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3),
+               let data = try? LumenGPU.context.openEXRRepresentation(of: scene.settingAlphaOne(in: frame), options: [:]) {
+                try? data.write(to: url)
+                _ = space
+            }
+            if let session = EditSession(url: url), let before = session.decode(maxEdge: nil) {
+                func meanAt(_ img: CIImage, _ r: CGRect) -> Float {
+                    var v = [Float](repeating: 0, count: 4)
+                    let e = img.extent
+                    let a = img.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: r.offsetBy(dx: e.minX, dy: e.minY))])
+                    LumenGPU.context.render(a, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                    return v[1]
+                }
+                let glintBefore = meanAt(before, glintRect.insetBy(dx: 1, dy: 1))
+                let stroke = BrushStroke(points: [Pt(x: 0.5, y: 0.5)], size: 0.07, erase: false, feather: nil)
+                if let spot = session.makeHeal(strokes: [stroke], earlier: []) {
+                    session.heals = [spot]
+                    if let after = session.decode(maxEdge: nil) {
+                        let inHole = meanAt(after, CGRect(x: W / 2 - 30, y: H / 2 - 30, width: 60, height: 60))
+                        let around = meanAt(before, CGRect(x: W / 2 - 300, y: H / 2 + 120, width: 600, height: 100))
+                        let glintAfter = meanAt(after, glintRect.insetBy(dx: 1, dy: 1))
+                        print("::notice::glint heal: scale \(spot.scale), hole \(inHole), glint \(glintBefore) -> \(glintAfter)")
+                        check(spot.scale < 5, "a single glint should not set the heal's scale (\(spot.scale))")
+                        check(abs(inHole - around) < around * 0.15, "the fill next to a glint should match the grey around it (\(inHole) vs \(around))")
+                        if glintBefore < 1.05 { print("::warning::glint heal: the test image loaded without values above white; HDR scaling is covered by the ARW heal checks") }
+                        check(glintBefore < 5 || glintAfter > glintBefore * 0.8, "the glint should keep its brightness (\(glintBefore) -> \(glintAfter))")
+                    }
+                    session.heals = []
+                } else { check(false, "glint heal: makeHeal failed") }
+            } else { print("::warning::glint heal: could not make the HDR test image") }
+        }
+
         // 4. Remove people on a street photo: everyone found, upright, and one of them removed
         if let path = ProcessInfo.processInfo.environment["LUMEN_PEOPLE_SAMPLE"],
            let session = EditSession(url: URL(fileURLWithPath: path)),
