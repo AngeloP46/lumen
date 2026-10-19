@@ -184,6 +184,19 @@ extension EditSession {
         return ctx.createCGImage(out, from: sq, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) ?? mask
     }
 
+    /// The brightness (largest colour channel) that 99.5 % of the square stays under, measured on a 64 x 64 copy.
+    static func brightEnd(_ img: CIImage, n: CGFloat) -> Float {
+        let m = 64
+        let small = img.applyingFilter("CIMaximumComponent")
+            .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: CGFloat(m) / n, kCIInputAspectRatioKey: 1.0])
+        var px = [Float](repeating: 0, count: m * m * 4)
+        LumenGPU.context.render(small, toBitmap: &px, rowBytes: m * 16, bounds: CGRect(x: 0, y: 0, width: m, height: m),
+                                format: .RGBAf, colorSpace: nil)
+        let v = stride(from: 0, to: px.count, by: 4).map { px[$0] }.filter { $0.isFinite }.sorted()
+        guard !v.isEmpty else { return 1 }
+        return v[min(v.count - 1, Int(Double(v.count) * 0.995))]
+    }
+
     /// The picture with mirror images of itself all round: context for a square that runs past the photo's edges.
     static func mirrorPadded(_ img: CIImage, about frame: CGRect? = nil) -> CIImage {
         let e = frame ?? img.extent
@@ -268,7 +281,11 @@ extension EditSession {
         let mx = crop.applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: CIVector(cgRect: crop.extent)])
         LumenGPU.context.render(mx, toBitmap: &peak, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
                                 format: .RGBAf, colorSpace: nil)
-        let scale = Double(max(1, peak[0], peak[1], peak[2]))
+        // Divided by the bright end of the square, not its single brightest pixel: one sun glint at 20x white made the
+        // whole square nearly black for the model (code review, 19 Oct). Brighter pixels are clipped for the model;
+        // outside the area being rebuilt the photo's own pixels are kept there (see `blend` below).
+        let peakScale = Double(max(1, peak[0], peak[1], peak[2]))
+        let scale = min(peakScale, max(1, Double(Self.brightEnd(crop, n: n)) * 1.25))
         var input = crop
         if scale > 1 {
             let s = CGFloat(1 / scale)
@@ -287,8 +304,20 @@ extension EditSession {
         let mirrorHole: (CGImage?) -> CGImage? = { img in
             img.flatMap { Self.withMirrors($0, region: region, width: W, height: H, k: k, n: n, ctx: self.ctx) }
         }
-        guard let hole = mirrorHole(drawHole(region, k, 6, 0)), let blend = mirrorHole(drawHole(region, k, 10, 4)),
+        guard let hole = mirrorHole(drawHole(region, k, 6, 0)), var blend = mirrorHole(drawHole(region, k, 10, 4)),
               let outer = mirrorHole(drawHole(region, k, 34, 0)) else { return nil }
+        if scale < peakScale - 0.001 {
+            // highlights brighter than what the model saw stay the photo's own outside the hole
+            let sq = CGRect(x: 0, y: 0, width: n, height: n)
+            let high = crop.applyingFilter("CIMaximumComponent")
+                .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": scale]).cropped(to: sq)
+            let keep = high.applyingFilter("CIMultiplyCompositing", parameters: [
+                kCIInputBackgroundImageKey: Self.expandRed(CIImage(cgImage: hole, options: [.colorSpace: NSNull()])).applyingFilter("CIColorInvert")])
+            let b = Self.expandRed(CIImage(cgImage: blend, options: [.colorSpace: NSNull()]))
+                .applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: keep.applyingFilter("CIColorInvert")])
+                .cropped(to: sq)
+            if let cg = ctx.createCGImage(b, from: sq, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) { blend = cg }
+        }
 
         // 4. the model; an answer that is black (or far darker than its surroundings) inside the hole is a numeric
         //    failure, not a fill: try once more on the CPU, and never keep a broken patch

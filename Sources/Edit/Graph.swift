@@ -235,8 +235,11 @@ extension EditSession {
     func renderData(_ s: EditSettings, format: ExportFormat, quality: Double, maxEdge: CGFloat? = nil,
                     includeHDR: Bool = true) -> Data? {
         heals = s.effective.heals
+        // (Decoding into a buffer first was tried on 19 Oct: same peak, ~1.8 GB more kept afterwards.)
         guard let src = makeSource(maxEdge: nil, materialize: false) else { return nil }
+        Self.healProbe?("export: full-size source ready")
         prepareAutoMasks(s, source: src)
+        Self.healProbe?("export: masks ready")
         // Never quietly export an unblurred photo when a requested focus map could not be prepared.
         if s.effective.lensBlur.amount > 0 && lensBlurMask(s, source: src) == nil { return nil }
         var img = develop(s, source: src, geometry: true)
@@ -256,6 +259,8 @@ extension EditSession {
         let meta = exportMetadata()
         img = img.settingProperties(meta)
         hdrImg = hdrImg.map { $0.settingProperties(meta) }
+        Self.healProbe?("export: graphs built")
+        defer { Self.healProbe?("export: encoded") }
         switch format {
         case .jpeg:
             if let hdrImg, #available(iOS 18.0, macOS 15.0, *) {
