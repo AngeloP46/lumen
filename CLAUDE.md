@@ -48,9 +48,12 @@
   Merge docs/tests after the code build has published, or dispatch build.yml on main afterwards.
 - 19 Oct SideStore versions: 0.1.274 diagnostics, 0.1.288 stability batch, 0.1.311 review fixes + undo fix,
   0.1.325 people finder, 0.1.329 heal memory, 0.1.333 thumbnails. All ported to sandbox (#40, #42, #43, #48, #49).
-- Review notes not yet done: history load on the
-  main thread, brush raster cache keyed by the whole stroke list, heal HDR scaling by the brightest pixel, 8-bit sRGB
-  patches, full-size export ~5.9 GB peak on the CI Mac.
+- **0.1.346 (#51)**: undo history loads in the background (`LibraryStore.loadHistory`; saves before it arrives pass
+  no history so the store extends the file's own); brush masks cached by `ImageSource.RasterKey` (id + per-stroke
+  summary), newest version per brush; Heal scales by the square's 99.5 % brightness x 1.25 (`brightEnd`) and keeps
+  brighter highlights outside the hole; export steps report to `healProbe`. Export memory (~5.5 GB peak on the CI Mac,
+  within budget) left as is: decoding into a buffer first gave the same peak and kept 1.8 GB more.
+- All 19 Oct review items are done; nothing open from that review.
 
 ## Status — 15 October (Claude review of the 14 October work)
 - Reviewed everything other AIs added since 70f1448: sound and safe overall.
