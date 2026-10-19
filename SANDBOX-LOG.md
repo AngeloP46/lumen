@@ -198,3 +198,7 @@ focus/mask/strength, damaged edits kept as a copy, batch export frees GPU memory
 Files imports off the main thread, undo history written 0.2 s after a save and on leaving the screen, UI tests scroll the
 tool bar. Difference from main: library batch export still uses the saved settings (main uses the editor's start
 settings, HDR on for never-opened RAWs) because HDR is Pro here and the export gate checks saved settings.
+
+## 19 Oct 2026: Remove people finds more people (from main #41)
+Body detector + closer segmentation for bodies the whole-photo pass missed, 3072 px decode, up to 30 people. Heal and
+Remove people stay Pro. No Store code changed.
