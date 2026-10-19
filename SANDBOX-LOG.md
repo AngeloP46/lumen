@@ -190,3 +190,11 @@ in `.github/ci/heal-convert/` for later, once memory allows. Heal stays Pro. No 
 - After a heal, depth/subject/sky masks are re-measured from the healed photo (Lens Blur no longer leaves a sharp hole
   where a removed person was).
 No Store code touched; Pro gating unchanged.
+
+## 19 Oct 2026: Code review fixes (from main #38, SideStore 0.1.29x)
+Editor stability (no model loads while drawing, stale 100 % copies dropped, Heal never stuck, no undo/swipe mid-heal or
+export, AI masks re-run for a re-decoded photo), exports keep EXIF/date/GPS, sidecar migration keeps Lens Blur
+focus/mask/strength, damaged edits kept as a copy, batch export frees GPU memory per photo and keeps the screen awake,
+Files imports off the main thread, undo history written 0.2 s after a save and on leaving the screen, UI tests scroll the
+tool bar. Difference from main: library batch export still uses the saved settings (main uses the editor's start
+settings, HDR on for never-opened RAWs) because HDR is Pro here and the export gate checks saved settings.
