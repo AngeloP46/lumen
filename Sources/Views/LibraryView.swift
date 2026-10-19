@@ -384,7 +384,7 @@ struct ThumbnailView: View {
         Color.black
             .aspectRatio(1, contentMode: .fit)
             .overlay {
-                if let img = UIImage(contentsOfFile: store.thumbURL(item).path) {
+                if let img = store.thumbnail(item) {
                     Image(uiImage: img).resizable().scaledToFill()
                 } else if store.unreadable.contains(item.id) {
                     VStack(spacing: 4) {
