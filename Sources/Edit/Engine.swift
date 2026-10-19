@@ -108,7 +108,21 @@ final class ImageSource: @unchecked Sendable {
     private let lock = NSLock()
     private var masks: [String: CIImage] = [:]
     private var tried: Set<String> = []
-    private var raster: [MaskComponent: CIImage] = [:]
+    /// Brush masks by component and a cheap summary of its strokes. Keying by the whole component hashed every point
+    /// ever painted on each lookup, and each new point's version pushed the cache over its limit and emptied it,
+    /// other brushes included (code review, 19 Oct). Only the newest version of each component is kept.
+    struct RasterKey: Hashable {
+        let id: UUID, feather: Double, autoMask: Bool, strokes: [StrokeSummary]
+        struct StrokeSummary: Hashable { let count: Int, size: Double, erase: Bool, feather: Double?, first: Pt?, middle: Pt?, last: Pt? }
+        init(_ c: MaskComponent) {
+            id = c.id; feather = c.feather; autoMask = c.autoMask
+            strokes = c.strokes.map {
+                StrokeSummary(count: $0.points.count, size: $0.size, erase: $0.erase, feather: $0.feather,
+                              first: $0.points.first, middle: $0.points.isEmpty ? nil : $0.points[$0.points.count / 2], last: $0.points.last)
+            }
+        }
+    }
+    private var raster: [RasterKey: CIImage] = [:]
     private var depth: DepthField?
     private var scene: SceneField?
 
@@ -145,11 +159,12 @@ final class ImageSource: @unchecked Sendable {
     var sceneField: SceneField? { lock.lock(); defer { lock.unlock() }; return scene }
     func storeScene(_ s: SceneField?) { lock.lock(); defer { lock.unlock() }; if let s { scene = s } }
 
-    func cachedRaster(_ c: MaskComponent) -> CIImage? { lock.lock(); defer { lock.unlock() }; return raster[c] }
+    func cachedRaster(_ c: MaskComponent) -> CIImage? { lock.lock(); defer { lock.unlock() }; return raster[RasterKey(c)] }
     func storeRaster(_ c: MaskComponent, _ img: CIImage) {
         lock.lock(); defer { lock.unlock() }
-        if raster.count > 24 { raster.removeAll() }
-        raster[c] = img
+        raster = raster.filter { $0.key.id != c.id }   // older versions of this brush
+        if raster.count > 48 { raster.removeAll() }
+        raster[RasterKey(c)] = img
     }
 }
 
