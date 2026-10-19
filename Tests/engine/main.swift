@@ -253,6 +253,10 @@ if args.contains("--memory") {
             usleep(10_000)
         }
     }
+    EditSession.healProbe = { step in
+        peak.lock.lock(); let p = peak.mb; peak.mb = footprintMB(); peak.lock.unlock()
+        print("MEMORY   \(step): \(footprintMB()) MB now, highest since the last step \(p) MB")
+    }
     func stepPeak(_ name: String, _ work: () -> Void) -> Int {
         peak.lock.lock(); peak.mb = footprintMB(); peak.lock.unlock()
         let t = now()
@@ -269,7 +273,6 @@ if args.contains("--memory") {
           let session = EditSession(url: arw, expandHDR: true) else {
         check(false, "memory test needs the Sony ARW"); finishChecks()
     }
-    EditSession.healProbe = { print("MEMORY   \($0): \(footprintMB()) MB") }
     print("MEMORY start \(footprintMB()) MB, photo \(Int(session.nativeSize.width))x\(Int(session.nativeSize.height))")
     var preview: ImageSource?
     var detail: ImageSource?

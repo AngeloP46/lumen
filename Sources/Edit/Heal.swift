@@ -237,10 +237,13 @@ extension EditSession {
         // full-size photo is let go of before the model runs. Before 19 Oct the full-size graph was rendered twice
         // (peak, then the model's input) and kept alive through the model run: one heal peaked at 5.3 GB on a
         // 24 MP photo in the memory test (iPhone limit ~3.4 GB).
+        Self.healProbe?("heal: about to decode")
         let rendered: (CGImage, CGRect)? = { [self] in
             // twice the model's resolution is plenty for a sharp downscale, and a 24 MP decode for a big square
             // was most of a heal's memory (2.3 GB spike in the memory test)
-            guard case let (photo, real)? = picture(min(1, 2 * k)),
+            let pic = picture(min(1, 2 * k))
+            Self.healProbe?("heal: decoded and the square's part rendered")
+            guard case let (photo, real)? = pic,
                   let linear = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) else { return nil }
             let lazyCrop = photo.cropped(to: ciRegion)
                 .transformed(by: CGAffineTransform(translationX: -ciRegion.minX, y: -ciRegion.minY))
