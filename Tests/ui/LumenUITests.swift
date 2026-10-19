@@ -144,6 +144,17 @@ final class LumenUITests: XCTestCase {
         sleep(3)   // let the photo load
     }
 
+    /// Tester builds: once the expiry date has passed, the app shows the "test version has ended" screen, not the library.
+    func testTesterExpiredScreen() {
+        app = XCUIApplication()
+        let dir = ProcessInfo.processInfo.environment["DEMO_DIR"] ?? "/tmp/demo"
+        app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoExpired", "1"]
+        app.launch()
+        XCTAssertTrue(el("tester-expired").waitForExistence(timeout: 30), "an expired tester build should say so")
+        XCTAssertFalse(el("library-item").exists, "an expired tester build should not show the library")
+        shot("tester-expired")
+    }
+
     /// Opens the app on the library (no photo open). The demo library always holds exactly the sample photos.
     func launchLibrary(extra: [String] = []) {
         app = XCUIApplication()

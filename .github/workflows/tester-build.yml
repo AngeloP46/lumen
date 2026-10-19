@@ -1,0 +1,58 @@
+name: Tester build (expires)
+# A one-off IPA for testers: identical to the main build, plus an Info.plist date (LumenTesterExpires) after which
+# the app shows "This test version has ended" (Sources/TesterExpiry.swift). Never published to the SideStore feed:
+# the IPA is only a run artifact (Lumen-tester-ipa) to share by hand.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Days the tester build works for'
+        default: '30'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
+        with:
+          persist-credentials: false
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 pinned
+        with:
+          path: Models/.verified-packages
+          key: models-verified-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/ci/model-lock.json', '.github/ci/heal-convert/**') }}
+      - name: AI models (verified depth, scene, heal)
+        run: |
+          bash .github/ci/get-depth-model.sh Models
+          bash .github/ci/get-seg-model.sh Models
+          bash .github/ci/get-heal-model.sh Models
+      - name: Install pinned XcodeGen
+        run: bash .github/ci/install-xcodegen.sh
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build (unsigned)
+        run: |
+          xcodebuild -project Lumen.xcodeproj -scheme Lumen -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+      - name: Package tester IPA with its end date
+        env:
+          DAYS: ${{ github.event.inputs.days }}
+        run: |
+          case "$DAYS" in ''|*[!0-9]*) echo "days must be a number"; exit 1;; esac
+          expires=$(date -u -v+"${DAYS}"d +%Y-%m-%d)
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/Lumen.app Payload/
+          /usr/libexec/PlistBuddy -c "Add :LumenTesterExpires string $expires" Payload/Lumen.app/Info.plist
+          echo "Tester build ends on $expires"
+          echo "::notice::Tester build ends on $expires"
+          zip -qr Lumen.ipa Payload
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
+        with:
+          name: Lumen-tester-ipa
+          path: Lumen.ipa
+          retention-days: 7
