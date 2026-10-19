@@ -45,6 +45,8 @@ extension EditSession {
         _ = healModel
         healModelReady = healModel != nil
     }
+    /// Called at each step of a heal (app: the diagnostics log; engine test: prints memory), to see where memory goes.
+    nonisolated(unsafe) static var healProbe: ((String) -> Void)?
     /// What the last heal measured (engine test diagnostics).
     nonisolated(unsafe) static var healDiagnostics = ""
     nonisolated(unsafe) static var healAlpha: Float = 1
@@ -159,9 +161,32 @@ extension EditSession {
         return CGRect(x: place(area.midX, W), y: place(area.midY, H), width: side, height: side)
     }
 
+    /// A mask on the model's square (`region` in photo pixels, y down, `k` square pixels per photo pixel) plus its
+    /// mirror images across every photo edge the square runs past, matching `mirrorPadded`'s context there.
+    static func withMirrors(_ mask: CGImage, region: CGRect, width W: CGFloat, height H: CGFloat, k: CGFloat, n: CGFloat,
+                            ctx: CIContext) -> CGImage {
+        let xs: [CGFloat?] = [nil] + (region.minX < 0 ? [0] : []) + (region.maxX > W ? [W] : [])
+        let ys: [CGFloat?] = [nil] + (region.minY < 0 ? [0] : []) + (region.maxY > H ? [H] : [])
+        guard xs.count > 1 || ys.count > 1 else { return mask }
+        let base = CIImage(cgImage: mask, options: [.colorSpace: NSNull()])
+        let sq = CGRect(x: 0, y: 0, width: n, height: n)
+        var out = base
+        for ex in xs {
+            for ey in ys where ex != nil || ey != nil {
+                // square x: X' = 2(e - minX)k - X; square y (up): Y' = 2n - 2(e - minY)k - Y
+                let t = CGAffineTransform(a: ex == nil ? 1 : -1, b: 0, c: 0, d: ey == nil ? 1 : -1,
+                                          tx: ex.map { 2 * ($0 - region.minX) * k } ?? 0,
+                                          ty: ey.map { 2 * n - 2 * ($0 - region.minY) * k } ?? 0)
+                out = base.transformed(by: t).applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: out])
+            }
+        }
+        out = out.composited(over: constant(0, sq)).cropped(to: sq)
+        return ctx.createCGImage(out, from: sq, format: .L8, colorSpace: CGColorSpaceCreateDeviceGray()) ?? mask
+    }
+
     /// The picture with mirror images of itself all round: context for a square that runs past the photo's edges.
-    static func mirrorPadded(_ img: CIImage) -> CIImage {
-        let e = img.extent
+    static func mirrorPadded(_ img: CIImage, about frame: CGRect? = nil) -> CIImage {
+        let e = frame ?? img.extent
         var out = img
         for dx in -1...1 {
             for dy in -1...1 where dx != 0 || dy != 0 {
@@ -191,15 +216,53 @@ extension EditSession {
         let k = n / side
 
         // 2. the photo there, full resolution, with the earlier heals, scaled to the model's 800 x 800
-        guard let full = decode(maxEdge: nil, heals: earlier) else { return nil }
-        // the region above was measured on `nativeSize`; it must be the picture as decoded
-        guard abs(full.extent.width - W) < 2, abs(full.extent.height - H) < 2 else { return nil }
         let ciRegion = CGRect(x: region.minX, y: H - region.maxY, width: side, height: side)  // Core Image: y up
-        let picture = full.extent.insetBy(dx: -1, dy: -1).contains(ciRegion) ? full : Self.mirrorPadded(full)
-        let crop = picture.cropped(to: ciRegion)
-            .transformed(by: CGAffineTransform(translationX: -ciRegion.minX, y: -ciRegion.minY))
-            .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0])
-            .cropped(to: CGRect(x: 0, y: 0, width: n, height: n))
+        // The full-size decode, as context where the square runs past the photo (mirror image), seen from the square.
+        // `scale` < 1 decodes a smaller copy (the square is shrunk to the model's size anyway); the result is in
+        // photo pixels either way.
+        let picture: (CGFloat) -> (CIImage, CGRect)? = { [self] f in
+            let L = max(W, H)
+            guard let full = decode(maxEdge: f < 0.95 ? (L * f).rounded(.up) : nil, heals: earlier) else { return nil }
+            let d = full.extent, fx = d.width / W, fy = d.height / H
+            // the region above was measured on `nativeSize`; it must be the picture as decoded
+            guard abs(fx - fy) < 0.01, fx > 0, abs(d.width / fx - W) < 2 / fx + 2 else { return nil }
+            // Only the part of the photo inside the square is rendered, once, into a small buffer; the mirror image
+            // past the photo's edges is made from that buffer. Mirroring the decode itself made Core Image decode
+            // the RAW for each reflected copy (the memory test's 2 GB heal spike).
+            let inside = CGRect(x: ciRegion.minX * fx, y: ciRegion.minY * fy, width: ciRegion.width * fx, height: ciRegion.height * fy)
+                .intersection(d).integral
+            guard inside.width >= 1, inside.height >= 1,
+                  let piece = ctx.createCGImage(full, from: inside, format: .RGBAh, colorSpace: LumenGPU.workingSpace) else { return nil }
+            let toPhoto = CGAffineTransform(scaleX: 1 / fx, y: 1 / fy)
+            let real = CGRect(x: 0, y: 0, width: W, height: H)
+            let img = CIImage(cgImage: piece, options: [.colorSpace: LumenGPU.workingSpace])
+                .transformed(by: CGAffineTransform(translationX: inside.minX, y: inside.minY)).transformed(by: toPhoto)
+            return (real.insetBy(dx: -1, dy: -1).contains(ciRegion) ? img : Self.mirrorPadded(img, about: real), real)
+        }
+        // Rendered once, at the model's size, in half floats (HDR values above 1 kept), inside this closure so the
+        // full-size photo is let go of before the model runs. Before 19 Oct the full-size graph was rendered twice
+        // (peak, then the model's input) and kept alive through the model run: one heal peaked at 5.3 GB on a
+        // 24 MP photo in the memory test (iPhone limit ~3.4 GB).
+        Self.healProbe?("heal: about to decode")
+        let rendered: (CGImage, CGRect)? = { [self] in
+            // twice the model's resolution is plenty for a sharp downscale, and a 24 MP decode for a big square
+            // was most of a heal's memory (2.3 GB spike in the memory test)
+            let pic = picture(min(1, 2 * k))
+            Self.healProbe?("heal: decoded and the square's part rendered")
+            guard case let (photo, real)? = pic,
+                  let linear = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3) else { return nil }
+            let lazyCrop = photo.cropped(to: ciRegion)
+                .transformed(by: CGAffineTransform(translationX: -ciRegion.minX, y: -ciRegion.minY))
+                .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0])
+                .cropped(to: CGRect(x: 0, y: 0, width: n, height: n))
+            guard let cg = ctx.createCGImage(lazyCrop, from: CGRect(x: 0, y: 0, width: n, height: n), format: .RGBAh, colorSpace: linear)
+            else { return nil }
+            return (cg, real)
+        }()
+        ctx.clearCaches()
+        guard case let (cropCG, realExtent)? = rendered else { return nil }
+        let crop = CIImage(cgImage: cropCG)
+        Self.healProbe?("heal: square rendered, full-size photo released")
         // HDR highlights go above 1: squeeze the patch so its brightest pixel is 1 (8-bit for the model), undo later
         var peak = [Float](repeating: 0, count: 4)
         let mx = crop.applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: CIVector(cgRect: crop.extent)])
@@ -218,8 +281,14 @@ extension EditSession {
         else { return nil }
 
         // 3. the hole (white = rebuild), and the softer, slightly wider area the result is blended in with
-        guard let hole = drawHole(region, k, 6, 0), let blend = drawHole(region, k, 10, 4),
-              let outer = drawHole(region, k, 34, 0) else { return nil }
+        // Where the square runs past the photo, the context there is a mirror image, so the area to rebuild is
+        // mirrored too: otherwise a person at the edge has an unmasked mirror copy right next to the hole and the
+        // model paints them back in (code review, 19 Oct).
+        let mirrorHole: (CGImage?) -> CGImage? = { img in
+            img.flatMap { Self.withMirrors($0, region: region, width: W, height: H, k: k, n: n, ctx: self.ctx) }
+        }
+        guard let hole = mirrorHole(drawHole(region, k, 6, 0)), let blend = mirrorHole(drawHole(region, k, 10, 4)),
+              let outer = mirrorHole(drawHole(region, k, 34, 0)) else { return nil }
 
         // 4. the model; an answer that is black (or far darker than its surroundings) inside the hole is a numeric
         //    failure, not a fill: try once more on the CPU, and never keep a broken patch
@@ -257,7 +326,9 @@ extension EditSession {
             let inHole = Self.meanInside(o, mask: hole, invert: false)
             return inHole.isFinite && !(band > 0.06 && inHole < band * 0.3)
         }
+        Self.healProbe?("heal: input ready")
         var answer = run(model)
+        Self.healProbe?("heal: model answered \(answer == nil ? "nothing" : "")")
         if let a = answer {
             Self.healDiagnostics = String(format: "band %.3f, ring %.3f, input hole %.3f, output hole %.3f, output ring %.3f, scale %.3f, raw output min alpha %.3f, square %.0f px, buffer %@",
                                           band, ring, Self.meanInside(CIImage(cgImage: cgImage), mask: hole, invert: false),
@@ -265,6 +336,7 @@ extension EditSession {
                                           Self.healAlpha, side, Self.fourCC(model.modelDescription.outputDescriptionsByName["output"]?.imageConstraint?.pixelFormatType ?? 0))
         }
         if answer == nil || !plausible(answer!), let cpu = Self.healModelCPU {
+            Self.healProbe?("heal: first answer rejected, trying the CPU model")
             answer = run(cpu)
             Self.healCPUStore.release()
         }
@@ -276,9 +348,10 @@ extension EditSession {
         // 5. a square bigger than the model's: keep the patch at (nearly) full resolution, with the photo's own fine
         //    texture, instead of the model's softer answer stretched over it (owner: big removals looked blurry)
         let stored = Self.healDetailEnabled && side > n * 1.05
-            ? Self.detailed(out, photo: picture, realExtent: full.extent, region: ciRegion, scale: scale, hole: hole, n: n) ?? out
+            ? picture(1).flatMap { Self.detailed(out, photo: $0.0, realExtent: realExtent, region: ciRegion, scale: scale, hole: hole, n: n) } ?? out
             : out
 
+        Self.healProbe?("heal: patch made")
         // 6. keep it: the rebuilt square and where to blend it in, checked again as it will be read back
         let id = UUID()
         try? FileManager.default.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
