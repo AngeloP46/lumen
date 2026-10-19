@@ -2145,10 +2145,12 @@ do {
                     session.heals = [spot]
                     if let after = session.decode(maxEdge: nil) {
                         let inHole = meanAt(after, CGRect(x: W / 2 - 30, y: H / 2 - 30, width: 60, height: 60))
+                        let around = meanAt(before, CGRect(x: W / 2 - 300, y: H / 2 + 120, width: 600, height: 100))
                         let glintAfter = meanAt(after, glintRect.insetBy(dx: 1, dy: 1))
-                        print("::notice::glint heal: scale \(spot.scale), hole \(inHole) (grey 0.4), glint \(glintBefore) -> \(glintAfter)")
+                        print("::notice::glint heal: scale \(spot.scale), hole \(inHole), glint \(glintBefore) -> \(glintAfter)")
                         check(spot.scale < 5, "a single glint should not set the heal's scale (\(spot.scale))")
-                        check(abs(inHole - 0.4) < 0.06, "the fill next to a glint should match the grey around it (\(inHole))")
+                        check(abs(inHole - around) < around * 0.15, "the fill next to a glint should match the grey around it (\(inHole) vs \(around))")
+                        if glintBefore < 1.05 { print("::warning::glint heal: the test image loaded without values above white; HDR scaling is covered by the ARW heal checks") }
                         check(glintBefore < 5 || glintAfter > glintBefore * 0.8, "the glint should keep its brightness (\(glintBefore) -> \(glintAfter))")
                     }
                     session.heals = []
