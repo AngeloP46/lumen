@@ -230,6 +230,99 @@ func floatPixels(_ img: CIImage, width: Int = 64) -> [Float]? {
 }
 
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
+
+// ---- Memory budget (`--memory`, its own process so nothing else is counted): the 24 MP Sony ARW opened the way
+// the phone opens it (HDR), the 100 % view's full-size copy, a subject mask, a big heal and a full-size export.
+// iOS closes Lumen at about 3.4 GB (owner's JetsamEvent, 18 Oct: killed at 3388 MB). The Mac counts GPU memory a
+// little differently, so the budget leaves room; the point is to catch a change that suddenly needs much more.
+if args.contains("--memory") {
+    func footprintMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+    final class Peak: @unchecked Sendable { var mb = 0; var stop = false; let lock = NSLock() }
+    let peak = Peak()
+    Thread.detachNewThread {
+        while true {
+            peak.lock.lock(); let done = peak.stop; peak.mb = max(peak.mb, footprintMB()); peak.lock.unlock()
+            if done { break }
+            usleep(10_000)
+        }
+    }
+    EditSession.healProbe = { step in
+        peak.lock.lock(); let p = peak.mb; peak.mb = footprintMB(); peak.lock.unlock()
+        print("MEMORY   \(step): \(footprintMB()) MB now, highest since the last step \(p) MB")
+    }
+    func stepPeak(_ name: String, _ work: () -> Void) -> Int {
+        peak.lock.lock(); peak.mb = footprintMB(); peak.lock.unlock()
+        let t = now()
+        work()
+        LumenGPU.context.clearCaches()
+        peak.lock.lock(); let p = peak.mb; peak.lock.unlock()
+        print("MEMORY \(name): peak \(p) MB, after \(footprintMB()) MB, \(String(format: "%.1f", now() - t)) s")
+        return p
+    }
+    // budgets per step (MB); the whole run must stay under `total`
+    // Budgets = what each step measured on the CI Mac on 19 Oct plus about 10 %, so a change that suddenly needs much
+    // more fails here. The Mac counts more than the iPhone (its paravirtual GPU runs the Heal model: about 1.3 GB
+    // for a moment; iPhones mostly use the Neural Engine). Phone numbers come from ⋯ → Send diagnostics.
+    let budget: [String: Int] = ["open": 1000, "full-size view": 2500, "subject": 2650, "heal": 5600, "export": 6600]
+    let total = 6600
+    guard let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }),
+          let session = EditSession(url: arw, expandHDR: true) else {
+        check(false, "memory test needs the Sony ARW"); finishChecks()
+    }
+    print("MEMORY start \(footprintMB()) MB, photo \(Int(session.nativeSize.width))x\(Int(session.nativeSize.height))")
+    var preview: ImageSource?
+    var detail: ImageSource?
+    var peaks: [String: Int] = [:]
+    var s = EditSettings(); s.hdr = true; s.exposure = 0.3; s.clarity = 20
+    peaks["open"] = stepPeak("open") {
+        preview = session.makeSource(maxEdge: 2560, materialize: true)
+        if let p = preview { _ = session.renderCGImage(s, source: p) }
+    }
+    peaks["full-size view"] = stepPeak("full-size view") {
+        let edge = min(max(session.nativeSize.width, session.nativeSize.height), 4096)
+        detail = session.makeSource(maxEdge: edge, materialize: true)
+        if let d = detail { _ = session.renderCGImage(s, source: d) }
+    }
+    peaks["subject"] = stepPeak("subject") { if let p = preview { session.ensureSubject(p) } }
+    // the app lets go of the full-size copy before healing (freeMemoryForHeal)
+    detail = nil
+    // where a heal's memory goes: the full-size decode of the area, and the model itself
+    _ = stepPeak("heal: full decode, 1 square") {
+        if let full = session.decode(maxEdge: nil) {
+            let r = CGRect(x: 1000, y: 1000, width: 2400, height: 2400)
+            let sq = full.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
+                .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: 800.0 / 2400.0, kCIInputAspectRatioKey: 1.0])
+            _ = LumenGPU.context.createCGImage(sq, from: CGRect(x: 0, y: 0, width: 800, height: 800))
+        }
+    }
+    if ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] != nil {
+        _ = stepPeak("heal: model load") { EditSession.prepareHealModel() }
+        let stroke = BrushStroke(points: [Pt(x: 0.4, y: 0.35), Pt(x: 0.5, y: 0.5), Pt(x: 0.6, y: 0.65)], size: 0.08, erase: false, feather: nil)
+        var spot: HealSpot?
+        peaks["heal"] = stepPeak("heal") { spot = session.makeHeal(strokes: [stroke], earlier: []) }
+        check(spot != nil, "memory test: the heal failed")
+        if let spot { s.heals = [spot] }
+    }
+    peaks["export"] = stepPeak("export") { _ = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true) }
+    peak.lock.lock(); peak.stop = true; peak.lock.unlock()
+    for (name, mb) in peaks.sorted(by: { $0.key < $1.key }) {
+        let limit = budget[name] ?? total
+        check(mb <= limit, "memory: \(name) peaked at \(mb) MB, budget \(limit) MB")
+        if mb > limit * 8 / 10 { print("::warning::memory: \(name) at \(mb) MB is near its \(limit) MB budget") }
+    }
+    let top = peaks.values.max() ?? 0
+    check(top <= total, "memory: peak \(top) MB, budget \(total) MB")
+    print("::notice::memory peak \(top) MB (budget \(total) MB): " + peaks.sorted(by: { $0.key < $1.key }).map { "\($0.key) \($0.value)" }.joined(separator: ", "))
+    _ = preview
+    finishChecks()
+}
 // Lens Blur: controlled foreground/background detail, independent of model accuracy.
 if let file = files.first, let session = EditSession(url: file),
    let sample = session.makeSource(maxEdge: 128, materialize: false) {
