@@ -202,3 +202,7 @@ settings, HDR on for never-opened RAWs) because HDR is Pro here and the export g
 ## 19 Oct 2026: Remove people finds more people (from main #41)
 Body detector + closer segmentation for bodies the whole-photo pass missed, 3072 px decode, up to 30 people. Heal and
 Remove people stay Pro. No Store code changed.
+
+## 19 Oct 2026: Library thumbnails decoded once (from main #46, SideStore 0.1.333)
+Decoded thumbnails cached per photo and version, so a finished thumbnail no longer makes every cell re-read its JPEG.
+No Store code changed.
