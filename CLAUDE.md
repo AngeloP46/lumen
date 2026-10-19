@@ -42,7 +42,13 @@
   never stuck after a failed reload; AI masks re-run when the photo was re-decoded during analysis.
 - **UI tests** use `tapTool(name)`, which scrolls the tool bar first: the full suite had been failing since the bar
   started scrolling (Masks/Heal/Presets off screen on the test iPhone). Releases skip the full suite, so check it.
-- Review notes not yet done: library thumbnail grid re-decodes JPEGs on every thumbnail update, history load on the
+- **Library grid** caches decoded thumbnails per photo and version (`LibraryStore.thumbnail(_:)`), 0.1.333.
+- **Publishing gotcha**: the publish job skips a build when a newer commit is on main. Merging a docs- or tests-only PR
+  while a code merge's build is running leaves SideStore on the old version (19 Oct: #41 skipped after docs #45).
+  Merge docs/tests after the code build has published, or dispatch build.yml on main afterwards.
+- 19 Oct SideStore versions: 0.1.274 diagnostics, 0.1.288 stability batch, 0.1.311 review fixes + undo fix,
+  0.1.325 people finder, 0.1.329 heal memory, 0.1.333 thumbnails. All ported to sandbox (#40, #42, #43, #48, #49).
+- Review notes not yet done: history load on the
   main thread, brush raster cache keyed by the whole stroke list, heal HDR scaling by the brightest pixel, 8-bit sRGB
   patches, full-size export ~5.9 GB peak on the CI Mac.
 
