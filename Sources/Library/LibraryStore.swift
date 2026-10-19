@@ -25,9 +25,9 @@ private let thumbQueue = DispatchQueue(label: "lumen.thumbs", qos: .utility)
 private let exportQueue = DispatchQueue(label: "lumen.batch-export", qos: .userInitiated)
 /// Serial: undo-history writes for every photo, in order (see `LibraryStore.save`).
 private let historyQueue = DispatchQueue(label: "lumen.history", qos: .utility)
-/// History waiting to be written, by file (only touched on `historyQueue`). Editing saves twice a second and each
-/// history holds up to 200 snapshots, so writing every one rewrote megabytes a second while a slider moved; now the
-/// newest is written at most every 2 s, and at once when the photo closes or is deleted.
+/// History waiting to be written, by file (only touched on `historyQueue`): a burst of saves writes the newest once,
+/// 0.2 s later, and at once when the photo closes, is deleted or the app leaves the screen. (2 s lost the undo
+/// history when the app was closed right after an edit: UI test testOctoberEditorFixes, 19 Oct.)
 nonisolated(unsafe) private var pendingHistory: [URL: LibraryStore.EditHistory] = [:]
 
 /// Imported originals live in Documents/Library/files; edits are JSON sidecars in Documents/Library/edits.
@@ -75,6 +75,11 @@ final class LibraryStore: ObservableObject {
                     try? FileManager.default.removeItem(at: u)
                 }
             }
+        }
+        // leaving the screen may be the last chance to write: iOS can close the app from the background
+        resignObserver = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
+                                                                object: nil, queue: nil) { _ in
+            historyQueue.async { LibraryStore.writePendingHistory() }
         }
         // healed patches (Heal tool) live with the library so they survive app updates
         HealStore.directory = root.appendingPathComponent("heals", isDirectory: true)
@@ -371,7 +376,7 @@ final class LibraryStore: ObservableObject {
             let scheduled = pendingHistory[file] != nil
             pendingHistory[file] = history
             if !scheduled {
-                historyQueue.asyncAfter(deadline: .now() + 2) { Self.writePendingHistory(file) }
+                historyQueue.asyncAfter(deadline: .now() + 0.2) { Self.writePendingHistory(file) }
             }
         }
     }
@@ -389,6 +394,8 @@ final class LibraryStore: ObservableObject {
     func flushHistory() {
         historyQueue.async { Self.writePendingHistory() }
     }
+
+    private var resignObserver: NSObjectProtocol?
 
     func delete(_ list: [LibraryItem]) {
         for item in list { delete(item) }
