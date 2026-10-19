@@ -35,6 +35,19 @@ nonisolated(unsafe) private var pendingHistory: [URL: LibraryStore.EditHistory] 
 final class LibraryStore: ObservableObject {
     @Published private(set) var items: [LibraryItem] = []
     @Published private(set) var thumbVersion = 0
+    /// Decoded thumbnails, by photo and version: every finished thumbnail redraws the grid, and each cell used to read
+    /// and decode its JPEG from disk again on the main thread (code review, 19 Oct).
+    private let thumbCache = NSCache<NSString, UIImage>()
+    private var thumbVersions: [UUID: Int] = [:]
+
+    /// The photo's thumbnail, decoded once per version.
+    func thumbnail(_ item: LibraryItem) -> UIImage? {
+        let key = "\(item.id.uuidString)-\(thumbVersions[item.id] ?? 0)" as NSString
+        if let img = thumbCache.object(forKey: key) { return img }
+        guard let img = UIImage(contentsOfFile: thumbURL(item).path)?.preparingForDisplay() else { return nil }
+        thumbCache.setObject(img, forKey: key)
+        return img
+    }
     @Published private(set) var userPresets: [UserPreset] = []
     @Published var clipboard: EditSettings?
     @Published var lastError: String?
@@ -756,6 +769,7 @@ final class LibraryStore: ObservableObject {
             try? jpg.write(to: dst, options: .atomic)
             Task { @MainActor [weak self] in
                 self?.unreadable.remove(id)
+                self?.thumbVersions[id, default: 0] += 1
                 self?.thumbVersion += 1
             }
         }

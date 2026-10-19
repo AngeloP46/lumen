@@ -207,3 +207,7 @@ Remove people stay Pro. No Store code changed.
 Heal decodes at 2x the model's resolution and renders only its square once (photo side ~2.3 GB -> ~0.5 GB on the CI
 Mac); the hole is mirrored at photo edges like the context; engine-test "Memory budget" step with per-step budgets.
 Heal stays Pro and on the 800 px model. No Store code changed.
+
+## 19 Oct 2026: Library thumbnails decoded once (from main #46, SideStore 0.1.333)
+Decoded thumbnails cached per photo and version, so a finished thumbnail no longer makes every cell re-read its JPEG.
+No Store code changed.
