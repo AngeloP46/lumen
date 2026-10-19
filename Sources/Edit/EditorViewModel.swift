@@ -98,8 +98,8 @@ final class EditorViewModel: ObservableObject {
     private var redoStack: [EditSettings] = []
     private var applyingHistory = false
     private var lastChange = Date.distantPast
-    var canUndo: Bool { !undoStack.isEmpty }
-    var canRedo: Bool { !redoStack.isEmpty }
+    var canUndo: Bool { !undoStack.isEmpty && !healBusy }
+    var canRedo: Bool { !redoStack.isEmpty && !healBusy }
 
     init(item: LibraryItem) {
         self.item = item
@@ -143,6 +143,7 @@ final class EditorViewModel: ObservableObject {
                 guard let self else { return }
                 if !self.healBusy && !self.healPreparing { EditSession.releaseHealModel() }
                 if self.zoomLevel <= 1.4 { self.detailSource = nil }
+                if !self.showOriginal { self.unhealedSource = nil }
                 self.requestRender()
             }
         }
@@ -233,7 +234,16 @@ final class EditorViewModel: ObservableObject {
             s?.heals = heals
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
             Task { @MainActor [weak self] in
-                guard let self, generation == self.loadGeneration, let s, let src else { return }
+                guard let self, generation == self.loadGeneration else { return }
+                guard let s, let src else {
+                    // couldn't decode it again (short of memory): never leave Heal stuck on "Removing…"
+                    if self.healBusy && self.healWaitingForReload {
+                        self.healBusy = false; self.healStroke = []; self.healWaitingForReload = false
+                        self.healMessage = "Couldn't show the fix. Close other apps and try again."
+                    }
+                    Diagnostics.shared.note("reload failed")
+                    return
+                }
                 if sameHeals, let previous, previous.size == src.size {
                     let (masks, tried) = previous.snapshotMasks()
                     for key in tried { src.storeMask(key, masks[key]) }
@@ -400,6 +410,8 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    private var detailSkipNoted = false
+
     private func buildDetail() {
         guard let session, let source, !detailBuilding else { return }
         let native = max(session.nativeSize.width, session.nativeSize.height)
@@ -410,18 +422,29 @@ final class EditorViewModel: ObservableObject {
         let left = Diagnostics.availableMB
         let edge = left > 2000 ? min(native, 4096) : left > 1300 ? min(native, 3072) : 0
         guard edge > source.longEdge * 1.15 else {
-            Diagnostics.shared.note("100% view: no full-size copy, only \(left) MB left")
+            // zoom fires this on every pinch step: note it once
+            if native > source.longEdge * 1.15 && !detailSkipNoted {
+                detailSkipNoted = true
+                Diagnostics.shared.note("100% view: no full-size copy, only \(left) MB left")
+            }
             return
         }
+        detailSkipNoted = false
         detailBuilding = true
         detailLoading = true
         Diagnostics.shared.note("100% view: building \(Int(edge)) px copy")
+        let generation = loadGeneration
         workQueue.async {
             let src = session.makeSource(maxEdge: edge, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.detailBuilding = false
                 self.detailLoading = false
+                // the photo was decoded again meanwhile (HDR, a heal): this copy shows the old version
+                guard generation == self.loadGeneration else {
+                    if self.zoomLevel > 1.4 { self.buildDetail() }
+                    return
+                }
                 self.detailSource = src
                 self.syncDetailMasks()
                 self.requestRender()
@@ -625,7 +648,7 @@ final class EditorViewModel: ObservableObject {
 
     private func prepareAutoMasksIfNeeded() {
         guard let session, let source, !autoMaskBusy else { return }
-        let needs = ((lensBlurEditing || settings.lensBlur.amount > 0) && (!source.hasTried(EditSession.aiDepth) || !source.hasTried(EditSession.aiSubject) || !source.hasTried(EditSession.subjectKey(settings.lensBlur.subjectPoint)))) || settings.masks.contains { m in
+        let needs = ((lensBlurEditing || settings.effective.lensBlur.amount > 0) && (!source.hasTried(EditSession.aiDepth) || !source.hasTried(EditSession.aiSubject) || !source.hasTried(EditSession.subjectKey(settings.lensBlur.subjectPoint)))) || settings.masks.contains { m in
             m.components.contains { c in
                 switch c.kind {
                 case .subject: return !source.hasTried(EditSession.subjectKey(c.subjectPoint))
@@ -653,6 +676,9 @@ final class EditorViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.autoMaskBusy = false
+                // the photo was decoded again meanwhile (HDR, a heal): these results belong to the old copy, so the
+                // new one is analysed now (it was skipped while this job was busy)
+                guard self.source === source else { self.prepareAutoMasksIfNeeded(); return }
                 self.autoMaskMissing = missing
                 if self.lensFocusPending, self.settings.lensBlur == askedBlur { self.finishLensFocus() }
                 self.syncDetailMasks()
@@ -666,7 +692,8 @@ final class EditorViewModel: ObservableObject {
     // MARK: History
 
     func undo() {
-        guard let last = undoStack.popLast() else { return }
+        // a heal being made is built on the current heals: undoing under it would keep a fix built on a removed one
+        guard !healBusy, let last = undoStack.popLast() else { return }
         redoStack.append(settings)
         applyingHistory = true
         settings = last
@@ -675,7 +702,7 @@ final class EditorViewModel: ObservableObject {
     }
 
     func redo() {
-        guard let next = redoStack.popLast() else { return }
+        guard !healBusy, let next = redoStack.popLast() else { return }
         undoStack.append(settings)
         applyingHistory = true
         settings = next
