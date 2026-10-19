@@ -548,14 +548,21 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_SEG_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "DETRResnet50SemanticSegmentationF16", withExtension: "mlmodelc")
     }()
-    private static let sceneModel: VNCoreMLModel? = {
+    private static let sceneStore = LoadedModel<VNCoreMLModel> {
         guard let url = sceneModelURL else { return nil }
         let cfg = MLModelConfiguration()
         cfg.computeUnits = .all
         guard let ml = try? MLModel(contentsOf: url, configuration: cfg) else { return nil }
         return try? VNCoreMLModel(for: ml)
-    }()
-    static var hasSceneModel: Bool { sceneModel != nil }
+    }
+    private static var sceneModel: VNCoreMLModel? { sceneStore.model }
+    /// Only looks for the compiled model's files (screens ask this while drawing): loading it there froze the
+    /// app while the model compiled (code review, 19 Oct). An empty stand-in folder (UI-test builds) has none.
+    static var hasSceneModel: Bool { modelFilesExist(sceneModelURL) }
+    static func modelFilesExist(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return FileManager.default.fileExists(atPath: url.appendingPathComponent("coremldata.bin").path)
+    }
 
     /// Labels every part of the photo (sky, water, trees, buildings, road, ...) with Apple's on-device DETR
     /// segmentation model (448 x 448, the photo stretched to fit).
@@ -758,14 +765,20 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_DEPTH_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "DepthAnythingV2SmallF16", withExtension: "mlmodelc")
     }()
-    private static let depthModel: VNCoreMLModel? = {
+    private static let depthStore = LoadedModel<VNCoreMLModel> {
         guard let url = depthModelURL else { return nil }
         let cfg = MLModelConfiguration()
         cfg.computeUnits = .all
         guard let ml = try? MLModel(contentsOf: url, configuration: cfg) else { return nil }
         return try? VNCoreMLModel(for: ml)
-    }()
-    static var hasDepthModel: Bool { depthModel != nil }
+    }
+    private static var depthModel: VNCoreMLModel? { depthStore.model }
+    static var hasDepthModel: Bool { modelFilesExist(depthModelURL) }
+    /// Lets go of the scene and depth models when memory runs short (masks already worked out are kept).
+    static func releaseMaskModels() {
+        sceneStore.release()
+        depthStore.release()
+    }
 
     /// Estimates how far away every part of the photo is (on-device, any photo, no depth data needed).
     /// The model sees a landscape frame, so portrait photos are turned a quarter for it and the result turned back.

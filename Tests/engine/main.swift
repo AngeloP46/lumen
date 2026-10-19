@@ -2184,4 +2184,29 @@ do {
 }
 
 check(opened > 0, "no sample photo could be opened from \(inDir.path) (\(files.count) files found)")
+
+// ---- Export keeps the camera's details (date taken, camera, exposure) and says it is upright.
+if let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }), let session = EditSession(url: arw),
+   let orig = CGImageSourceCreateWithURL(arw as CFURL, nil),
+   let op = CGImageSourceCopyPropertiesAtIndex(orig, 0, nil) as? [String: Any] {
+    let origExif = op[kCGImagePropertyExifDictionary as String] as? [String: Any]
+    for format in [ExportFormat.jpeg, .heic] {
+        guard let data = session.renderData(EditSettings(), format: format, quality: 0.8, maxEdge: 800, includeHDR: false),
+              let back = CGImageSourceCreateWithData(data as CFData, nil),
+              let p = CGImageSourceCopyPropertiesAtIndex(back, 0, nil) as? [String: Any] else {
+            check(false, "export metadata: \(format) export failed"); continue
+        }
+        let exif = p[kCGImagePropertyExifDictionary as String] as? [String: Any]
+        let tiff = p[kCGImagePropertyTIFFDictionary as String] as? [String: Any]
+        check(exif?[kCGImagePropertyExifDateTimeOriginal as String] as? String != nil
+              && exif?[kCGImagePropertyExifDateTimeOriginal as String] as? String == origExif?[kCGImagePropertyExifDateTimeOriginal as String] as? String,
+              "export metadata: \(format) lost the date taken")
+        check(tiff?[kCGImagePropertyTIFFModel as String] as? String != nil, "export metadata: \(format) lost the camera model")
+        check(exif?[kCGImagePropertyExifISOSpeedRatings as String] != nil, "export metadata: \(format) lost the ISO")
+        check((p[kCGImagePropertyOrientation as String] as? Int ?? 1) == 1, "export metadata: \(format) orientation not upright")
+        check((p[kCGImagePropertyPixelWidth as String] as? Int ?? 0) == 800 || (p[kCGImagePropertyPixelHeight as String] as? Int ?? 0) == 800,
+              "export metadata: \(format) size wrong")
+    }
+}
+
 finishChecks()

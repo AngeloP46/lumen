@@ -98,8 +98,8 @@ final class EditorViewModel: ObservableObject {
     private var redoStack: [EditSettings] = []
     private var applyingHistory = false
     private var lastChange = Date.distantPast
-    var canUndo: Bool { !undoStack.isEmpty }
-    var canRedo: Bool { !redoStack.isEmpty }
+    var canUndo: Bool { !undoStack.isEmpty && !healBusy }
+    var canRedo: Bool { !redoStack.isEmpty && !healBusy }
 
     init(item: LibraryItem) {
         self.item = item
@@ -138,9 +138,12 @@ final class EditorViewModel: ObservableObject {
         memoryWarning = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
                                                                object: nil, queue: .main) { [weak self] _ in
             LumenGPU.context.clearCaches()
+            EditSession.releaseMaskModels()
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                if !self.healBusy && !self.healPreparing { EditSession.releaseHealModel() }
                 if self.zoomLevel <= 1.4 { self.detailSource = nil }
+                if !self.showOriginal { self.unhealedSource = nil }
                 self.requestRender()
             }
         }
@@ -195,6 +198,7 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.session = s
                 self.source = src
+                self.sourceHeals = heals.map(\.id)
                 self.unhealedSource = nil   // belonged to the previous photo
                 self.isLoading = false
                 self.loadFailed = (src == nil)
@@ -208,8 +212,14 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    /// The heals the current preview source was decoded with.
+    private var sourceHeals: [UUID] = []
+
     /// HDR on or off changes how the file is decoded (RAW: more highlight range; gain-map JPEG/HEIC: the HDR version),
-    /// so decode it again. Automatic masks already found are kept.
+    /// and heals are painted in while decoding, so decode it again. Automatic masks already found are kept only when
+    /// the heals are the same: after a heal, depth, subject, sky and the rest are worked out again from the healed
+    /// photo. (Before 19 Oct they were kept, so Lens Blur still saw a removed person as near and left a sharp,
+    /// person-shaped hole in the blur: owner's screenshot.)
     private func reloadSource() {
         guard let store, session != nil else { return }
         loadGeneration += 1
@@ -218,13 +228,23 @@ final class EditorViewModel: ObservableObject {
         let wantsHDR = settings.hdr
         let heals = settings.effective.heals
         let previous = source
+        let sameHeals = heals.map(\.id) == sourceHeals || DemoMode.value("-lumenDemoLensDepth") != nil
         workQueue.async {
             let s = EditSession(url: url, expandHDR: wantsHDR)
             s?.heals = heals
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
             Task { @MainActor [weak self] in
-                guard let self, generation == self.loadGeneration, let s, let src else { return }
-                if let previous, previous.size == src.size {
+                guard let self, generation == self.loadGeneration else { return }
+                guard let s, let src else {
+                    // couldn't decode it again (short of memory): never leave Heal stuck on "Removing…"
+                    if self.healBusy && self.healWaitingForReload {
+                        self.healBusy = false; self.healStroke = []; self.healWaitingForReload = false
+                        self.healMessage = "Couldn't show the fix. Close other apps and try again."
+                    }
+                    Diagnostics.shared.note("reload failed")
+                    return
+                }
+                if sameHeals, let previous, previous.size == src.size {
                     let (masks, tried) = previous.snapshotMasks()
                     for key in tried { src.storeMask(key, masks[key]) }
                     src.storeDepth(previous.depthField)
@@ -232,6 +252,7 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.session = s
                 self.source = src
+                self.sourceHeals = heals.map(\.id)
                 self.sourceSize = src.size
                 self.detailSource = nil
                 if DemoMode.isOn { DemoMode.log("reloaded hdr \(wantsHDR)") }
@@ -290,6 +311,7 @@ final class EditorViewModel: ObservableObject {
     func flushSave() {
         saveWork?.cancel()
         store?.save(settings, for: item, history: LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack))
+        store?.flushHistory()
     }
 
     // MARK: Rendering
@@ -388,22 +410,41 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    private var detailSkipNoted = false
+
     private func buildDetail() {
         guard let session, let source, !detailBuilding else { return }
         let native = max(session.nativeSize.width, session.nativeSize.height)
-        guard native > source.longEdge * 1.15 else { return }
-        detailBuilding = true
-        detailLoading = true
-        Diagnostics.shared.note("100% view: building full-size copy")
         // 4096 (was 6000): a 24 MP full-size source plus its layers pushed Lumen past iOS's 3.4 GB per-app limit
         // while zoomed in (owner's JetsamEvent, 18 Oct: killed at 3388 MB, per-process-limit).
-        let edge = min(native, 4096)
+        // A 4096 px copy with its layers needs roughly 700 MB: with less room left than that allows, build a
+        // smaller one, or none (the preview stays, a little softer, instead of iOS closing the app).
+        let left = Diagnostics.availableMB
+        let edge = left > 2000 ? min(native, 4096) : left > 1300 ? min(native, 3072) : 0
+        guard edge > source.longEdge * 1.15 else {
+            // zoom fires this on every pinch step: note it once
+            if native > source.longEdge * 1.15 && !detailSkipNoted {
+                detailSkipNoted = true
+                Diagnostics.shared.note("100% view: no full-size copy, only \(left) MB left")
+            }
+            return
+        }
+        detailSkipNoted = false
+        detailBuilding = true
+        detailLoading = true
+        Diagnostics.shared.note("100% view: building \(Int(edge)) px copy")
+        let generation = loadGeneration
         workQueue.async {
             let src = session.makeSource(maxEdge: edge, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.detailBuilding = false
                 self.detailLoading = false
+                // the photo was decoded again meanwhile (HDR, a heal): this copy shows the old version
+                guard generation == self.loadGeneration else {
+                    if self.zoomLevel > 1.4 { self.buildDetail() }
+                    return
+                }
                 self.detailSource = src
                 self.syncDetailMasks()
                 self.requestRender()
@@ -607,7 +648,7 @@ final class EditorViewModel: ObservableObject {
 
     private func prepareAutoMasksIfNeeded() {
         guard let session, let source, !autoMaskBusy else { return }
-        let needs = ((lensBlurEditing || settings.lensBlur.amount > 0) && (!source.hasTried(EditSession.aiDepth) || !source.hasTried(EditSession.aiSubject) || !source.hasTried(EditSession.subjectKey(settings.lensBlur.subjectPoint)))) || settings.masks.contains { m in
+        let needs = ((lensBlurEditing || settings.effective.lensBlur.amount > 0) && (!source.hasTried(EditSession.aiDepth) || !source.hasTried(EditSession.aiSubject) || !source.hasTried(EditSession.subjectKey(settings.lensBlur.subjectPoint)))) || settings.masks.contains { m in
             m.components.contains { c in
                 switch c.kind {
                 case .subject: return !source.hasTried(EditSession.subjectKey(c.subjectPoint))
@@ -635,6 +676,9 @@ final class EditorViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.autoMaskBusy = false
+                // the photo was decoded again meanwhile (HDR, a heal): these results belong to the old copy, so the
+                // new one is analysed now (it was skipped while this job was busy)
+                guard self.source === source else { self.prepareAutoMasksIfNeeded(); return }
                 self.autoMaskMissing = missing
                 if self.lensFocusPending, self.settings.lensBlur == askedBlur { self.finishLensFocus() }
                 self.syncDetailMasks()
@@ -648,7 +692,8 @@ final class EditorViewModel: ObservableObject {
     // MARK: History
 
     func undo() {
-        guard let last = undoStack.popLast() else { return }
+        // a heal being made is built on the current heals: undoing under it would keep a fix built on a removed one
+        guard !healBusy, let last = undoStack.popLast() else { return }
         redoStack.append(settings)
         applyingHistory = true
         settings = last
@@ -657,7 +702,7 @@ final class EditorViewModel: ObservableObject {
     }
 
     func redo() {
-        guard let next = redoStack.popLast() else { return }
+        guard !healBusy, let next = redoStack.popLast() else { return }
         undoStack.append(settings)
         applyingHistory = true
         settings = next
@@ -812,6 +857,20 @@ final class EditorViewModel: ObservableObject {
         }
     }
     fileprivate var healWaitingForReload = false
+    private var healRelease: Task<Void, Never>?
+    /// The Heal model is only kept while Heal is being used: 30 s after leaving the tool (at once when the photo
+    /// closes) it is let go of, unless Heal is open again or still working.
+    func healToolChanged(open: Bool, now: Bool = false) {
+        healRelease?.cancel(); healRelease = nil
+        guard !open, EditSession.healModelReady || healPreparing else { return }
+        healRelease = Task { @MainActor [weak self] in
+            if !now { try? await Task.sleep(nanoseconds: 30_000_000_000) }
+            guard !Task.isCancelled else { return }
+            if let self, self.healBusy || self.healPreparing { return }
+            EditSession.releaseHealModel()
+            Diagnostics.shared.note("heal model released")
+        }
+    }
 
     func healBegin(_ p: Pt) { guard !healBusy else { return }; selectedHealID = nil; healMessage = nil; healStroke = [p] }
     func healExtend(_ p: Pt) {
@@ -864,6 +923,8 @@ final class EditorViewModel: ObservableObject {
         detailSource = nil
         unhealedSource = nil
         LumenGPU.context.clearCaches()
+        // short of room: the mask models go too (masks already worked out are kept; they load again when needed)
+        if Diagnostics.availableMB < 1500 { EditSession.releaseMaskModels() }
     }
 
     /// Keeps a heal-free preview while the photo has heals (built in the background, dropped when there are none).
@@ -1291,6 +1352,10 @@ final class EditorViewModel: ObservableObject {
         let s = settings
         let name = item.displayName
         let patches = HealStore.retain(Set(s.heals.map(\.id)))
+        // a full-size export decodes the whole photo again: let go of the copies that can be made again first
+        unhealedSource = nil
+        if Diagnostics.availableMB < 2000 { detailSource = nil; EditSession.releaseMaskModels() }
+        LumenGPU.context.clearCaches()
         workQueue.async {
             defer { patches.close() }
             Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
@@ -1303,6 +1368,7 @@ final class EditorViewModel: ObservableObject {
             }
             Task { @MainActor [weak self] in
                 self?.isExporting = false
+                self?.refreshUnhealed()
                 if let url { self?.exported = ExportResult(url: url) } else { self?.message = "Export failed." }
             }
         }

@@ -145,7 +145,7 @@ struct EditorView: View {
             vm.setLensBlurEditing(tool == .lensBlur)
             if DemoMode.isOn { applyDemo() }
         }
-        .onDisappear { vm.flushSave(); store.refreshThumbnail(item) }
+        .onDisappear { vm.flushSave(); store.refreshThumbnail(item); vm.healToolChanged(open: false, now: true); EditSession.releaseMaskModels(); LumenGPU.context.clearCaches() }
         .onChange(of: tool) { _, new in
             vm.wbPicking = false
             vm.lensBlurPicking = false
@@ -158,6 +158,7 @@ struct EditorView: View {
             if new == .masks, vm.selectedMaskID == nil, let first = vm.userMasks.first { vm.selectMask(first.id) }
             if new == .presets { vm.loadPresetThumbs(user: store.userPresets) }
             if new != .heal { vm.selectedHealID = nil; vm.healMessage = nil; vm.cancelPeople() }
+            vm.healToolChanged(open: new == .heal)
             if new == .crop || (new != .masks && zoom < 0.999) { withAnimation(.easeOut(duration: 0.18)) { resetZoom() } }
         }
         .onChange(of: zoom) { _, z in vm.zoomChanged(z) }
@@ -713,7 +714,7 @@ struct EditorView: View {
 
     // MARK: Gestures
 
-    private var canNavigate: Bool { tool != .masks && tool != .crop && tool != .heal && !vm.lensBlurPicking && !vm.lensBlurRefining }
+    private var canNavigate: Bool { tool != .masks && tool != .crop && tool != .heal && !vm.lensBlurPicking && !vm.lensBlurRefining && !vm.isExporting && !vm.healBusy }
     // in Heal a resting finger is the start of a stroke, not a request to see the original
     private var canCompare: Bool { tool != .crop && tool != .heal && !vm.lensBlurPicking && !vm.lensBlurRefining && !(tool == .masks && vm.maskTab == .shape && vm.selectedMask != nil) }
     /// One finger pans a zoomed photo wherever it is not busy with something else (mask handles, brush, crop frame).

@@ -25,6 +25,10 @@ private let thumbQueue = DispatchQueue(label: "lumen.thumbs", qos: .utility)
 private let exportQueue = DispatchQueue(label: "lumen.batch-export", qos: .userInitiated)
 /// Serial: undo-history writes for every photo, in order (see `LibraryStore.save`).
 private let historyQueue = DispatchQueue(label: "lumen.history", qos: .utility)
+/// History waiting to be written, by file (only touched on `historyQueue`): a burst of saves writes the newest once,
+/// 0.2 s later, and at once when the photo closes, is deleted or the app leaves the screen. (2 s lost the undo
+/// history when the app was closed right after an edit: UI test testOctoberEditorFixes, 19 Oct.)
+nonisolated(unsafe) private var pendingHistory: [URL: LibraryStore.EditHistory] = [:]
 
 /// Imported originals live in Documents/Library/files; edits are JSON sidecars in Documents/Library/edits.
 @MainActor
@@ -61,6 +65,21 @@ final class LibraryStore: ObservableObject {
         editsDir = root.appendingPathComponent("edits", isDirectory: true)
         for d in [filesDir, thumbsDir, editsDir] {
             try? fm.createDirectory(at: d, withIntermediateDirectories: true)
+        }
+        // exported files from earlier runs (shared or saved already) only take up space
+        if testRoot == nil {
+            thumbQueue.async {
+                let tmp = FileManager.default.temporaryDirectory
+                for u in (try? FileManager.default.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil)) ?? []
+                where u.lastPathComponent.hasPrefix("lumen-export-") || u.deletingPathExtension().lastPathComponent.hasSuffix("-lumen") {
+                    try? FileManager.default.removeItem(at: u)
+                }
+            }
+        }
+        // leaving the screen may be the last chance to write: iOS can close the app from the background
+        resignObserver = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
+                                                                object: nil, queue: nil) { _ in
+            historyQueue.async { LibraryStore.writePendingHistory() }
         }
         // healed patches (Heal tool) live with the library so they survive app updates
         HealStore.directory = root.appendingPathComponent("heals", isDirectory: true)
@@ -125,7 +144,7 @@ final class LibraryStore: ObservableObject {
         library.save(edits, for: removed, history: EditHistory(current: edits, undo: [previous], redo: [next]))
         var otherHistory = EditSettings(); otherHistory.heals = [shared]
         library.save(EditSettings(), for: kept, history: EditHistory(current: EditSettings(), undo: [], redo: [otherHistory]))
-        historyQueue.sync {}
+        historyQueue.sync { LibraryStore.writePendingHistory() }
         let sidecar = (try? Data(contentsOf: library.editURL(removed))).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
         let saved = library.history(for: removed, current: edits)
         check(sidecar != nil && sidecar?["_undoHistory"] == nil && fm.fileExists(atPath: library.historyURL(removed).path)
@@ -230,6 +249,11 @@ final class LibraryStore: ObservableObject {
 
     func settings(for item: LibraryItem) -> EditSettings {
         guard let data = try? Data(contentsOf: editURL(item)) else { return EditSettings() }
+        // a damaged file would be replaced by defaults on the next save: keep a copy first
+        if (try? JSONSerialization.jsonObject(with: data)) == nil {
+            let copy = editsDir.appendingPathComponent("\(item.id.uuidString).damaged.json")
+            if !fm.fileExists(atPath: copy.path) { try? data.write(to: copy) }
+        }
         return Self.decodeSettings(data)
     }
 
@@ -257,6 +281,12 @@ final class LibraryStore: ObservableObject {
               var defaults = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(template))) as? [String: Any]
         else { return EditSettings() }
         old = old.filter { defaults[$0.key] != nil }
+        // Lens Blur reads the absence of these to recognise an old save (old amount scale; a saved choice): the
+        // template must not fill them in
+        if var lens = defaults["lensBlur"] as? [String: Any] {
+            lens["scaleVersion"] = nil; lens["activated"] = nil
+            defaults["lensBlur"] = lens
+        }
         let maskTemplate = defaults["masks"] ?? [Any]()
         defaults["masks"] = [Any]()
         for dropping in [[], ["masks"]] as [[String]] {
@@ -275,7 +305,9 @@ final class LibraryStore: ObservableObject {
     private static func overlay(_ value: Any, on template: Any) -> Any {
         if let v = value as? [String: Any], let t = template as? [String: Any] {
             var out = t
-            for (k, x) in v { if let tx = t[k] { out[k] = overlay(x, on: tx) } }
+            // keys the template lacks are kept: they are the optional ones (left out of the template because they are
+            // nil there), e.g. Lens Blur's linked mask and focus point, which migration used to drop (code review, 19 Oct)
+            for (k, x) in v { out[k] = t[k].map { overlay(x, on: $0) } ?? x }
             return out
         }
         if let v = value as? [Any], let t = (template as? [Any])?.first, t is [String: Any] {
@@ -286,7 +318,7 @@ final class LibraryStore: ObservableObject {
 
     /// CI only: as if the photo had never been opened.
     func forgetEdits(_ item: LibraryItem) {
-        historyQueue.sync {}
+        historyQueue.sync { Self.writePendingHistory() }
         for u in [editURL(item), historyURL(item)] { try? FileManager.default.removeItem(at: u) }
     }
 
@@ -314,7 +346,7 @@ final class LibraryStore: ObservableObject {
     func history(for item: LibraryItem, current: EditSettings) -> EditHistory {
         let file = historyURL(item), legacy = try? Data(contentsOf: editURL(item))
         // wait for any history write still queued for this photo, so reopening at once never loses steps
-        guard var history = historyQueue.sync(execute: { Self.readHistory(file: file, legacy: legacy) }),
+        guard var history = historyQueue.sync(execute: { pendingHistory[file] ?? Self.readHistory(file: file, legacy: legacy) }),
               history.current == current else { return EditHistory(current: current, undo: [], redo: []) }
         history.undo = Array(history.undo.suffix(100))
         history.redo = Array(history.redo.suffix(100))
@@ -334,16 +366,36 @@ final class LibraryStore: ObservableObject {
             var history: EditHistory
             if let supplied { history = supplied } else {
                 // Library paste/batch changes are undoable too; editor saves already carry their history.
-                history = Self.readHistory(file: file, legacy: oldData).flatMap { $0.current == previous ? $0 : nil }
+                history = (pendingHistory[file] ?? Self.readHistory(file: file, legacy: oldData)).flatMap { $0.current == previous ? $0 : nil }
                     ?? EditHistory(current: previous ?? s, undo: [], redo: [])
                 if let previous, s != previous { history.undo.append(previous); history.redo.removeAll() }
             }
             history.current = s
             history.undo = Array(history.undo.suffix(100))
             history.redo = Array(history.redo.suffix(100))
+            let scheduled = pendingHistory[file] != nil
+            pendingHistory[file] = history
+            if !scheduled {
+                historyQueue.asyncAfter(deadline: .now() + 0.2) { Self.writePendingHistory(file) }
+            }
+        }
+    }
+
+    /// Writes waiting history now (one file, or all). On `historyQueue` only.
+    nonisolated private static func writePendingHistory(_ only: URL? = nil) {
+        let files = only.map { [$0] } ?? Array(pendingHistory.keys)
+        for file in files {
+            guard let history = pendingHistory.removeValue(forKey: file) else { continue }
             if let data = try? JSONEncoder().encode(history) { try? data.write(to: file, options: .atomic) }
         }
     }
+
+    /// The editor is closing: write its history now instead of in up to 2 s.
+    func flushHistory() {
+        historyQueue.async { Self.writePendingHistory() }
+    }
+
+    private var resignObserver: NSObjectProtocol?
 
     func delete(_ list: [LibraryItem]) {
         for item in list { delete(item) }
@@ -379,7 +431,9 @@ final class LibraryStore: ObservableObject {
     func export(_ list: [LibraryItem], options o: ExportOptions) {
         guard batchProgress == nil, !list.isEmpty else { return }
         batchProgress = (0, list.count)
-        let jobs = list.map { (url: fileURL($0), edits: settings(for: $0), name: $0.displayName) }
+        // editorSettings: a RAW never opened exports as the editor would show it (HDR on)
+        let jobs = list.map { (url: fileURL($0), edits: editorSettings(for: $0), name: $0.displayName) }
+        UIApplication.shared.isIdleTimerDisabled = true   // a long batch must not stop when the screen locks
         let patches = HealStore.retain(Set(jobs.flatMap { $0.edits.heals.map(\.id) }))
         let dir = fm.temporaryDirectory.appendingPathComponent("lumen-export-\(UUID().uuidString)", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -393,15 +447,19 @@ final class LibraryStore: ObservableObject {
                           let data = session.renderData(job.edits, format: o.format, quality: o.quality / 100,
                                                         maxEdge: o.maxEdge, includeHDR: o.hdr) else { return }
                     var name = job.name + "-lumen", k = 2
-                    while used.contains(name) { name = "\(job.name)-lumen-\(k)"; k += 1 }
-                    used.insert(name)
+                    // the file system ignores case: IMG_1 and img_1 would overwrite each other
+                    while used.contains(name.lowercased()) { name = "\(job.name)-lumen-\(k)"; k += 1 }
+                    used.insert(name.lowercased())
                     let u = dir.appendingPathComponent("\(name).\(o.format.ext)")
                     if (try? data.write(to: u, options: .atomic)) != nil { urls.append(u) }
                 }
+                // each 24-48 MP photo leaves large GPU buffers in the shared context: let them go before the next
+                LumenGPU.context.clearCaches()
                 Task { @MainActor [weak self] in self?.batchProgress = (n + 1, jobs.count) }
             }
             let done = urls
             Task { @MainActor [weak self] in
+                UIApplication.shared.isIdleTimerDisabled = false
                 guard let self else { return }
                 self.batchProgress = nil
                 if DemoMode.isOn { DemoMode.log("batch exported \(done.count) of \(jobs.count)") }
@@ -477,7 +535,7 @@ final class LibraryStore: ObservableObject {
     func delete(_ item: LibraryItem) {
         guard items.contains(where: { $0.id == item.id }) else { return }
         // finish queued history writes first: they may name Heal patches, and must not recreate the file afterwards
-        historyQueue.sync {}
+        historyQueue.sync { Self.writePendingHistory() }
         var patches = HealStore.markDeleted(owner: fileURL(item))
         for url in [editURL(item), historyURL(item)] {
             if let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) {
@@ -538,12 +596,68 @@ final class LibraryStore: ObservableObject {
     // MARK: Import
 
     func importFiles(_ urls: [URL]) {
-        for url in urls {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            do { try add(copying: url, name: url.deletingPathExtension().lastPathComponent) }
-            catch { lastError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)" }
+        // CI demo runs expect the photos at once
+        if DemoMode.isOn {
+            for url in urls {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                do { try add(copying: url, name: url.deletingPathExtension().lastPathComponent) }
+                catch { lastError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)" }
+            }
+            return
         }
+        // Copies happen off the main thread (50 RAWs from an SD card froze the app while they copied), through a file
+        // coordinator so iCloud Drive files are downloaded first instead of failing, with the same progress bar as Photos.
+        guard !urls.isEmpty else { return }
+        if activeImports == 0 { importTotal = 0; importDone = 0 }
+        activeImports += 1
+        importing = true
+        importTotal += urls.count
+        let dir = filesDir
+        Task.detached(priority: .userInitiated) { [weak self] in
+            for url in urls {
+                let result = Self.copyIn(url, to: dir)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.importDone += 1
+                    switch result {
+                    case .success(let (id, fileName, taken)):
+                        let item = LibraryItem(id: id, displayName: url.deletingPathExtension().lastPathComponent,
+                                               fileName: fileName, added: Date(), taken: taken)
+                        self.items.insert(item, at: 0)
+                        self.saveIndex()
+                        self.refreshThumbnail(item)
+                    case .failure(let error):
+                        self.lastError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)"
+                    }
+                }
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.activeImports -= 1
+                if self.activeImports == 0 { self.importing = false }
+            }
+        }
+    }
+
+    /// Copies one picked file into the library (off the main thread). A copy that fails part-way is removed.
+    nonisolated private static func copyIn(_ url: URL, to dir: URL) -> Result<(UUID, String, Date?), Error> {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let id = UUID()
+        let ext = url.pathExtension.lowercased()
+        let fileName = ext.isEmpty ? id.uuidString : "\(id.uuidString).\(ext)"
+        let dst = dir.appendingPathComponent(fileName)
+        var failure: Error?
+        var coordError: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordError) { readable in
+            do { try FileManager.default.copyItem(at: readable, to: dst) } catch { failure = error }
+        }
+        if let error = failure ?? coordError {
+            try? FileManager.default.removeItem(at: dst)
+            return .failure(error)
+        }
+        return .success((id, fileName, dateTaken(dst)))
     }
 
     func importPicked(_ picked: [PhotosPickerItem]) async {

@@ -16,9 +16,18 @@ extension EditSession {
     }()
     /// `.all` is what the conversion was verified with. (0.1.137 used .cpuAndGPU: black. The dark fills on red
     /// paint / yellow plates in 0.1.139-145 were not the compute units but the output's alpha channel, see run().)
-    private static let healModel: MLModel? = loadHealModel(.all)
-    /// Full precision, slower: tried when the first answer looks wrong.
-    private static let healModelCPU: MLModel? = loadHealModel(.cpuOnly)
+    private static let healStore = LoadedModel { loadHealModel(.all) }
+    private static var healModel: MLModel? { healStore.model }
+    /// Full precision, slower: tried when the first answer looks wrong, and let go of straight after.
+    private static let healCPUStore = LoadedModel { loadHealModel(.cpuOnly) }
+    private static var healModelCPU: MLModel? { healCPUStore.model }
+    /// Lets go of the Heal model (hundreds of MB while loaded): when the Heal tool closes or memory runs short.
+    /// It loads again the next time Heal is used (quicker than the first time: iOS keeps the compiled copy).
+    static func releaseHealModel() {
+        healStore.release()
+        healCPUStore.release()
+        healModelReady = false
+    }
     private static func loadHealModel(_ units: MLComputeUnits) -> MLModel? {
         guard let url = healModelURL else { return nil }
         let cfg = MLModelConfiguration()
@@ -28,10 +37,7 @@ extension EditSession {
     /// Whether this build has the Heal model. Only looks for the file: loading the model compiles it for the GPU,
     /// which takes many seconds the first time (the 1280 px one), and doing that on the main thread froze the app
     /// until iOS closed it (owner, 18 Oct, 0.1.248). Load it with `prepareHealModel()` off the main thread.
-    static var hasHealModel: Bool {
-        guard let url = healModelURL else { return false }
-        return FileManager.default.fileExists(atPath: url.path)
-    }
+    static var hasHealModel: Bool { modelFilesExist(healModelURL) }   // an empty stand-in folder (UI-test builds) has none
     /// Whether the model is loaded and ready (set once `prepareHealModel()` has finished).
     nonisolated(unsafe) static var healModelReady = false
     /// Loads (and on first launch compiles) the Heal model. Slow: call it in the background, early.
@@ -332,6 +338,7 @@ extension EditSession {
         if answer == nil || !plausible(answer!), let cpu = Self.healModelCPU {
             Self.healProbe?("heal: first answer rejected, trying the CPU model")
             answer = run(cpu)
+            Self.healCPUStore.release()
         }
         guard let out = answer else { return nil }
         Self.healFailure = .looksWrong
@@ -574,7 +581,8 @@ extension EditSession {
     /// Remove people: everyone in the photo (with the heals already made), biggest first. Apple's on-device person
     /// segmentation (the People mask's), split here into separate people. Slow: call off the main thread.
     func findPeople(earlier: [HealSpot]) -> [FoundPerson] {
-        guard let img = decode(maxEdge: 2048, heals: earlier) else { return [] }
+        // 3072 (was 2048): the quarters and body boxes below look at parts of it, so small people keep some detail
+        guard let img = decode(maxEdge: 3072, heals: earlier) else { return [] }
         let e = img.extent
         guard let cg = ctx.createCGImage(img, from: e, format: .RGBA8, colorSpace: LumenGPU.displaySpace) else { return [] }
         // two of Apple's finders, put together: the segmentation (the People mask's) and the per-person one, which
@@ -583,8 +591,10 @@ extension EditSession {
         request.qualityLevel = .accurate
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
         let instances = VNGeneratePersonInstanceMaskRequest()
+        let bodies = VNDetectHumanRectanglesRequest()
+        bodies.upperBodyOnly = false
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-        try? handler.perform([request, instances])
+        try? handler.perform([request, instances, bodies])
         // each mask covers the whole photo (whatever its own shape): stretched over it, read back at up to 768 px
         let ext = CGRect(x: 0, y: 0, width: e.width, height: e.height)
         var found: [CIImage] = []
@@ -595,12 +605,40 @@ extension EditSession {
            let buffer = try? obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler) {
             found.append(Self.fit(Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])), to: ext))
         }
+        // A person the whole-photo pass mostly missed (far away, half hidden; Vision runs it at about 1-2 MP) gets a
+        // closer look: segmentation again on a crop around each body the body finder sees, kept inside that body's
+        // box so neighbours never merge (owner, 19 Oct: Remove people missed many people). Whole-photo quarters
+        // were tried first: their softer edges joined people up into one.
+        if let base = found.first {
+            for b in (bodies.results ?? []).filter({ $0.confidence > 0.4 }).prefix(24) {
+                let r = VNImageRectForNormalizedRect(b.boundingBox, Int(e.width), Int(e.height)).intersection(ext).integral
+                guard r.width >= 24, r.height >= 24 else { continue }
+                // already found: most of the box's middle is covered
+                var v = [Float](repeating: 0, count: 4)
+                let mid = r.insetBy(dx: r.width * 0.3, dy: r.height * 0.2)
+                let avg = base.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: mid)])
+                ctx.render(avg, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                if v[0] > 0.35 { continue }
+                let look = r.insetBy(dx: -r.width * 0.25, dy: -r.height * 0.15).intersection(ext).integral
+                let top = CGRect(x: look.minX, y: ext.height - look.maxY, width: look.width, height: look.height)   // y down
+                guard let part = cg.cropping(to: top) else { continue }
+                let seg = VNGeneratePersonSegmentationRequest()
+                seg.qualityLevel = .accurate
+                seg.outputPixelFormat = kCVPixelFormatType_OneComponent8
+                try? VNImageRequestHandler(cgImage: part, options: [:]).perform([seg])
+                guard let buffer = seg.results?.first?.pixelBuffer else { continue }
+                let m = Self.fit(Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])), to: look)
+                    .applyingFilter("CIColorThreshold", parameters: ["inputThreshold": 0.5])
+                    .cropped(to: r.insetBy(dx: -r.width * 0.05, dy: -r.height * 0.05))
+                found.append(m.composited(over: Self.constant(0, ext)).cropped(to: ext))
+            }
+        }
         guard var mask = found.first else { return [] }
         for m in found.dropFirst() {
             mask = m.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: mask]).cropped(to: ext)
         }
         let me = mask.extent
-        let s = 768 / max(e.width, e.height)
+        let s = 1024 / max(e.width, e.height)   // was 768: small people kept as pieces of their own
         let w = max(Int((e.width * s).rounded()), 8), h = max(Int((e.height * s).rounded()), 8)
         let small = mask.transformed(by: CGAffineTransform(translationX: -me.minX, y: -me.minY))
             .transformed(by: CGAffineTransform(scaleX: CGFloat(w) / me.width, y: CGFloat(h) / me.height))
@@ -611,7 +649,7 @@ extension EditSession {
     }
 
     /// Splits a person mask (8-bit, top row first) into separate people. Pieces less than ~1 % of the photo apart
-    /// count as one (an arm behind a lamp post stays with its body); crumbs are dropped. Biggest first, at most 12.
+    /// count as one (an arm behind a lamp post stays with its body); crumbs are dropped. Biggest first, at most 30.
     static func splitPeople(_ px: [UInt8], width w: Int, height h: Int) -> [FoundPerson] {
         let n = w * h
         guard n > 0, px.count >= n else { return [] }
@@ -652,7 +690,7 @@ extension EditSession {
             if p.count >= 20 { pieces.append(p) }
         }
         pieces.sort { $0.count > $1.count }
-        pieces = Array(pieces.prefix(12))
+        pieces = Array(pieces.prefix(30))
         let biggest = Double(pieces.first?.count ?? 1)
         var people: [FoundPerson] = []
         for (k, p) in pieces.enumerated() {
