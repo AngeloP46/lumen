@@ -8,6 +8,44 @@
 - Tell Angelo which of the two each change has reached.
 - App Store pricing, Free vs Pro, claims and the marketing plan: `MARKETING.md` on the sandbox branch (`Lumen-Sandbox\MARKETING.md`). Keep it out of main.
 
+## Status — 19 October (overnight stability work; SideStore 0.1.311+)
+- **Send diagnostics** (⋯ menu in editor and library, `Sources/Diagnostics.swift`): memory log in Library/Diagnostics
+  (`Diagnostics.shared.note(...)` at photo open, heal steps, 100 % copy, export, memory warnings; a 2 s sampler logs big
+  footprint moves; "previous run ended while Lumen was open" = iOS closed it) plus MetricKit crash/hang/disk-write JSON.
+  One text file is shared on request; nothing is sent otherwise. Ask Angelo for it after any crash.
+- **AI models** are `LoadedModel` holders (Engine.swift), not static lets: Heal's model is released 30 s after leaving
+  Heal (at once when the photo closes), its CPU fallback straight after use, and depth/scene models on a memory warning
+  or when the editor closes. `hasHealModel/hasSceneModel/hasDepthModel` only check for `coremldata.bin` (screens call
+  them while drawing; an empty UI-test stand-in folder counts as missing).
+- **Memory guard**: the 100 % copy is 4096 px with > 2 GB free, 3072 px with > 1.3 GB, else none
+  (`Diagnostics.availableMB` = os_proc_available_memory). Heal and export drop the copies that can be remade first.
+- **Heal memory**: the photo is decoded at 2x the model's resolution, only the square's part is rendered once into a
+  small buffer, then the full decode is let go of before the model runs (was ~2.3 GB of a heal, now ~0.5 GB). The model's
+  own prediction takes ~1.3 GB for a moment on the CI Mac's GPU, so the 1280 px model (~2.5x that) stays off; 800 px.
+- **CI memory test**: engine-test step "Memory budget" (`--memory`) prints `MEMORY` lines per step (open, 100 % view,
+  subject, heal with per-step probes, export) and fails over budget (measured 19 Oct + ~10 %; Mac numbers).
+- **Heal at photo edges**: the hole is mirrored like `mirrorPadded`'s context (`withMirrors`), so a person at the edge is
+  no longer painted back from their mirror image.
+- **Lens Blur / AI masks after a heal** are worked out again from the healed photo (`reloadSource` carries masks over only
+  when heals are unchanged); before, a removed person stayed "near" and left a sharp hole in the blur.
+- **Remove people** finds more people: VNDetectHumanRectanglesRequest bodies that the whole-photo segmentation mostly
+  missed get segmentation again on a crop, kept inside the body's box; 3072 px decode, up to 30 people. Whole-photo
+  quarters were tried and merged neighbours into one (dropped). Shadow removal was tried and reverted: on dappled paving
+  it smeared a large area and a neighbour's legs (bus test photo). Ideas only, not built.
+- **Undo history** (`<id>.history.json`) is written 0.2 s after a save, when the app leaves the screen, on close and
+  before deletes. A 2 s delay (0.1.288 only) lost it on a quick close (UI test `testOctoberEditorFixes`).
+- **Code review fixes (0.1.311)**: exports keep EXIF/TIFF/GPS (date taken, camera, lens; orientation 1) — before, Photos
+  dated exports the day they were made; sidecar migration keeps optional keys (Lens Blur mask/focus) and Lens Blur's
+  scale conversion; damaged sidecars copied to `<id>.damaged.json`; batch export clears GPU caches per photo, keeps the
+  screen awake, compares names ignoring case; old temp exports removed at launch; Files imports copy off the main
+  thread with NSFileCoordinator; no undo/redo/swipe while a heal or export runs; stale 100 % copies dropped; Heal
+  never stuck after a failed reload; AI masks re-run when the photo was re-decoded during analysis.
+- **UI tests** use `tapTool(name)`, which scrolls the tool bar first: the full suite had been failing since the bar
+  started scrolling (Masks/Heal/Presets off screen on the test iPhone). Releases skip the full suite, so check it.
+- Review notes not yet done: library thumbnail grid re-decodes JPEGs on every thumbnail update, history load on the
+  main thread, brush raster cache keyed by the whole stroke list, heal HDR scaling by the brightest pixel, 8-bit sRGB
+  patches, full-size export ~5.9 GB peak on the CI Mac.
+
 ## Status — 15 October (Claude review of the 14 October work)
 - Reviewed everything other AIs added since 70f1448: sound and safe overall.
 - Fixed: undo/redo history moved out of the edits sidecar into `edits/<id>.history.json`, encoded and written on a serial background queue (`historyQueue`). The edits file is written synchronously and stays small (previously every 0.5 s save rewrote up to 200 snapshots on the main thread). Old `_undoHistory` in sidecars is still read and moves on the next save. Deletion and Heal-reference scans include the history file; deleting a photo without Heal patches no longer reads every other photo's edits. CI: `testHealDeletionPrivacy` has a 9th check for the separate file.
