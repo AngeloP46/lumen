@@ -235,11 +235,8 @@ extension EditSession {
     func renderData(_ s: EditSettings, format: ExportFormat, quality: Double, maxEdge: CGFloat? = nil,
                     includeHDR: Bool = true) -> Data? {
         heals = s.effective.heals
-        // Decoded once into a half-float buffer (~200 MB at 24 MP), then the decoder's working memory is let go of before
-        // the result is encoded; lazily, the RAW was decoded again for the encode on top of what the first pass kept
-        // (memory test, 19 Oct: export peaked ~2 GB above the open photo).
-        guard let src = makeSource(maxEdge: nil, materialize: true) else { return nil }
-        ctx.clearCaches()
+        // (Decoding into a buffer first was tried on 19 Oct: same peak, ~1.8 GB more kept afterwards.)
+        guard let src = makeSource(maxEdge: nil, materialize: false) else { return nil }
         Self.healProbe?("export: full-size source ready")
         prepareAutoMasks(s, source: src)
         Self.healProbe?("export: masks ready")
