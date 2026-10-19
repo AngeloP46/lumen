@@ -165,7 +165,8 @@ final class LumenUITests: XCTestCase {
     func tapTool(_ name: String) {
         let b = el("tool-\(name)")
         _ = b.waitForExistence(timeout: 10)
-        for _ in 0..<6 where !b.isHittable || b.frame.maxX > app.frame.maxX || b.frame.minX < app.frame.minX {
+        // position only: asking isHittable of a button off screen throws ("activation point invalid")
+        for _ in 0..<6 where b.frame.maxX > app.frame.maxX - 2 || b.frame.minX < app.frame.minX + 2 {
             let left = b.frame.midX > app.frame.midX
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: b.frame.midY))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: left ? -160 : 160, dy: 0)))
