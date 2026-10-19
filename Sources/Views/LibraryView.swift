@@ -171,7 +171,7 @@ struct LibraryView: View {
             .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
             .sheet(isPresented: $showBatchExport) {
                 let list = selectedItems
-                ExportOptionsSheet(count: list.count, hdrAvailable: list.contains { store.settings(for: $0).hdr }) { o in
+                ExportOptionsSheet(count: list.count, hdrAvailable: list.contains { store.editorSettings(for: $0).hdr }) { o in
                     store.export(list, options: o)
                 }
             }

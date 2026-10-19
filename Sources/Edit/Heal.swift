@@ -37,10 +37,7 @@ extension EditSession {
     /// Whether this build has the Heal model. Only looks for the file: loading the model compiles it for the GPU,
     /// which takes many seconds the first time (the 1280 px one), and doing that on the main thread froze the app
     /// until iOS closed it (owner, 18 Oct, 0.1.248). Load it with `prepareHealModel()` off the main thread.
-    static var hasHealModel: Bool {
-        guard let url = healModelURL else { return false }
-        return FileManager.default.fileExists(atPath: url.path)
-    }
+    static var hasHealModel: Bool { modelFilesExist(healModelURL) }   // an empty stand-in folder (UI-test builds) has none
     /// Whether the model is loaded and ready (set once `prepareHealModel()` has finished).
     nonisolated(unsafe) static var healModelReady = false
     /// Loads (and on first launch compiles) the Heal model. Slow: call it in the background, early.
