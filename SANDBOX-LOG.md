@@ -211,3 +211,8 @@ Heal stays Pro and on the 800 px model. No Store code changed.
 ## 19 Oct 2026: Library thumbnails decoded once (from main #46, SideStore 0.1.333)
 Decoded thumbnails cached per photo and version, so a finished thumbnail no longer makes every cell re-read its JPEG.
 No Store code changed.
+
+## 19 Oct 2026: Undo history off the main thread, brush cache, Heal and bright glints (from main #51)
+Undo history read in the background when a photo opens; brush masks cached by a cheap key, newest version per brush;
+Heal scales by the square's 99.5 % brightness (a glint no longer darkens the model's input) and keeps brighter
+highlights outside the hole; export memory probes. No Store code changed.
