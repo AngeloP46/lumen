@@ -39,6 +39,8 @@ jobs:
           bash .github/ci/get-depth-model.sh Models
           bash .github/ci/get-seg-model.sh Models
           bash .github/ci/get-heal-model.sh Models
+          # AI Denoise: a compile check doesn't need the model; an empty stand-in keeps the project building
+          mkdir -p Models/Denoise.mlmodelc
 
       - name: Install XcodeGen
         run: bash .github/ci/install-xcodegen.sh
