@@ -2320,7 +2320,9 @@ if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil {
         if let session = EditSession(url: noisyURL), let noisy = session.decode(maxEdge: nil) {
             let t0 = now()
             var steps = 0.0
+            EditSession.denoiseForceStrips = true    // the strip path (big photos, little memory); the memory step reads whole
             let ok = session.makeDenoised { p in steps = p }
+            EditSession.denoiseForceStrips = false
             print("::notice::AI Denoise \(Int(e.width))x\(Int(e.height)): \(String(format: "%.1f", now() - t0)) s, progress reached \(steps)")
             check(ok && session.hasDenoised, "AI Denoise: makeDenoised failed")
             check(EditSession.denoiseTimings.contains(", 0 redone"), "AI Denoise: no tile should need redoing (\(EditSession.denoiseTimings))")
