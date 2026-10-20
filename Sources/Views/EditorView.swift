@@ -181,6 +181,29 @@ struct EditorView: View {
             vm.showOriginal = h && twoFinger == nil
             if !h { lastHoldEnd = Date() }
         }
+        // AI Denoise locks the editor while it cleans the photo: nothing else can be touched, so it's clear it is working
+        .overlay {
+            if let p = vm.denoiseProgress {
+                ZStack {
+                    Color.black.opacity(0.6).ignoresSafeArea()
+                    VStack(spacing: 14) {
+                        Image(systemName: "wand.and.sparkles").font(.system(size: 30))
+                        Text("AI Denoise").font(.headline)
+                        ProgressView(value: p).tint(.white).frame(width: 220)
+                        Text(p < 0.02 ? "Getting ready…" : "\(Int(p * 100))%" + (vm.denoiseSecondsLeft.map { " · about \($0) s left" } ?? ""))
+                            .font(.subheadline).monospacedDigit()
+                        Text("Keep Lumen open until it finishes.").font(.caption).foregroundStyle(.secondary)
+                        Button("Cancel", role: .cancel) { vm.cancelDenoise() }
+                            .buttonStyle(.bordered).accessibilityIdentifier("denoise-cancel")
+                    }
+                    .padding(24)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                    .foregroundStyle(.white)
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("denoise-busy")
+            }
+        }
         .sheet(isPresented: $showExportChoices) {
             ExportOptionsSheet(count: 1, hdrAvailable: vm.settings.hdr) { options in
 #if APP_STORE
@@ -611,22 +634,6 @@ struct EditorView: View {
                     .foregroundStyle(.white)
                     .padding(10)
                     .accessibilityIdentifier("clip-badge")
-                }
-            }
-            .overlay(alignment: .top) {
-                // AI Denoise is cleaning the photo (once per photo; tens of seconds for a big RAW)
-                if let p = vm.denoiseProgress, !chromeHidden {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small).tint(.white)
-                        Text("Removing noise… \(Int(p * 100))%").font(.caption.weight(.semibold)).monospacedDigit()
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .foregroundStyle(.white)
-                    .padding(.top, 56)
-                    .allowsHitTesting(false)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("denoise-busy")
                 }
             }
             .overlay {

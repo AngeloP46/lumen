@@ -195,13 +195,31 @@ struct DetailPanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var sel = "Texture"
     var body: some View {
+        VStack(spacing: 0) {
+            // AI Denoise is a one-off job (tens of seconds, the screen locks), not a slider you drag: a button until the
+            // photo has been cleaned, then a strength slider in the list (instant, it only mixes)
+            if EditSession.hasDenoiseModel && !vm.denoiseReady {
+                Button { vm.startDenoise() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wand.and.sparkles")
+                        Text("AI Denoise").font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text("Removes noise · about a minute").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 14).frame(height: 40)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12).padding(.top, 6)
+                .accessibilityIdentifier("btn-ai-denoise")
+            }
         ParamPanel(items: [
             vm.param("Texture", \.texture, section: "Effects"),
             vm.param("Clarity", \.clarity, section: "Effects"),
             vm.param("Dehaze", \.dehaze, section: "Effects"),
             vm.param("Sharpen", \.sharpness, range: 0...100, section: "Sharpening"),
             vm.param("Masking", \.sharpenMasking, range: 0...100, section: "Sharpening"),
-        ] + (EditSession.hasDenoiseModel ? [vm.param("AI Denoise", \.aiDenoise, range: 0...100, section: "Noise reduction")] : []) + [
+        ] + (EditSession.hasDenoiseModel && vm.denoiseReady ? [vm.param("AI Denoise", \.aiDenoise, range: 0...100, section: "Noise reduction")] : []) + [
             vm.param("Noise", \.noiseReduction, range: 0...100, section: "Noise reduction"),
             vm.param("Colour noise", \.colorNoise, range: 0...100, section: "Noise reduction"),
             vm.param("Vignette", \.vignette, section: "Vignette"),
@@ -213,6 +231,7 @@ struct DetailPanel: View {
             vm.param("Roughness", \.grainRoughness, range: 0...100, neutral: 50, section: "Grain"),
         ], selected: $sel,
            pageReset: { vm.settings.reset(.detail) }, pageResetEnabled: vm.settings.hasEdits(.detail))
+        }
     }
 }
 
