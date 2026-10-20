@@ -227,6 +227,28 @@ final class EditorViewModel: ObservableObject {
 
     /// 0...1 while the photo is being cleaned (Detail → AI Denoise), nil otherwise.
     @Published private(set) var denoiseProgress: Double?
+    /// The cleaned copy for this photo (and HDR mode) exists: Detail shows the strength slider instead of the button.
+    @Published private(set) var denoiseReady = false
+    /// Seconds left, estimated from the tiles done so far (nil until there is enough to go on).
+    @Published private(set) var denoiseSecondsLeft: Int?
+    /// The button was tapped: the photo is cleaned now and AI Denoise set to 100 when done.
+    private var denoiseRequested = false
+
+    /// Detail → AI Denoise button: cleans the photo (locked screen with progress), then turns AI Denoise on.
+    func startDenoise() {
+        denoiseRequested = true
+        ensureDenoise()
+    }
+
+    /// Cancel on the locked screen.
+    func cancelDenoise() {
+        denoiseRequested = false
+        denoiseUserCancelled = true
+        denoiseCancel = true
+    }
+    private var denoiseUserCancelled = false
+
+    private func refreshDenoiseReady() { denoiseReady = session?.hasDenoised ?? false }
     private var denoiseReload: DispatchWorkItem?
     private let denoiseQueue = DispatchQueue(label: "lumen.denoise", qos: .userInitiated)
     /// Set when the app leaves the screen: the running job stops at its next tile and starts again on return.
@@ -255,11 +277,17 @@ final class EditorViewModel: ObservableObject {
                 Task { @MainActor [weak self] in self?.ensureDenoise() }
             })
         }
-        guard denoiseProgress == nil, settings.effective.aiDenoise > 0, let session, !session.hasDenoised,
+        refreshDenoiseReady()
+        guard denoiseProgress == nil, settings.effective.aiDenoise > 0 || denoiseRequested, let session, !session.hasDenoised,
               EditSession.hasDenoiseModel, UIApplication.shared.applicationState != .background else { return }
         denoiseProgress = 0
+        denoiseSecondsLeft = nil
         denoiseCancel = false
+        denoiseUserCancelled = false
+        UIApplication.shared.isIdleTimerDisabled = true   // a long clean must not stop when the screen dims
         freeMemoryForHeal()
+        detailSource = nil
+        unhealedSource = nil
         Diagnostics.shared.note("denoise start")
         let began = Date()
         denoiseQueue.async {
@@ -271,19 +299,40 @@ final class EditorViewModel: ObservableObject {
                     noted = quarter
                     Diagnostics.shared.note("denoise \(quarter * 25)% after \(Int(Date().timeIntervalSince(began))) s")
                 }
-                Task { @MainActor [weak self] in if self?.denoiseProgress != nil { self?.denoiseProgress = p } }
+                let elapsed = Date().timeIntervalSince(began)
+                let left: Int? = p >= 0.08 ? Int((elapsed / p * (1 - p)).rounded()) : nil
+                Task { @MainActor [weak self] in
+                    guard let self, self.denoiseProgress != nil else { return }
+                    self.denoiseProgress = p
+                    self.denoiseSecondsLeft = left
+                }
             }, cancelled: { [weak self] in self?.denoiseCancel ?? true })
             let stopped = self.denoiseCancel
             EditSession.releaseDenoiseModel()
             LumenGPU.context.clearCaches()
-            Diagnostics.shared.note(ok ? "denoise done in \(Int(Date().timeIntervalSince(began))) s"
-                                    : stopped ? "denoise paused (app left the screen)" : "denoise failed")
+            Diagnostics.shared.note(ok ? "denoise done in \(Int(Date().timeIntervalSince(began))) s: \(EditSession.denoiseTimings)"
+                                    : stopped ? "denoise stopped (cancelled or the app left the screen)" : "denoise failed")
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.denoiseProgress = nil
+                self.denoiseSecondsLeft = nil
+                UIApplication.shared.isIdleTimerDisabled = false
+                self.refreshDenoiseReady()
                 guard self.session === session else { self.ensureDenoise(); return }
-                if ok { self.reloadSource() }
-                else if !stopped { self.message = "AI Denoise couldn't clean this photo." }
+                if ok {
+                    if self.denoiseRequested && self.settings.aiDenoise == 0 {
+                        self.denoiseRequested = false
+                        self.settings.aiDenoise = 100      // an undo step; decoding again follows from the change
+                    } else {
+                        self.denoiseRequested = false
+                        self.reloadSource()
+                    }
+                } else if !stopped {
+                    self.denoiseRequested = false
+                    self.message = "AI Denoise couldn't clean this photo."
+                } else if self.denoiseUserCancelled {
+                    self.denoiseRequested = false
+                }
             }
         }
     }
