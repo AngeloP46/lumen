@@ -171,13 +171,31 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
             out += "Version \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))\n"
             out += "\(Self.device), iOS \(UIDevice.current.systemVersion)\n"
             out += "Memory now: \(Self.footprintMB) MB used, \(Self.availableMB) MB left, peak this run \(peakMB) MB\n\n"
-            out += "== Memory log (newest last) ==\n"
+            // Only what's recent: the last three launches (the one sending this and the two before, so a run that
+            // iOS closed is in it) and the newest iOS reports from the past three days, written compactly.
+            // (20 Oct: a report carried two days of log and every saved iOS report.)
+            out += "== Memory log, last 3 launches (newest last) ==\n"
             if let log = try? String(contentsOf: logURL, encoding: .utf8) {
-                out += log.split(separator: "\n", omittingEmptySubsequences: false).suffix(600).joined(separator: "\n")
+                let lines = log.split(separator: "\n", omittingEmptySubsequences: false)
+                let launches = lines.indices.filter { lines[$0].contains("  launch ") }
+                let from = launches.count >= 3 ? launches[launches.count - 3] : lines.startIndex
+                out += lines[from...].suffix(400).joined(separator: "\n")
             }
-            for url in savedReports().sorted(by: { $0.lastPathComponent > $1.lastPathComponent }).prefix(8) {
+            let cutoff = Date().addingTimeInterval(-3 * 86_400).timeIntervalSince1970
+            let recent = savedReports()
+                .filter { (Double($0.deletingPathExtension().lastPathComponent.dropFirst("diagnostic-".count)) ?? 0) >= cutoff }
+                .sorted { $0.lastPathComponent > $1.lastPathComponent }
+                .prefix(3)
+            for url in recent {
                 out += "\n\n== \(url.lastPathComponent) ==\n"
-                if let s = try? String(contentsOf: url, encoding: .utf8) { out += s }
+                guard let data = try? Data(contentsOf: url) else { continue }
+                if let obj = try? JSONSerialization.jsonObject(with: data),
+                   let compact = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
+                   let s = String(data: compact, encoding: .utf8) {
+                    out += s
+                } else if let s = String(data: data, encoding: .utf8) {
+                    out += s
+                }
             }
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("Lumen-diagnostics.txt")
             do { try out.write(to: file, atomically: true, encoding: .utf8); return file } catch { return nil }

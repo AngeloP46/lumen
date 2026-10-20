@@ -9,19 +9,25 @@
 - App Store pricing, Free vs Pro, claims and the marketing plan: `MARKETING.md` on the sandbox branch (`Lumen-Sandbox\MARKETING.md`). Keep it out of main.
 
 ## AI Denoise (0.1.360, 20 Oct; owner asked for it)
-- Model: SCUNet colour real-noise (cszn/SCUNet, Apache-2.0). Weights pinned: HF `WAS/was-node-suite-weights` revision
-  dcc864ea…, SHA-256 fa78899b… (`.github/ci/denoise-convert/fetch.py`). Converted in CI to Core ML, float16, fixed
-  512 x 512 tiles (`build-denoise.sh`, cached with the other models; on failure an empty `Denoise.mlmodelc` keeps the
-  project building and the slider is hidden). `scunet.py` change: the shifted-window attention mask is built in NumPy
-  (Core ML can't convert the original's slice fills). NAFNet-SIDD was tested and lost (speckles at high ISO).
+- Model: **NAFNet-SIDD-width32** (megvii-research/NAFNet, MIT, real phone-camera noise), replacing SCUNet on 20 Oct:
+  on the owner's iPhone 17 Pro Max, SCUNet (0.1.371) never reached 25 % of a 24 MP photo in 60-100 s (> 2 s per tile,
+  4+ minutes in all) and iOS closed Lumen for memory. SCUNet cleans ~1 dB better; owner: one model, consistently good
+  and quick, target < 30 s. If the phone has lots of time to spare, NAFNet width 64 (~4x the work) is the step up.
+  Weights pinned: HF `WAS/was-node-suite-weights` revision dcc864ea…, `denoise/NAFNet-SIDD-width32.pth`, SHA-256
+  89c70e80… (`.github/ci/denoise-convert/fetch.py`; `nafnet.py` = the architecture with LayerNorm2d as plain ops).
+  Converted in CI to Core ML, float16, fixed 512 x 512 tiles (`build-denoise.sh`, cached; on failure an empty
+  `Denoise.mlmodelc` keeps the project building and the button is hidden).
 - WSL on the owner's PC crashes converting it (7 GB): don't retry locally; CI Macs swap and manage.
 - App (`Sources/Edit/Denoise.swift`): `makeDenoised` cleans the full-size camera decode (no heals) once, tiles keep a
-  32 px margin (no blending), runs on `.cpuAndNeuralEngine` (on the GPU the CI Mac ran out of memory at 24 MP), saves a
+  32 px margin (no blending), runs on `.cpuAndNeuralEngine` only (the GPU probe was dropped with SCUNet), saves a
   16-bit PNG + json per photo and HDR mode in Library/denoise (`DenoiseStore`, removed with the photo). Every decode
   mixes it in by `EditSettings.aiDenoise` (0...100) with `withDenoise`, keeping highlights above the cleaned range.
-  Export makes it if missing. Detail → Noise reduction → AI Denoise; progress capsule `denoise-busy`.
-- Measured on the CI Mac (no Neural Engine, CPU): ~6.8 s per tile; 24 MP ARW = 126 tiles, 668 s; memory +~190 MB.
-  Phone speed is not measured yet (Neural Engine should be far faster): check ⋯ → Send diagnostics after a first run.
+  Export makes it if missing. Detail → AI Denoise button; full-screen lock `denoise-busy` with progress, time left and
+  Cancel; the job stops if Lumen leaves the screen. The diagnostics log gets "denoise model loaded in N s" and
+  "denoise first tiles a / b / c s, N tiles in all" straight away, then 25 % steps and "denoise done in N s: …".
+- 24 MP ARW = 126 tiles. Phone speed of NAFNet not measured yet: read those lines in ⋯ → Send diagnostics.
+- Send diagnostics now holds only the last 3 launches of the log and the 3 newest iOS reports from the past 3 days,
+  as compact JSON (20 Oct: a report carried two days of log and every saved report).
 - Engine test: Gaussian noise std 0.04 on cat.jpg: error 0.039 → 0.011, edges 95 % kept, 50 % mixes between, 0 = off,
   files removed; sheet `denoise.jpg`. Memory test step "AI denoise". Sandbox: Pro (`usesProFeatures`).
 
