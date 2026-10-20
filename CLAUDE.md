@@ -33,6 +33,11 @@
   results still read. The model is let go of straight after a clean and in the background (0.1.394: kept while Detail
   was open, ~600 MB, and iOS closed Lumen on return to the screen). Detail: AI Denoise is a pill in the actions row
   (like Light's Auto), Reset on the right; first tap cleans, then it switches AI Denoise off / on.
+- 21 Oct (#70, owner's 48 MP ProRAW was closed by iOS at the start of a clean): the result is written to its file row
+  of tiles by row of tiles (never held whole) and the preview copy averaged from those rows; the photo is read whole
+  once when 4x its size is free (fastest; 24 MP = ~190 MB), else strip by strip from the RAW engine (diagnostics line
+  "denoise reads the photo whole / in strips", strip read times in "denoise done"). The engine test forces strips
+  (`denoiseForceStrips`); the memory step reads whole.
 - Every tile is checked against its input (finite, mean change < 0.1, < 0.5 % of samples off by > 0.3); a wrong one is
   redone on the CPU (`denoiseCPU`), else the photo's own pixels are kept. Diagnostics: "denoise model loaded in N s",
   "denoise first tiles a / b / c s", then "denoise done in N s: …, N redone on the CPU".

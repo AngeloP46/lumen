@@ -1,6 +1,7 @@
 import CoreImage
 import CoreML
 import Foundation
+import os
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -119,6 +120,16 @@ extension EditSession {
         cfg.computeUnits = .cpuOnly
         return try? MLModel(contentsOf: url, configuration: cfg)
     }
+    /// Tests: read the photo strip by strip even when there is memory to read it whole.
+    nonisolated(unsafe) static var denoiseForceStrips = false
+    /// Memory Lumen may still use before iOS closes it (MB); unlimited on the Mac.
+    static var availableMemoryMB: Int {
+        #if os(iOS)
+        return Int(os_proc_available_memory() / 1_048_576)
+        #else
+        return 1 << 20
+        #endif
+    }
     /// What the last clean measured (seconds), for the diagnostics log.
     nonisolated(unsafe) static var denoiseTimings = ""
     /// Only looks for the model's files (the Detail panel asks while drawing).
@@ -152,7 +163,8 @@ extension EditSession {
         guard step > 0, let p3 = CGColorSpace(name: CGColorSpace.displayP3) else { return false }
         Self.healProbe?("denoise: start")
 
-        // 1. the photo, decoded once into a half-float buffer, divided by its bright end (HDR highlights above 1)
+        // 1. the photo (not decoded yet: each row of tiles is decoded on its own below), divided by its bright end
+        // (HDR highlights above 1)
         guard let camera = decodeCameraLocked(maxEdge: nil) else { return false }
         let e = camera.extent
         let W = Int(e.width.rounded()), H = Int(e.height.rounded())
@@ -164,14 +176,43 @@ extension EditSession {
                 "inputRVector": CIVector(x: s, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: s, z: 0, w: 0),
                 "inputBVector": CIVector(x: 0, y: 0, z: s, w: 0)])
         }
-        guard let source = Self.materialized(scaled)?.clampedToExtent() else { return false }
-        ctx.clearCaches()
-        Self.healProbe?("denoise: photo decoded")
+        // Read the photo whole once (fastest) when there is plenty of memory for it, else strip by strip from the RAW
+        // engine (memory stays the same whatever the size; 21 Oct: a 48 MP ProRAW held whole was closed by iOS).
+        let wholeMB = W * H * 8 / 1_048_576
+        let whole = !Self.denoiseForceStrips && wholeMB * 4 < Self.availableMemoryMB
+        let source: CIImage
+        if whole, let buffer = Self.materialized(scaled) {
+            source = buffer.clampedToExtent()
+            ctx.clearCaches()
+        } else {
+            source = scaled.clampedToExtent()
+        }
+        log?("denoise reads the photo " + (whole ? "whole (\(wholeMB) MB)" : "in strips (\(wholeMB) MB whole, \(Self.availableMemoryMB) MB free)"))
 
-        // 2. tile by tile: each tile sees `margin` px of context, only its middle is kept (no seams to blend)
-        var out = [UInt16](repeating: 65535, count: W * H * 4)
+        // 2. row of tiles by row of tiles: the strip is decoded, cleaned tile by tile (each tile sees `margin` px of
+        // context, only its middle is kept: no seams to blend) and its rows are written straight to the file. Memory
+        // stays the same whatever the photo's size (owner's phone, 21 Oct: a 48 MP ProRAW held whole, in and out,
+        // was closed by iOS). The small preview copy is averaged from the rows as they go.
+        try? FileManager.default.createDirectory(at: DenoiseStore.directory, withIntermediateDirectories: true)
+        let stem = DenoiseStore.key(originalURL, hdr: hdrDecode) + "-" + UUID().uuidString.prefix(8)
+        let name = stem + ".rgba16", previewName = stem + "-preview.rgba16"
+        let file = DenoiseStore.directory.appendingPathComponent(name)
+        guard FileManager.default.createFile(atPath: file.path, contents: nil),
+              let handle = try? FileHandle(forWritingTo: file) else { return false }
+        var finished = false
+        defer {
+            try? handle.close()
+            if !finished { try? FileManager.default.removeItem(at: file) }
+        }
+        let k = min(1, Double(DenoiseStore.previewEdge) / Double(max(W, H)))
+        let pw = max(1, Int((Double(W) * k).rounded())), ph = max(1, Int((Double(H) * k).rounded()))
+        var acc = [Float](repeating: 0, count: pw * ph * 3), hits = [Float](repeating: 0, count: pw * ph)
+        let pxOf = (0..<W).map { min(pw - 1, Int(Double($0) * k)) }
+
         guard let input = try? MLMultiArray(shape: [1, 3, NSNumber(value: T), NSNumber(value: T)], dataType: .float16) else { return false }
-        var tile = [Float](repeating: 0, count: T * T * 4)
+        let SW = max(W, T)                                   // strip width (a photo narrower than a tile is padded)
+        var strip = [Float](repeating: 0, count: SW * T * 4) // RGBA float, top row first
+        var outStrip = [UInt16](repeating: 65535, count: W * T * 4)
         func starts(_ size: Int) -> [Int] {
             guard size > T else { return [0] }
             var s = Array(stride(from: 0, to: size - T, by: step))
@@ -182,27 +223,41 @@ extension EditSession {
         let total = Double(xs.count * ys.count)
         var done = 0.0
         let plane = T * T
-        var tileTimes: [Double] = []
+        var tileTimes: [Double] = [], stripTimes: [Double] = []
         var redone = 0
+        var rowsWritten = 0
         for ty in ys {
+            if cancelled?() == true { return false }
+            let ts = Date()
+            autoreleasepool {
+                // Core Image's y goes up: the strip whose top row is `ty`
+                strip.withUnsafeMutableBytes { buf in
+                    ctx.render(source, toBitmap: buf.baseAddress!, rowBytes: SW * 16,
+                               bounds: CGRect(x: 0, y: H - ty - T, width: SW, height: T), format: .RGBAf, colorSpace: p3)
+                }
+                ctx.clearCaches()
+            }
+            stripTimes.append(Date().timeIntervalSince(ts))
+            // rows of this strip still to write (the last strip can overlap the one before: it starts where that ended)
+            let y0 = rowsWritten - ty, y1 = ty + T >= H ? min(T, H - ty) : T - margin
             for tx in xs {
                 if cancelled?() == true { return false }
                 let ok: Bool = autoreleasepool {
-                    // Core Image's y goes up: the tile whose top row is `ty`
-                    let bounds = CGRect(x: tx, y: H - ty - T, width: T, height: T)
-                    tile.withUnsafeMutableBytes { buf in
-                        ctx.render(source, toBitmap: buf.baseAddress!, rowBytes: T * 16, bounds: bounds, format: .RGBAf, colorSpace: p3)
-                    }
                     let dst = input.dataPointer.bindMemory(to: Float16.self, capacity: 3 * plane)
-                    for i in 0..<plane {
-                        dst[i] = Float16(tile[i * 4])
-                        dst[plane + i] = Float16(tile[i * 4 + 1])
-                        dst[2 * plane + i] = Float16(tile[i * 4 + 2])
+                    for y in 0..<T {
+                        let row = (y * SW + tx) * 4, d = y * T
+                        for x in 0..<T {
+                            let i = row + x * 4
+                            dst[d + x] = Float16(strip[i])
+                            dst[plane + d + x] = Float16(strip[i + 1])
+                            dst[2 * plane + d + x] = Float16(strip[i + 2])
+                        }
                     }
+                    @inline(__always) func inputAt(_ x: Int, _ y: Int, _ c: Int) -> Float { strip[(y * SW + tx + x) * 4 + c] }
                     let tp = Date()
                     // keep the middle; at the photo's edges keep up to the edge
-                    let x0 = tx == 0 ? 0 : margin, y0 = ty == 0 ? 0 : margin
-                    let x1 = tx + T >= W ? min(T, W - tx) : T - margin, y1 = ty + T >= H ? min(T, H - ty) : T - margin
+                    let x0 = tx == 0 ? 0 : margin
+                    let x1 = tx + T >= W ? min(T, W - tx) : T - margin
                     func predict(_ m: MLModel) -> MLMultiArray? {
                         guard let features = try? MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(multiArray: input)]),
                               let result = try? m.prediction(from: features),
@@ -222,7 +277,7 @@ extension EditSession {
                                 for c in 0..<3 {
                                     let v = Float(src[c * st[1] + y * st[2] + x * st[3]])
                                     guard v.isFinite else { return false }
-                                    let d = abs(min(1, max(0, v)) - min(1, max(0, tile[(y * T + x) * 4 + c])))
+                                    let d = abs(min(1, max(0, v)) - min(1, max(0, inputAt(x, y, c))))
                                     diff += d
                                     if d > 0.3 { far += 1 }
                                     n += 1
@@ -238,26 +293,25 @@ extension EditSession {
                         if let cpu = Self.denoiseCPU.model, let o = predict(cpu), plausible(o) { output = o }
                         else { output = nil }
                     }
-                    guard let o = output else {
-                        // keep the photo's own pixels for this tile rather than a wrong one
-                        for y in y0..<y1 {
+                    if let o = output {
+                        let st = o.strides.map(\.intValue)
+                        let src = o.dataPointer.bindMemory(to: Float16.self, capacity: o.count)
+                        for y in max(0, y0)..<y1 {
+                            let row = y * W
                             for x in x0..<x1 {
-                                let o4 = ((ty + y) * W + tx + x) * 4
-                                for c in 0..<3 { out[o4 + c] = UInt16(max(0, min(1, tile[(y * T + x) * 4 + c])) * 65535 + 0.5) }
+                                let o4 = (row + tx + x) * 4
+                                for c in 0..<3 {
+                                    let v = Float(src[c * st[1] + y * st[2] + x * st[3]])
+                                    outStrip[o4 + c] = UInt16(max(0, min(1, v)) * 65535 + 0.5)
+                                }
                             }
                         }
-                        tileTimes.append(Date().timeIntervalSince(tp))
-                        return true
-                    }
-                    let st = o.strides.map(\.intValue)
-                    let src = o.dataPointer.bindMemory(to: Float16.self, capacity: o.count)
-                    for y in y0..<y1 {
-                        let row = (ty + y) * W
-                        for x in x0..<x1 {
-                            let o4 = (row + tx + x) * 4
-                            for c in 0..<3 {
-                                let v = Float(src[c * st[1] + y * st[2] + x * st[3]])
-                                out[o4 + c] = UInt16(max(0, min(1, v)) * 65535 + 0.5)
+                    } else {
+                        // keep the photo's own pixels for this tile rather than a wrong one
+                        for y in max(0, y0)..<y1 {
+                            for x in x0..<x1 {
+                                let o4 = (y * W + tx + x) * 4
+                                for c in 0..<3 { outStrip[o4 + c] = UInt16(max(0, min(1, inputAt(x, y, c))) * 65535 + 0.5) }
                             }
                         }
                     }
@@ -267,49 +321,57 @@ extension EditSession {
                 guard ok else { log?("denoise: tile \(Int(done) + 1) of \(Int(total)) failed"); return false }
                 done += 1
                 if tileTimes.count == 3 {
-                    log?(String(format: "denoise first tiles %.2f / %.2f / %.2f s, %d tiles in all",
-                                tileTimes[0], tileTimes[1], tileTimes[2], Int(total)))
+                    log?(String(format: "denoise first tiles %.2f / %.2f / %.2f s, %d tiles in all, first strip decoded in %.2f s",
+                                tileTimes[0], tileTimes[1], tileTimes[2], Int(total), stripTimes.first ?? 0))
                 }
                 progress?(done / total)
             }
-        }
-        Self.healProbe?("denoise: tiles done")
-        let sorted = tileTimes.sorted()
-        Self.denoiseTimings = String(format: "load %.1f s, %d tiles, median %.2f s/tile, first %.1f s, %d redone on the CPU",
-                                     loadSeconds, tileTimes.count, sorted.isEmpty ? 0 : sorted[sorted.count / 2],
-                                     tileTimes.first ?? 0, redone)
-
-        // 3. keep it: raw 16-bit RGBA in the model's space (read back memory-mapped, no decoding), with the scale to
-        // undo, plus a small copy for the preview and thumbnails
-        try? FileManager.default.createDirectory(at: DenoiseStore.directory, withIntermediateDirectories: true)
-        let stem = DenoiseStore.key(originalURL, hdr: hdrDecode) + "-" + UUID().uuidString.prefix(8)
-        let name = stem + ".rgba16", previewName = stem + "-preview.rgba16"
-        let file = DenoiseStore.directory.appendingPathComponent(name)
-        let k = min(1, CGFloat(DenoiseStore.previewEdge) / CGFloat(max(W, H)))
-        let pw = max(1, Int((CGFloat(W) * k).rounded())), ph = max(1, Int((CGFloat(H) * k).rounded()))
-        var small = [UInt16](repeating: 65535, count: pw * ph * 4)
-        let written: Bool = out.withUnsafeMutableBytes { buf in
-            let data = Data(bytesNoCopy: buf.baseAddress!, count: buf.count, deallocator: .none)
-            guard (try? data.write(to: file)) != nil else { return false }
-            let full = CIImage(bitmapData: data, bytesPerRow: W * 8, size: CGSize(width: W, height: H), format: .RGBA16, colorSpace: p3)
-            let scaled = k < 1 ? full.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0]) : full
-            small.withUnsafeMutableBytes { sb in
-                ctx.render(scaled, toBitmap: sb.baseAddress!, rowBytes: pw * 8, bounds: CGRect(x: 0, y: 0, width: pw, height: ph),
-                           format: .RGBA16, colorSpace: p3)
+            // this strip's finished rows go to the file and into the preview
+            let first = max(0, y0)
+            guard y1 > first else { continue }
+            let wrote: Bool = outStrip.withUnsafeBytes { raw in
+                let bytes = raw.baseAddress!.advanced(by: first * W * 8)
+                return (try? handle.write(contentsOf: Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: bytes),
+                                                           count: (y1 - first) * W * 8, deallocator: .none))) != nil
             }
-            ctx.clearCaches()
-            return true
+            guard wrote else { log?("denoise: couldn't write the result (storage full?)"); return false }
+            for y in first..<y1 {
+                let py = min(ph - 1, Int(Double(ty + y) * k)), row = y * W
+                for x in 0..<W {
+                    let o4 = (row + x) * 4, a = py * pw + pxOf[x]
+                    acc[a * 3] += Float(outStrip[o4]); acc[a * 3 + 1] += Float(outStrip[o4 + 1]); acc[a * 3 + 2] += Float(outStrip[o4 + 2])
+                    hits[a] += 1
+                }
+            }
+            rowsWritten = ty + y1
+        }
+        guard rowsWritten == H else { log?("denoise: \(rowsWritten) of \(H) rows written"); return false }
+        Self.healProbe?("denoise: tiles done")
+        let sorted = tileTimes.sorted(), strips = stripTimes.sorted()
+        Self.denoiseTimings = String(format: "load %.1f s, %d tiles, median %.2f s/tile, first %.1f s, %d redone on the CPU, %d strips decoded in %.1f s (median %.2f s)",
+                                     loadSeconds, tileTimes.count, sorted.isEmpty ? 0 : sorted[sorted.count / 2],
+                                     tileTimes.first ?? 0, redone, strips.count, strips.reduce(0, +), strips.isEmpty ? 0 : strips[strips.count / 2])
+
+        // 3. keep it: the raw 16-bit RGBA file (read back memory-mapped, no decoding) in the model's space, with the
+        // scale to undo, plus the small copy for the preview and thumbnails
+        var small = [UInt16](repeating: 65535, count: pw * ph * 4)
+        for i in 0..<(pw * ph) where hits[i] > 0 {
+            for c in 0..<3 { small[i * 4 + c] = UInt16(min(65535, (acc[i * 3 + c] / hits[i]).rounded())) }
         }
         let previewURL = DenoiseStore.directory.appendingPathComponent(previewName)
         let previewWritten = small.withUnsafeBytes { (try? Data($0).write(to: previewURL)) != nil }
-        guard written else { try? FileManager.default.removeItem(at: file); return false }
+        try? handle.synchronize()
         // the previous copy for this photo and mode (an older model) is replaced
         DenoiseStore.removeOne(originalURL, hdr: hdrDecode)
         let info = DenoiseStore.Info(model: DenoiseStore.modelVersion, scale: scale, width: W, height: H, file: name,
                                      preview: previewWritten ? previewName : nil,
                                      previewWidth: previewWritten ? pw : nil, previewHeight: previewWritten ? ph : nil)
         guard let data = try? JSONEncoder().encode(info),
-              (try? data.write(to: DenoiseStore.infoURL(originalURL, hdr: hdrDecode), options: .atomic)) != nil else { return false }
+              (try? data.write(to: DenoiseStore.infoURL(originalURL, hdr: hdrDecode), options: .atomic)) != nil else {
+            try? FileManager.default.removeItem(at: previewURL)
+            return false
+        }
+        finished = true
         Self.healProbe?("denoise: saved")
         return true
     }
