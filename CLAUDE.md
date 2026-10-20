@@ -87,6 +87,11 @@
   (`apply(..., masks: true)`); pasted masks go through `[Mask].forAnotherPhoto` (AI parts are worked out again on
   each photo, a tapped subject point becomes that photo's detected subject; brushes and gradients stay put), the
   photo's own Lens Blur focus mask is kept; editor Paste some does the same. Thumbnails work out AI masks too.
+- **Design pass (21 Oct, from the full suite's screenshots)**: every tool's actions are `PillButton`s with the
+  page-wide reset on the right. Changed: Lens Blur's "Refine with brush" / "Reset" text links -> pills (its focus,
+  depth bar and Near/Far stay its own: owner); Heal's Remove people / Delete this fix / Clear all (N) -> pills, Clear
+  all on the right; Curve gets a visible Reset pill (`curve-reset`) beside its presets menu. Already consistent:
+  Light, Color, Colour mix, Detail, Crop, Transform, Masks, Presets.
 - Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
   peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
   iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.

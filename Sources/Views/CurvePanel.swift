@@ -32,6 +32,10 @@ struct CurvePanel: View {
                     .accessibilityAddTraits(channel == c ? .isSelected : [])
                 }
                 Spacer(minLength: 4)
+                PillButton(title: "Reset", system: "arrow.counterclockwise") { vm.settings.curves = ToneCurves() }
+                    .opacity(vm.settings.curves == ToneCurves() ? 0.45 : 1)
+                    .disabled(vm.settings.curves == ToneCurves())
+                    .accessibilityIdentifier("curve-reset")
                 Menu {
                     Button("Medium contrast") { set([(0, 0), (0.25, 0.21), (0.75, 0.8), (1, 1)]) }
                     Button("Strong contrast") { set([(0, 0), (0.25, 0.17), (0.75, 0.85), (1, 1)]) }

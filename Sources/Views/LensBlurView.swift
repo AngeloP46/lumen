@@ -70,8 +70,10 @@ struct LensBlurPanel: View {
                                    lowFeather: depthValue(\.lumLowFeather), highFeather: depthValue(\.lumHighFeather),
                                    histogram: vm.depthField?.histogram, depth: true, onActive: { vm.lensSliderActive = $0 })
                         .disabled(vm.depthField == nil)
-                    HStack {
-                        Button("Refine with brush", action: refine).accessibilityIdentifier("lens-blur-refine")
+                    // the same pill row as every tool's actions (design pass, 21 Oct: these were blue text links)
+                    HStack(spacing: 6) {
+                        PillButton(title: "Refine with brush", system: "paintbrush", action: refine)
+                            .accessibilityIdentifier("lens-blur-refine")
                             .disabled(vm.depthField == nil)
                         Spacer()
                         // preference, not an everyday control: shows red over the background while a slider moves
@@ -83,8 +85,11 @@ struct LensBlurPanel: View {
                         .accessibilityIdentifier("lens-blur-preview")
                         .accessibilityLabel("Show background in red while sliding")
                         .accessibilityValue(vm.lensPreviewEnabled ? "1" : "0")
-                        Button("Reset") { vm.settings.reset(.lensBlur); vm.lensBlurPicking = false; vm.lensSelectionPreview = false }
-                            .accessibilityIdentifier("lens-blur-reset")
+                        PillButton(title: "Reset", system: "arrow.counterclockwise") {
+                            vm.settings.reset(.lensBlur); vm.lensBlurPicking = false; vm.lensSelectionPreview = false
+                        }
+                        .opacity(vm.settings.hasEdits(.lensBlur) ? 1 : 0.45)
+                        .accessibilityIdentifier("lens-blur-reset")
                     }.font(.system(size: 13, weight: .medium)).frame(minHeight: 44)
                     if vm.settings.lensBlur.subjectPoint == nil && vm.lensFocusMessage == nil && !vm.lensBlurPicking {
                         Text("Select the subject to keep sharp, then set where the blur starts.")
