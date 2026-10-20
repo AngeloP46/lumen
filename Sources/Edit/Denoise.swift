@@ -24,7 +24,13 @@ enum DenoiseStore {
         var width: Int
         var height: Int
         var file: String
+        /// A copy at most `previewEdge` px long for the preview, thumbnails and the unhealed view (20 Oct: every
+        /// decode read the whole 24 MP file, ~400 MB at a time, and opening a cleaned photo was slow).
+        var preview: String? = nil
+        var previewWidth: Int? = nil
+        var previewHeight: Int? = nil
     }
+    static let previewEdge = 2560
 
     static func key(_ photo: URL, hdr: Bool) -> String { photo.deletingPathExtension().lastPathComponent + (hdr ? "-hdr" : "-sdr") }
     static func infoURL(_ photo: URL, hdr: Bool) -> URL { directory.appendingPathComponent(key(photo, hdr: hdr) + ".json") }
@@ -37,10 +43,26 @@ enum DenoiseStore {
         return i
     }
 
-    /// The cleaned photo in the working space (linear), at full size; nil when it hasn't been made yet.
-    static func image(_ photo: URL, hdr: Bool, size: CGSize) -> CIImage? {
-        guard let i = info(photo, hdr: hdr, size: size),
-              let img = CIImage(contentsOf: directory.appendingPathComponent(i.file)) else { return nil }
+    /// The cleaned photo in the working space (linear); nil when it hasn't been made yet. `maxEdge` = the size the
+    /// caller needs: the small copy is used when it is big enough. Files are raw 16-bit RGBA, read memory-mapped (no
+    /// decoding; iOS can drop the pages again); results made before 21 Oct are 16-bit PNGs and still read.
+    static func image(_ photo: URL, hdr: Bool, size: CGSize, maxEdge: CGFloat? = nil) -> CIImage? {
+        guard let i = info(photo, hdr: hdr, size: size) else { return nil }
+        var file = i.file, w = i.width, h = i.height
+        if let maxEdge, let p = i.preview, let pw = i.previewWidth, let ph = i.previewHeight, maxEdge <= CGFloat(max(pw, ph)) + 1,
+           FileManager.default.fileExists(atPath: directory.appendingPathComponent(p).path) {
+            file = p; w = pw; h = ph
+        }
+        let url = directory.appendingPathComponent(file)
+        let loaded: CIImage?
+        if url.pathExtension == "rgba16" {
+            guard let data = try? Data(contentsOf: url, options: .alwaysMapped), data.count == w * h * 8,
+                  let p3 = CGColorSpace(name: CGColorSpace.displayP3) else { return nil }
+            loaded = CIImage(bitmapData: data, bytesPerRow: w * 8, size: CGSize(width: w, height: h), format: .RGBA16, colorSpace: p3)
+        } else {
+            loaded = CIImage(contentsOf: url)
+        }
+        guard let img = loaded else { return nil }
         guard i.scale > 1.0001 else { return img }
         let s = CGFloat(i.scale)
         return img.applyingFilter("CIColorMatrix", parameters: [
@@ -54,6 +76,7 @@ enum DenoiseStore {
             let infoFile = infoURL(photo, hdr: hdr)
             if let data = try? Data(contentsOf: infoFile), let i = try? JSONDecoder().decode(Info.self, from: data) {
                 try? FileManager.default.removeItem(at: directory.appendingPathComponent(i.file))
+                if let p = i.preview { try? FileManager.default.removeItem(at: directory.appendingPathComponent(p)) }
             }
             try? FileManager.default.removeItem(at: infoFile)
         }
@@ -123,7 +146,9 @@ extension EditSession {
               let shape = model.modelDescription.inputDescriptionsByName["image"]?.multiArrayConstraint?.shape,
               shape.count == 4 else { return false }
         let T = shape[3].intValue
-        let margin = 32, step = T - 2 * margin
+        // 16 px of context each side (was 32; 20 Oct, whole photo in PyTorch: 60 dB from the 32 px result, no step at any
+        // tile boundary): 117 tiles for 24 MP instead of 126
+        let margin = 16, step = T - 2 * margin
         guard step > 0, let p3 = CGColorSpace(name: CGColorSpace.displayP3) else { return false }
         Self.healProbe?("denoise: start")
 
@@ -254,23 +279,35 @@ extension EditSession {
                                      loadSeconds, tileTimes.count, sorted.isEmpty ? 0 : sorted[sorted.count / 2],
                                      tileTimes.first ?? 0, redone)
 
-        // 3. keep it: 16-bit PNG (lossless) in the model's space, with the scale to undo
+        // 3. keep it: raw 16-bit RGBA in the model's space (read back memory-mapped, no decoding), with the scale to
+        // undo, plus a small copy for the preview and thumbnails
         try? FileManager.default.createDirectory(at: DenoiseStore.directory, withIntermediateDirectories: true)
-        let name = DenoiseStore.key(originalURL, hdr: hdrDecode) + "-" + UUID().uuidString.prefix(8) + ".png"
+        let stem = DenoiseStore.key(originalURL, hdr: hdrDecode) + "-" + UUID().uuidString.prefix(8)
+        let name = stem + ".rgba16", previewName = stem + "-preview.rgba16"
         let file = DenoiseStore.directory.appendingPathComponent(name)
+        let k = min(1, CGFloat(DenoiseStore.previewEdge) / CGFloat(max(W, H)))
+        let pw = max(1, Int((CGFloat(W) * k).rounded())), ph = max(1, Int((CGFloat(H) * k).rounded()))
+        var small = [UInt16](repeating: 65535, count: pw * ph * 4)
         let written: Bool = out.withUnsafeMutableBytes { buf in
-            guard let provider = CGDataProvider(data: Data(bytesNoCopy: buf.baseAddress!, count: buf.count, deallocator: .none) as CFData),
-                  let cg = CGImage(width: W, height: H, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: W * 8, space: p3,
-                                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
-                                   provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
-                  let dest = CGImageDestinationCreateWithURL(file as CFURL, UTType.png.identifier as CFString, 1, nil) else { return false }
-            CGImageDestinationAddImage(dest, cg, nil)
-            return CGImageDestinationFinalize(dest)
+            let data = Data(bytesNoCopy: buf.baseAddress!, count: buf.count, deallocator: .none)
+            guard (try? data.write(to: file)) != nil else { return false }
+            let full = CIImage(bitmapData: data, bytesPerRow: W * 8, size: CGSize(width: W, height: H), format: .RGBA16, colorSpace: p3)
+            let scaled = k < 1 ? full.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0]) : full
+            small.withUnsafeMutableBytes { sb in
+                ctx.render(scaled, toBitmap: sb.baseAddress!, rowBytes: pw * 8, bounds: CGRect(x: 0, y: 0, width: pw, height: ph),
+                           format: .RGBA16, colorSpace: p3)
+            }
+            ctx.clearCaches()
+            return true
         }
+        let previewURL = DenoiseStore.directory.appendingPathComponent(previewName)
+        let previewWritten = small.withUnsafeBytes { (try? Data($0).write(to: previewURL)) != nil }
         guard written else { try? FileManager.default.removeItem(at: file); return false }
         // the previous copy for this photo and mode (an older model) is replaced
         DenoiseStore.removeOne(originalURL, hdr: hdrDecode)
-        let info = DenoiseStore.Info(model: DenoiseStore.modelVersion, scale: scale, width: W, height: H, file: name)
+        let info = DenoiseStore.Info(model: DenoiseStore.modelVersion, scale: scale, width: W, height: H, file: name,
+                                     preview: previewWritten ? previewName : nil,
+                                     previewWidth: previewWritten ? pw : nil, previewHeight: previewWritten ? ph : nil)
         guard let data = try? JSONEncoder().encode(info),
               (try? data.write(to: DenoiseStore.infoURL(originalURL, hdr: hdrDecode), options: .atomic)) != nil else { return false }
         Self.healProbe?("denoise: saved")
@@ -297,7 +334,8 @@ extension EditSession {
     /// the photo's own.
     func withDenoise(_ decoded: CIImage, amount: Double) -> CIImage {
         guard amount > 0.001, let info = DenoiseStore.info(originalURL, hdr: hdrDecode, size: nativeSize),
-              var den = DenoiseStore.image(originalURL, hdr: hdrDecode, size: nativeSize) else { return decoded }
+              var den = DenoiseStore.image(originalURL, hdr: hdrDecode, size: nativeSize,
+                                           maxEdge: max(decoded.extent.width, decoded.extent.height)) else { return decoded }
         let e = decoded.extent, d = den.extent
         if abs(d.width - e.width) > 0.5 || abs(d.height - e.height) > 0.5 {
             den = den.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: e.width / d.width, kCIInputAspectRatioKey: 1.0])
@@ -317,6 +355,7 @@ extension DenoiseStore {
         let infoFile = infoURL(photo, hdr: hdr)
         if let data = try? Data(contentsOf: infoFile), let i = try? JSONDecoder().decode(Info.self, from: data) {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(i.file))
+                if let p = i.preview { try? FileManager.default.removeItem(at: directory.appendingPathComponent(p)) }
         }
         try? FileManager.default.removeItem(at: infoFile)
     }

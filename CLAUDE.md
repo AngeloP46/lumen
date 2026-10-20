@@ -27,6 +27,12 @@
 - **Measured 0.1.394 (owner, 20 Oct): 57 s for 24 MP** (median 0.42 s/tile, first tile 0.4 s after Detail's warm-up
   of 2.7 s, peak 1.9 GB, no memory warnings, 0 tiles redone). Owner: "results were very good". Next idea to try:
   1024 px tiles (overlap work 31 % -> 14 %, estimate ~45 s; check memory).
+- 21 Oct (#68): tiles keep 16 px of context (was 32; whole photo 60 dB from it, no step at any boundary): 117 tiles for
+  24 MP. Results are raw 16-bit RGBA (`.rgba16`, read memory-mapped, no decode) plus a 2560 px copy that previews,
+  thumbnails and the unhealed view use (before, every decode read the whole 24 MP PNG, ~400 MB spikes); old PNG
+  results still read. The model is let go of straight after a clean and in the background (0.1.394: kept while Detail
+  was open, ~600 MB, and iOS closed Lumen on return to the screen). Detail: AI Denoise is a pill in the actions row
+  (like Light's Auto), Reset on the right; first tap cleans, then it switches AI Denoise off / on.
 - Every tile is checked against its input (finite, mean change < 0.1, < 0.5 % of samples off by > 0.3); a wrong one is
   redone on the CPU (`denoiseCPU`), else the photo's own pixels are kept. Diagnostics: "denoise model loaded in N s",
   "denoise first tiles a / b / c s", then "denoise done in N s: …, N redone on the CPU".

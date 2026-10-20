@@ -217,6 +217,7 @@ final class EditorViewModel: ObservableObject {
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()
                 self.ensureDenoise()
+                self.warmDenoiseIfNeeded()
                 self.refreshUnhealed()
                 // HDR was switched while the photo was still loading: decode it again the other way
                 if self.settings.hdr != wantsHDR { self.reloadSource() }
@@ -273,9 +274,17 @@ final class EditorViewModel: ObservableObject {
             let nc = NotificationCenter.default
             denoiseObservers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 self?.denoiseCancel = true
+                // nothing of AI Denoise stays loaded in the background; Detail makes it ready again on return
+                Task { @MainActor [weak self] in
+                    guard let self, self.denoiseProgress == nil else { return }
+                    self.denoiseQueue.async { EditSession.releaseDenoiseModel() }
+                }
             })
             denoiseObservers.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.ensureDenoise() }
+                Task { @MainActor [weak self] in
+                    self?.ensureDenoise()
+                    if let self, self.detailOpen { self.warmDenoiseIfNeeded() }
+                }
             })
         }
         refreshDenoiseReady()
@@ -313,9 +322,10 @@ final class EditorViewModel: ObservableObject {
             Diagnostics.shared.note(ok ? "denoise done in \(Int(Date().timeIntervalSince(began))) s: \(EditSession.denoiseTimings)"
                                     : stopped ? "denoise stopped (cancelled or the app left the screen)" : "denoise failed")
             Task { @MainActor [weak self] in
-                guard let self else { EditSession.releaseDenoiseModel(); return }
-                // kept while Detail is open (the next photo starts at once), let go of otherwise
-                if !self.detailOpen { EditSession.releaseDenoiseModel() }
+                // the model is let go of straight after a clean (owner's phone, 0.1.394: keeping it while Detail was
+                // open held ~600 MB, and iOS closed Lumen when it came back to the screen)
+                EditSession.releaseDenoiseModel()
+                guard let self else { return }
                 self.denoiseProgress = nil
                 self.denoiseSecondsLeft = nil
                 UIApplication.shared.isIdleTimerDisabled = false
@@ -339,31 +349,40 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
-    /// Detail is the open tool: the model is made ready in the background (load + GPU setup, ~20 s the first time on
-    /// the owner's phone), so tapping AI Denoise starts cleaning at once. Let go of 30 s after leaving Detail.
+    /// Detail is the open tool and the photo isn't cleaned yet: the model is made ready in the background (load + GPU
+    /// setup, ~20 s the first time on the owner's phone), so tapping AI Denoise starts cleaning at once. Let go of 30 s
+    /// after leaving Detail, straight after a clean, in the background and on a memory warning.
     private(set) var detailOpen = false
     private var denoiseRelease: Task<Void, Never>?
     private var denoiseWarming = false
     func detailToolChanged(open: Bool, now: Bool = false) {
         detailOpen = open
         denoiseRelease?.cancel(); denoiseRelease = nil
-        if open {
-            refreshDenoiseReady()
-            guard !denoiseReady, !denoiseWarming, denoiseProgress == nil, EditSession.hasDenoiseModel,
-                  Diagnostics.availableMB > 1500 else { return }
-            denoiseWarming = true
-            denoiseQueue.async {
-                let s = EditSession.warmDenoise()
-                if s > 0.5 { Diagnostics.shared.note(String(format: "denoise model made ready in %.1f s (Detail open)", s)) }
-                Task { @MainActor [weak self] in self?.denoiseWarming = false }
-            }
-            return
-        }
+        if open { warmDenoiseIfNeeded(); return }
         denoiseRelease = Task { @MainActor [weak self] in
             if !now { try? await Task.sleep(nanoseconds: 30_000_000_000) }
             guard !Task.isCancelled, let self, !self.detailOpen, self.denoiseProgress == nil else { return }
             self.denoiseQueue.async { EditSession.releaseDenoiseModel() }
         }
+    }
+
+    private func warmDenoiseIfNeeded() {
+        refreshDenoiseReady()
+        guard detailOpen, !denoiseReady, !denoiseWarming, denoiseProgress == nil, EditSession.hasDenoiseModel,
+              Diagnostics.availableMB > 1500, UIApplication.shared.applicationState != .background else { return }
+        denoiseWarming = true
+        denoiseQueue.async {
+            let s = EditSession.warmDenoise()
+            if s > 0.5 { Diagnostics.shared.note(String(format: "denoise model made ready in %.1f s (Detail open)", s)) }
+            Task { @MainActor [weak self] in self?.denoiseWarming = false }
+        }
+    }
+
+    /// Detail's AI Denoise pill: cleans the photo the first time; afterwards switches AI Denoise between off and full
+    /// (instant, the cleaned copy is kept), like Light's Auto.
+    func toggleDenoise() {
+        if !denoiseReady { startDenoise(); return }
+        settings.aiDenoise = settings.aiDenoise > 0 ? 0 : 100
     }
 
     /// The heals the current preview source was decoded with.
