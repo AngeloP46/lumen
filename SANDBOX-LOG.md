@@ -248,3 +248,7 @@ pill in the actions row with Reset on the right. Still Pro (aiDenoise > 0). No S
 ## 21 Oct 2026: AI Denoise on big photos (from main #70, SideStore 0.1.405)
 Result written strip by strip; photo read whole only when memory allows, else in strips (48 MP ProRAW closed Lumen).
 Still Pro. No Store code changed.
+
+## 21 Oct 2026: crash report, memory after AI Denoise (from main #72, SideStore 0.1.414)
+Send diagnostics: short crash report first after a crash (last 3 closures, step before each), compact full report.
+AI Denoise reads through its own decoder; 4096 px small copy; photo-open steps logged. No Store code changed.
