@@ -229,6 +229,9 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var denoiseProgress: Double?
     private var denoiseReload: DispatchWorkItem?
     private let denoiseQueue = DispatchQueue(label: "lumen.denoise", qos: .userInitiated)
+    /// Set when the app leaves the screen: the running job stops at its next tile and starts again on return.
+    nonisolated(unsafe) private var denoiseCancel = false
+    private var denoiseObservers: [NSObjectProtocol] = []
 
     /// The slider moved: the first time the photo is cleaned (tens of seconds, with progress); after that only the mix
     /// changes, so the photo is decoded again once the slider rests.
@@ -243,23 +246,44 @@ final class EditorViewModel: ObservableObject {
 
     /// Starts cleaning the photo if AI Denoise is on and the cleaned copy for this HDR mode doesn't exist yet.
     func ensureDenoise() {
+        if denoiseObservers.isEmpty {
+            let nc = NotificationCenter.default
+            denoiseObservers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.denoiseCancel = true
+            })
+            denoiseObservers.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.ensureDenoise() }
+            })
+        }
         guard denoiseProgress == nil, settings.effective.aiDenoise > 0, let session, !session.hasDenoised,
-              EditSession.hasDenoiseModel else { return }
+              EditSession.hasDenoiseModel, UIApplication.shared.applicationState != .background else { return }
         denoiseProgress = 0
+        denoiseCancel = false
         freeMemoryForHeal()
         Diagnostics.shared.note("denoise start")
+        let began = Date()
         denoiseQueue.async {
-            let ok = session.makeDenoised { p in
+            var noted = 0
+            let ok = session.makeDenoised(progress: { p in
+                // the phone's real speed, for ⋯ → Send diagnostics
+                let quarter = Int(p * 4)
+                if quarter > noted, quarter < 4 {
+                    noted = quarter
+                    Diagnostics.shared.note("denoise \(quarter * 25)% after \(Int(Date().timeIntervalSince(began))) s")
+                }
                 Task { @MainActor [weak self] in if self?.denoiseProgress != nil { self?.denoiseProgress = p } }
-            }
+            }, cancelled: { [weak self] in self?.denoiseCancel ?? true })
+            let stopped = self.denoiseCancel
             EditSession.releaseDenoiseModel()
             LumenGPU.context.clearCaches()
-            Diagnostics.shared.note(ok ? "denoise done" : "denoise failed")
+            Diagnostics.shared.note(ok ? "denoise done in \(Int(Date().timeIntervalSince(began))) s"
+                                    : stopped ? "denoise paused (app left the screen)" : "denoise failed")
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.denoiseProgress = nil
                 guard self.session === session else { self.ensureDenoise(); return }
-                if ok { self.reloadSource() } else { self.message = "AI Denoise couldn't clean this photo." }
+                if ok { self.reloadSource() }
+                else if !stopped { self.message = "AI Denoise couldn't clean this photo." }
             }
         }
     }
@@ -471,7 +495,8 @@ final class EditorViewModel: ObservableObject {
     private var detailSkipNoted = false
 
     private func buildDetail() {
-        guard let session, let source, !detailBuilding else { return }
+        // not while AI Denoise is cleaning the full-size photo: both together are too much memory (diagnostics 20 Oct)
+        guard let session, let source, !detailBuilding, denoiseProgress == nil else { return }
         let native = max(session.nativeSize.width, session.nativeSize.height)
         // 4096 (was 6000): a 24 MP full-size source plus its layers pushed Lumen past iOS's 3.4 GB per-app limit
         // while zoomed in (owner's JetsamEvent, 18 Oct: killed at 3388 MB, per-process-limit).

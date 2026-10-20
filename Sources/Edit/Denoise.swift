@@ -83,7 +83,9 @@ extension EditSession {
 
     /// Cleans the full-size photo (as the camera made it, without heals) and keeps it on disk. Slow (seconds to tens of
     /// seconds): call off the main thread. `progress` gets 0...1 as tiles finish. Returns false if it couldn't be made.
-    func makeDenoised(progress: ((Double) -> Void)? = nil) -> Bool {
+    /// `cancelled` is asked before every tile: the app leaving the screen stops the job (iOS doesn't allow GPU work in
+    /// the background; owner's diagnostics 20 Oct: a job left running was killed on return at 2.7 GB).
+    func makeDenoised(progress: ((Double) -> Void)? = nil, cancelled: (() -> Bool)? = nil) -> Bool {
         if hasDenoised { return true }
         guard let model = Self.denoiseStore.model,
               let shape = model.modelDescription.inputDescriptionsByName["image"]?.multiArrayConstraint?.shape,
@@ -125,6 +127,7 @@ extension EditSession {
         let plane = T * T
         for ty in ys {
             for tx in xs {
+                if cancelled?() == true { return false }
                 let ok: Bool = autoreleasepool {
                     // Core Image's y goes up: the tile whose top row is `ty`
                     let bounds = CGRect(x: tx, y: H - ty - T, width: T, height: T)
