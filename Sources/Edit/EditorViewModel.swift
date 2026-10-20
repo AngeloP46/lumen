@@ -306,7 +306,7 @@ final class EditorViewModel: ObservableObject {
                     self.denoiseProgress = p
                     self.denoiseSecondsLeft = left
                 }
-            }, cancelled: { [weak self] in self?.denoiseCancel ?? true })
+            }, cancelled: { [weak self] in self?.denoiseCancel ?? true }, log: { Diagnostics.shared.note($0) })
             let stopped = self.denoiseCancel
             EditSession.releaseDenoiseModel()
             LumenGPU.context.clearCaches()

@@ -1,8 +1,8 @@
 """Convert a denoising network to a Core ML package with a fixed square tile (the app runs it tile by tile).
 
-Model: SCUNet real-noise colour model (cszn/SCUNet, Apache-2.0), weights pinned by revision and SHA-256 in fetch.py.
-Input `image` and output `output`: float16 [1, 3, T, T], RGB in 0...1 (sRGB-encoded, like the training photos).
-Usage: python convert.py scunet <weights.pth> <tile> <out.mlpackage>
+Model: NAFNet-SIDD-width32 (megvii-research/NAFNet, MIT), weights pinned by revision and SHA-256 in fetch.py.
+Input `image` and output `output`: float16 [1, 3, T, T], RGB in 0...1 (sRGB-encoded, like the SIDD phone photos it was trained on).
+Usage: python convert.py nafnet <weights.pth> <tile> <out.mlpackage>
 """
 import sys
 
