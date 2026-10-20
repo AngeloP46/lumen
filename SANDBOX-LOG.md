@@ -239,3 +239,8 @@ GPU (CI: CPU). Every tile is checked against its input and a wrong one redone on
 ## 20 Oct 2026: AI Denoise faster (from main #65)
 Compact shifted-window attention mask (same output, far less memory), GPU float16 sums, model made ready in the
 background when Detail opens. Still Pro. No Store code changed.
+
+## 21 Oct 2026: AI Denoise reopening, memory, Detail layout (from main #68, SideStore 0.1.400)
+16 px tile overlap (117 tiles for 24 MP), results stored raw + a 2560 px preview copy (fast reopening, no 400 MB
+spikes), model released after a clean and in the background (a crash on return to the screen). Detail: AI Denoise is a
+pill in the actions row with Reset on the right. Still Pro (aiDenoise > 0). No Store code changed.
