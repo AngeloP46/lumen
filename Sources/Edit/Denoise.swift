@@ -14,6 +14,63 @@ import UniformTypeIdentifiers
 /// The full-size photo as the camera made it (no heals) is cleaned once, tile by tile, and kept on disk per photo and
 /// HDR mode (`DenoiseStore`). Every decode then mixes it in by the AI Denoise amount, so preview, 100 % view, heals,
 /// export and thumbnails all see the same cleaned photo and the slider is instant after the first run.
+/// Box-averages full-size RGBA16 rows, given top to bottom, into a smaller copy written to a file row by row: needs only
+/// one small row in memory (21 Oct: the 4096 px copy averaged in one go held ~200 MB during a clean).
+final class RowShrinker {
+    let width: Int, height: Int, smallWidth: Int, smallHeight: Int
+    private let k: Double
+    private let columnOf: [Int]
+    private var acc: [Float], hits: [Float]
+    private var row = 0, written = 0
+    private let handle: FileHandle
+    private(set) var failed = false
+
+    init?(width: Int, height: Int, maxEdge: Int, url: URL) {
+        self.width = width; self.height = height
+        k = min(1, Double(maxEdge) / Double(max(width, height)))
+        smallWidth = max(1, Int((Double(width) * k).rounded())); smallHeight = max(1, Int((Double(height) * k).rounded()))
+        guard FileManager.default.createFile(atPath: url.path, contents: nil), let h = try? FileHandle(forWritingTo: url) else { return nil }
+        handle = h
+        let sw = smallWidth, kk = k
+        columnOf = (0..<width).map { min(sw - 1, Int(Double($0) * kk)) }
+        acc = [Float](repeating: 0, count: smallWidth * 3); hits = [Float](repeating: 0, count: smallWidth)
+    }
+
+    /// The small row a full row `y` falls into.
+    private func smallRow(_ y: Int) -> Int { min(smallHeight - 1, Int(Double(y) * k)) }
+
+    private func flush() {
+        guard written < smallHeight else { return }
+        var out = [UInt16](repeating: 65535, count: smallWidth * 4)
+        for x in 0..<smallWidth where hits[x] > 0 {
+            for c in 0..<3 { out[x * 4 + c] = UInt16(min(65535, (acc[x * 3 + c] / hits[x]).rounded())) }
+        }
+        if (try? out.withUnsafeBytes { try handle.write(contentsOf: Data($0)) }) == nil { failed = true }
+        written += 1
+        for i in acc.indices { acc[i] = 0 }
+        for i in hits.indices { hits[i] = 0 }
+    }
+
+    /// The next full row (width x 4 values).
+    func add(_ px: UnsafePointer<UInt16>) {
+        if row > 0, smallRow(row) != smallRow(row - 1) { flush() }
+        for x in 0..<width {
+            let a = columnOf[x], o = x * 4
+            acc[a * 3] += Float(px[o]); acc[a * 3 + 1] += Float(px[o + 1]); acc[a * 3 + 2] += Float(px[o + 2])
+            hits[a] += 1
+        }
+        row += 1
+    }
+
+    /// After the last row; false if anything couldn't be written.
+    func finish() -> Bool {
+        flush()
+        while written < smallHeight && !failed { flush() }   // rounding: repeat the last row
+        try? handle.close()
+        return !failed && row == height
+    }
+}
+
 enum DenoiseStore {
     nonisolated(unsafe) static var directory = FileManager.default.temporaryDirectory.appendingPathComponent("LumenDenoise")
     /// Changes when the model or the way it is run changes: older results are made again.
@@ -49,7 +106,11 @@ enum DenoiseStore {
     /// caller needs: the small copy is used when it is big enough. Files are raw 16-bit RGBA, read memory-mapped (no
     /// decoding; iOS can drop the pages again); results made before 21 Oct are 16-bit PNGs and still read.
     static func image(_ photo: URL, hdr: Bool, size: CGSize, maxEdge: CGFloat? = nil) -> CIImage? {
-        guard let i = info(photo, hdr: hdr, size: size) else { return nil }
+        guard var i = info(photo, hdr: hdr, size: size) else { return nil }
+        if let maxEdge, maxEdge <= CGFloat(previewEdge) + 1, maxEdge > CGFloat(max(i.previewWidth ?? 0, i.previewHeight ?? 0)) + 1,
+           let bigger = upgradePreview(photo, hdr: hdr, info: i) {
+            i = bigger
+        }
         var file = i.file, w = i.width, h = i.height
         if let maxEdge, let p = i.preview, let pw = i.previewWidth, let ph = i.previewHeight, maxEdge <= CGFloat(max(pw, ph)) + 1,
            FileManager.default.fileExists(atPath: directory.appendingPathComponent(p).path) {
@@ -70,6 +131,33 @@ enum DenoiseStore {
         return img.applyingFilter("CIColorMatrix", parameters: [
             "inputRVector": CIVector(x: s, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: s, z: 0, w: 0),
             "inputBVector": CIVector(x: 0, y: 0, z: s, w: 0)])
+    }
+
+    private static let upgradeLock = NSLock()
+    /// A `previewEdge` copy for a result whose small copy is smaller (owner's phone, 21 Oct: a 48 MP ProRAW cleaned with
+    /// a 2560 px copy made the 100 % view read the whole 372 MB result, and iOS closed Lumen). Made once, row by row
+    /// from the memory-mapped result; nil for old PNG results (they are read as before).
+    private static func upgradePreview(_ photo: URL, hdr: Bool, info i: Info) -> Info? {
+        upgradeLock.lock(); defer { upgradeLock.unlock() }
+        let fullURL = directory.appendingPathComponent(i.file)
+        guard fullURL.pathExtension == "rgba16",
+              let data = try? Data(contentsOf: fullURL, options: .alwaysMapped), data.count == i.width * i.height * 8 else { return nil }
+        let name = (i.file as NSString).deletingPathExtension + "-preview\(previewEdge).rgba16"
+        let url = directory.appendingPathComponent(name)
+        guard let shrinker = RowShrinker(width: i.width, height: i.height, maxEdge: previewEdge, url: url) else { return nil }
+        data.withUnsafeBytes { raw in
+            let px = raw.bindMemory(to: UInt16.self)
+            for y in 0..<i.height { autoreleasepool { shrinker.add(px.baseAddress! + y * i.width * 4) } }
+        }
+        guard shrinker.finish() else { try? FileManager.default.removeItem(at: url); return nil }
+        var n = i
+        let old = n.preview
+        n.preview = name; n.previewWidth = shrinker.smallWidth; n.previewHeight = shrinker.smallHeight
+        guard let json = try? JSONEncoder().encode(n), (try? json.write(to: infoURL(photo, hdr: hdr), options: .atomic)) != nil else {
+            try? FileManager.default.removeItem(at: url); return nil
+        }
+        if let old, old != name { try? FileManager.default.removeItem(at: directory.appendingPathComponent(old)) }
+        return n
     }
 
     /// The photo was removed from the library: its cleaned copies go too.
@@ -208,10 +296,9 @@ extension EditSession {
             try? handle.close()
             if !finished { try? FileManager.default.removeItem(at: file) }
         }
-        let k = min(1, Double(DenoiseStore.previewEdge) / Double(max(W, H)))
-        let pw = max(1, Int((Double(W) * k).rounded())), ph = max(1, Int((Double(H) * k).rounded()))
-        var acc = [Float](repeating: 0, count: pw * ph * 3), hits = [Float](repeating: 0, count: pw * ph)
-        let pxOf = (0..<W).map { min(pw - 1, Int(Double($0) * k)) }
+        let previewURL = DenoiseStore.directory.appendingPathComponent(previewName)
+        let shrinker = RowShrinker(width: W, height: H, maxEdge: DenoiseStore.previewEdge, url: previewURL)
+        defer { if !finished { try? FileManager.default.removeItem(at: previewURL) } }
 
         guard let input = try? MLMultiArray(shape: [1, 3, NSNumber(value: T), NSNumber(value: T)], dataType: .float16) else { return false }
         let SW = max(W, T)                                   // strip width (a photo narrower than a tile is padded)
@@ -339,12 +426,9 @@ extension EditSession {
                                                            count: (y1 - first) * W * 8, deallocator: .none))) != nil
             }
             guard wrote else { log?("denoise: couldn't write the result (storage full?)"); return false }
-            for y in first..<y1 {
-                let py = min(ph - 1, Int(Double(ty + y) * k)), row = y * W
-                for x in 0..<W {
-                    let o4 = (row + x) * 4, a = py * pw + pxOf[x]
-                    acc[a * 3] += Float(outStrip[o4]); acc[a * 3 + 1] += Float(outStrip[o4 + 1]); acc[a * 3 + 2] += Float(outStrip[o4 + 2])
-                    hits[a] += 1
+            if let shrinker {
+                outStrip.withUnsafeBufferPointer { buf in
+                    for y in first..<y1 { shrinker.add(buf.baseAddress! + y * W * 4) }
                 }
             }
             rowsWritten = ty + y1
@@ -358,12 +442,9 @@ extension EditSession {
 
         // 3. keep it: the raw 16-bit RGBA file (read back memory-mapped, no decoding) in the model's space, with the
         // scale to undo, plus the small copy for the preview and thumbnails
-        var small = [UInt16](repeating: 65535, count: pw * ph * 4)
-        for i in 0..<(pw * ph) where hits[i] > 0 {
-            for c in 0..<3 { small[i * 4 + c] = UInt16(min(65535, (acc[i * 3 + c] / hits[i]).rounded())) }
-        }
-        let previewURL = DenoiseStore.directory.appendingPathComponent(previewName)
-        let previewWritten = small.withUnsafeBytes { (try? Data($0).write(to: previewURL)) != nil }
+        let previewWritten = shrinker?.finish() ?? false
+        if !previewWritten { try? FileManager.default.removeItem(at: previewURL) }
+        let pw = shrinker?.smallWidth ?? 0, ph = shrinker?.smallHeight ?? 0
         try? handle.synchronize()
         // the previous copy for this photo and mode (an older model) is replaced
         DenoiseStore.removeOne(originalURL, hdr: hdrDecode)
