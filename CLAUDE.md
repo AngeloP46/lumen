@@ -46,6 +46,18 @@
   free, never 4096); results with a small copy under 4096 px get one made once, row by row from the mapped file
   (`upgradePreview`); the job builds its small copy row by row too (`RowShrinker`; the whole-copy averaging held
   ~200 MB).
+- 21 Oct edge-case review (two read-only reviews, #75): nothing starts a clean by itself any more (`ensureDenoise(start:)`:
+  only the pill, or resuming one the background stopped; HDR switch / undo / presets / paste used to start a locked
+  1-2 min clean); a clean asked for during AI masks waits for them; masks and the original copy wait for a clean.
+  Hold-to-compare and the split's before half show the original (no heals, no AI Denoise: `makeSource(..., denoise:
+  false)`). Paste (editor and library) and presets keep each photo's own AI Denoise. The pill switches back on at
+  the strength it had. After a reload while zoomed the 100 % copy is rebuilt. Remove people frees memory first.
+  Thumbnails and preset previews use a materialized small source (lazy ones re-ran the RAW engine per AI step).
+  Export: a failed clean fails the export; photos > 30 MP get their AI masks from a 2560 px copy, scaled up. AI
+  Denoise reads whole only with room for the RAW decode too (+50 MB/MP). Cleaned copies moved to Application
+  Support (out of Files), excluded from backup, orphans swept at launch. Diagnostics: a 2 s heartbeat in the state
+  file ("last seen HH:MM:SS using N MB"), background written at once, iOS's daily exit counts (MXMetricPayload),
+  iOS reports capped at 20 KB. Open: paste keepOwn doesn't keep flips/transform or Heal's on/off (not fixed).
 - Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
   peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
   iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.
@@ -344,7 +356,7 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - Undo from before the new version cannot be reconstructed; future undo/redo is persisted per photo. The global Edits switches still preserve values independently.
 
 ## Status (2026-10-12 01:00: main = latest SideStore build, released after full UI suite + engine test passed: Landscape parts off the sky, AI busy notice, sky-aware depth)
-- Panel space (owner, 2026-10-11): in one-at-a-time (strip) layout the panel hugs its row (`panelPlan` snaps to `ToolSpec.compact` unless the handle is being dragged); section headings live in `ToolSpec.sections` and no longer raise the list threshold (`listMin` = header + one heading + 4 rows). In the strip, `PanelActions`' Reset is a 34 pt round icon (id still `pill-Reset`); the mask page's Reset is just "Reset". Radial turn knob sits just below the centre pin (thumb reach). UI test job limit is 45 min (the suite outgrew 30).
+- Panel space (owner, 2026-10-11): in one-at-a-time (strip) layout the panel hugs its row (`panelPlan` snaps to `ToolSpec.compact` unless the handle is being dragged); section headings live in `ToolSpec.sections` and no longer raise the list threshold (`listMin` = header + one heading + 4 rows). In the strip, `PanelActions`' Reset is a 34 pt round icon (id still `pill-Reset`); the mask page's Reset is just "Reset". Radial turn knob sits just below the centre pin (thumb reach). UI test job limit is 75 min (the suite outgrew 30, then 45 on 20 Oct).
 - Pro pack (owner ticked every item of the overnight report): Crop | Transform tabs (flip as seen on screen, auto-level via `levelAngle` / VNDetectHorizonRequest, 7:5, 3:1, custom ratio, grid choices `cropGrid`; Transform = `tVertical/tHorizontal/tAspect/tScale/tOffX/tOffY`, a CIPerspectiveTransform in `geometry` composited over a clear full frame, mapped for masks by `Homography` in `SourceGeometry`; flips `flipH/flipV` before the turns, `mirrored` flips radial angles). Clipping warning (`lumenClip` kernel, More → View; NOT on the histogram: a button there blocked press-and-hold on the photo). Before/after split (More → View, `splitCompare/splitPos`, draggable `split-handle`). Paste some edits (`PasteSomeSheet`, `EditSettings.take`). Grade Global wheel (`ColorGrading.global`, 5th tab). Preset Strength (`presetRecord`, `EditSettings.blend`). People mask (`computePeople`, VNGeneratePersonSegmentationRequest). Mask overlay cropped to the photo. Mask type grid = 5 columns.
 - Auto-level: Vision horizon first (its angle is anticlockwise: Straighten = -angle), else `edgeLevel` (Sobel edge-direction histogram, refined by re-measuring after turning) for photos with no horizon. Engine checks a tilted horizon, a tilted 'building' and a level photo.
 - Transform Fill frame (`tFill`, default on, like Lightroom's Constrain Crop): `Homography.corners` zooms the warp just enough that every frame corner is inside the photo; off shows the black edges.

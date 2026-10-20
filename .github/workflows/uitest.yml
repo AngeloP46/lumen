@@ -26,7 +26,7 @@ permissions:
 jobs:
   uitest:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 75   # 45 ran out on 20 Oct (72+ tests, slow runners at night)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
         with:
