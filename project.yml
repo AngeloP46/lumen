@@ -30,6 +30,11 @@ targets:
         type: folder
         optional: true
         buildPhase: resources
+      # AI Denoise model (SCUNet), converted and compiled by CI (.github/ci/denoise-convert/build-denoise.sh)
+      - path: Models/Denoise.mlmodelc
+        type: folder
+        optional: true
+        buildPhase: resources
     info:
       path: Config/Info.plist
       properties:

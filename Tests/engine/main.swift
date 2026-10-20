@@ -270,7 +270,7 @@ if args.contains("--memory") {
     // Budgets = what each step measured on the CI Mac on 19 Oct plus about 10 %, so a change that suddenly needs much
     // more fails here. The Mac counts more than the iPhone (its paravirtual GPU runs the Heal model: about 1.3 GB
     // for a moment; iPhones mostly use the Neural Engine). Phone numbers come from ⋯ → Send diagnostics.
-    let budget: [String: Int] = ["open": 1000, "full-size view": 2500, "subject": 2650, "heal": 5600, "export": 6600]
+    let budget: [String: Int] = ["open": 1000, "full-size view": 2500, "subject": 2650, "heal": 5600, "export": 6600, "AI denoise": 6600]
     let total = 6600
     guard let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }),
           let session = EditSession(url: arw, expandHDR: true) else {
@@ -311,6 +311,15 @@ if args.contains("--memory") {
         if let spot { s.heals = [spot] }
     }
     peaks["export"] = stepPeak("export") { _ = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true) }
+    if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil, EditSession.hasDenoiseModel {
+        DenoiseStore.directory = outDir.appendingPathComponent("denoise-memory")
+        var ok = false
+        let t = now()
+        peaks["AI denoise"] = stepPeak("AI denoise") { ok = session.makeDenoised() }
+        check(ok, "memory test: AI Denoise failed on the 24 MP ARW")
+        print("::notice::AI Denoise on the 24 MP ARW: \(String(format: "%.0f", now() - t)) s on the CI Mac")
+        EditSession.releaseDenoiseModel()
+    }
     peak.lock.lock(); peak.stop = true; peak.lock.unlock()
     for (name, mb) in peaks.sorted(by: { $0.key < $1.key }) {
         let limit = budget[name] ?? total
@@ -2251,6 +2260,98 @@ if let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }), let
         check((p[kCGImagePropertyOrientation as String] as? Int ?? 1) == 1, "export metadata: \(format) orientation not upright")
         check((p[kCGImagePropertyPixelWidth as String] as? Int ?? 0) == 800 || (p[kCGImagePropertyPixelHeight as String] as? Int ?? 0) == 800,
               "export metadata: \(format) size wrong")
+    }
+}
+
+
+// ---- AI Denoise: noise added to a clean photo is mostly removed, edges survive, the amount mixes, files are cleaned up.
+if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil {
+    check(EditSession.hasDenoiseModel, "AI Denoise: the model is missing from this test build")
+    if EditSession.hasDenoiseModel, let cleanURL = files.first(where: { $0.lastPathComponent == "cat.jpg" }),
+       let cleanSession = EditSession(url: cleanURL), let clean0 = cleanSession.decode(maxEdge: 1600) {
+        let e = clean0.extent
+        let clean = clean0.cropped(to: e)
+        // Camera-like noise, made in plain Swift so it is exactly what it says: Gaussian, std 0.04 per channel, added to
+        // the gamma-encoded picture (as photos are stored), fixed seed, written as a 16-bit PNG. (CIRandomGenerator +
+        // matrices gave far stronger, speckly noise and an 8-bit file: the first two CI runs measured that, not the model.)
+        let W = Int(e.width), H = Int(e.height)
+        var px = [Float](repeating: 0, count: W * H * 4)
+        LumenGPU.context.render(clean, toBitmap: &px, rowBytes: W * 16, bounds: e, format: .RGBAf, colorSpace: LumenGPU.displaySpace)
+        var seed: UInt64 = 0x9E3779B97F4A7C15
+        func uniform() -> Float {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return (Float(seed >> 40) + 0.5) / Float(1 << 24)
+        }
+        var noisy16 = [UInt16](repeating: 65535, count: W * H * 4)
+        var i = 0
+        while i < W * H * 4 {
+            for c in 0..<3 {
+                let g = (-2 * log(uniform())).squareRoot() * cos(2 * Float.pi * uniform())
+                noisy16[i + c] = UInt16(max(0, min(1, px[i + c] + 0.04 * g)) * 65535 + 0.5)
+            }
+            i += 4
+        }
+        let noisyURL = outDir.appendingPathComponent("denoise-noisy.png")
+        noisy16.withUnsafeMutableBytes { buf in
+            if let provider = CGDataProvider(data: Data(bytesNoCopy: buf.baseAddress!, count: buf.count, deallocator: .none) as CFData),
+               let cg = CGImage(width: W, height: H, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: W * 8, space: LumenGPU.displaySpace,
+                                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+                                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+               let dest = CGImageDestinationCreateWithURL(noisyURL as CFURL, UTType.png.identifier as CFString, 1, nil) {
+                CGImageDestinationAddImage(dest, cg, nil)
+                _ = CGImageDestinationFinalize(dest)
+            }
+        }
+        func mae(_ a: CIImage, _ b: CIImage) -> Float {
+            var v = [Float](repeating: 0, count: 4)
+            let d = a.applyingFilter("CIColorAbsoluteDifference", parameters: ["inputImage2": b])
+                .applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: e)])
+            LumenGPU.context.render(d, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+            return (v[0] + v[1] + v[2]) / 3
+        }
+        func edges(_ a: CIImage) -> Float {
+            var v = [Float](repeating: 0, count: 4)
+            let g = a.applyingFilter("CIEdges", parameters: [kCIInputIntensityKey: 1])
+                .applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: e)])
+            LumenGPU.context.render(g, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+            return v[0] + v[1] + v[2]
+        }
+        DenoiseStore.directory = outDir.appendingPathComponent("denoise")
+        if let session = EditSession(url: noisyURL), let noisy = session.decode(maxEdge: nil) {
+            let t0 = now()
+            var steps = 0.0
+            let ok = session.makeDenoised { p in steps = p }
+            print("::notice::AI Denoise \(Int(e.width))x\(Int(e.height)): \(String(format: "%.1f", now() - t0)) s, progress reached \(steps)")
+            check(ok && session.hasDenoised, "AI Denoise: makeDenoised failed")
+            session.denoiseAmount = 1
+            if ok, let cleaned = session.decode(maxEdge: nil) {
+                let before = mae(noisy, clean), after = mae(cleaned, clean)
+                let edgeClean = edges(clean), edgeOut = edges(cleaned)
+                print("::notice::AI Denoise error vs clean: noisy \(before), denoised \(after); edges clean \(edgeClean), denoised \(edgeOut)")
+                check(after < before * 0.6, "AI Denoise should remove most of the added noise (\(before) -> \(after))")
+                check(edgeOut > edgeClean * 0.6, "AI Denoise should keep edges (\(edgeClean) -> \(edgeOut))")
+                session.denoiseAmount = 0.5
+                if let half = session.decode(maxEdge: nil) {
+                    let m = mae(half, clean)
+                    check(m < before && m > after, "AI Denoise at 50 should sit between off and full (\(before), \(m), \(after))")
+                }
+                session.denoiseAmount = 0
+                if let off = session.decode(maxEdge: nil) { check(mae(off, noisy) < 0.002, "AI Denoise at 0 should leave the photo as it was") }
+                session.denoiseAmount = 1
+                if let preview = session.decode(maxEdge: 800) {
+                    check(abs(max(preview.extent.width, preview.extent.height) - 800) < 2, "AI Denoise: the preview size should be kept")
+                }
+                // 100 % crops: noisy | denoised | clean
+                let c = CGRect(x: e.midX - 200, y: e.midY - 200, width: 400, height: 400)
+                func cg(_ i: CIImage) -> CGImage? { LumenGPU.context.createCGImage(i.cropped(to: c), from: c, format: .RGBA8, colorSpace: LumenGPU.displaySpace) }
+                if let a = cg(noisy), let b = cg(cleaned), let d = cg(clean), let sh = sheet([("noisy", a), ("AI Denoise", b), ("clean", d)], cell: 400, cols: 3) {
+                    saveJPEG(sh, "denoise.jpg")
+                }
+            }
+            DenoiseStore.remove(noisyURL)
+            check(!session.hasDenoised, "AI Denoise: removing the photo should delete its cleaned copy")
+        } else { check(false, "AI Denoise: could not open the noisy test photo") }
+        EditSession.releaseDenoiseModel()
     }
 }
 

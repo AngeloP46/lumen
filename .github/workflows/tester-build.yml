@@ -23,12 +23,13 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 pinned
         with:
           path: Models/.verified-packages
-          key: models-verified-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/ci/model-lock.json', '.github/ci/heal-convert/**') }}
+          key: models-verified-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/ci/model-lock.json', '.github/ci/heal-convert/**', '.github/ci/denoise-convert/**') }}
       - name: AI models (verified depth, scene, heal)
         run: |
           bash .github/ci/get-depth-model.sh Models
           bash .github/ci/get-seg-model.sh Models
           bash .github/ci/get-heal-model.sh Models
+          bash .github/ci/denoise-convert/build-denoise.sh Models
       - name: Install pinned XcodeGen
         run: bash .github/ci/install-xcodegen.sh
       - name: Generate Xcode project

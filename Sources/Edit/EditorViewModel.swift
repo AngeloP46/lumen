@@ -179,11 +179,13 @@ final class EditorViewModel: ObservableObject {
         let url = store.fileURL(item)
         let wantsHDR = settings.hdr
         let heals = settings.effective.heals
+        let denoise = settings.effective.aiDenoise / 100
         let asked = Date()
         workQueue.async {
             let began = Date()
             let s = EditSession(url: url, expandHDR: wantsHDR)
             s?.heals = heals
+            s?.denoiseAmount = denoise
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
             // Simulator interaction fixture only; real builds always use estimated camera-photo depth.
             if DemoMode.isOn, DemoMode.value("-lumenDemoLensDepth") != nil, let src {
@@ -213,9 +215,51 @@ final class EditorViewModel: ObservableObject {
                 if let src { self.imageSize = src.size; self.sourceSize = src.size }
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()
+                self.ensureDenoise()
                 self.refreshUnhealed()
                 // HDR was switched while the photo was still loading: decode it again the other way
                 if self.settings.hdr != wantsHDR { self.reloadSource() }
+            }
+        }
+    }
+
+    // MARK: AI Denoise
+
+    /// 0...1 while the photo is being cleaned (Detail → AI Denoise), nil otherwise.
+    @Published private(set) var denoiseProgress: Double?
+    private var denoiseReload: DispatchWorkItem?
+    private let denoiseQueue = DispatchQueue(label: "lumen.denoise", qos: .userInitiated)
+
+    /// The slider moved: the first time the photo is cleaned (tens of seconds, with progress); after that only the mix
+    /// changes, so the photo is decoded again once the slider rests.
+    private func denoiseChanged() {
+        guard let session else { return }
+        if settings.effective.aiDenoise > 0, !session.hasDenoised { ensureDenoise(); return }
+        denoiseReload?.cancel()
+        let work = DispatchWorkItem { Task { @MainActor [weak self] in self?.reloadSource() } }
+        denoiseReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+
+    /// Starts cleaning the photo if AI Denoise is on and the cleaned copy for this HDR mode doesn't exist yet.
+    func ensureDenoise() {
+        guard denoiseProgress == nil, settings.effective.aiDenoise > 0, let session, !session.hasDenoised,
+              EditSession.hasDenoiseModel else { return }
+        denoiseProgress = 0
+        freeMemoryForHeal()
+        Diagnostics.shared.note("denoise start")
+        denoiseQueue.async {
+            let ok = session.makeDenoised { p in
+                Task { @MainActor [weak self] in if self?.denoiseProgress != nil { self?.denoiseProgress = p } }
+            }
+            EditSession.releaseDenoiseModel()
+            LumenGPU.context.clearCaches()
+            Diagnostics.shared.note(ok ? "denoise done" : "denoise failed")
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.denoiseProgress = nil
+                guard self.session === session else { self.ensureDenoise(); return }
+                if ok { self.reloadSource() } else { self.message = "AI Denoise couldn't clean this photo." }
             }
         }
     }
@@ -235,11 +279,13 @@ final class EditorViewModel: ObservableObject {
         let url = store.fileURL(item)
         let wantsHDR = settings.hdr
         let heals = settings.effective.heals
+        let denoise = settings.effective.aiDenoise / 100
         let previous = source
         let sameHeals = heals.map(\.id) == sourceHeals || DemoMode.value("-lumenDemoLensDepth") != nil
         workQueue.async {
             let s = EditSession(url: url, expandHDR: wantsHDR)
             s?.heals = heals
+            s?.denoiseAmount = denoise
             let src = s?.makeSource(maxEdge: 2560, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self, generation == self.loadGeneration else { return }
@@ -266,6 +312,7 @@ final class EditorViewModel: ObservableObject {
                 if DemoMode.isOn { DemoMode.log("reloaded hdr \(wantsHDR)") }
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()
+                self.ensureDenoise()
                 self.refreshUnhealed()
                 // a new heal shows once the photo has been decoded with it
                 if self.healBusy && self.healWaitingForReload { self.healBusy = false; self.healStroke = []; self.healWaitingForReload = false }
@@ -303,6 +350,7 @@ final class EditorViewModel: ObservableObject {
         if settings.masks != old.masks || settings.lensBlur != old.lensBlur { prepareAutoMasksIfNeeded() }
         // HDR changes how the file is decoded; heals are painted in while decoding
         if settings.hdr != old.hdr || settings.effective.heals != old.effective.heals { reloadSource() }
+        else if settings.effective.aiDenoise != old.effective.aiDenoise { denoiseChanged() }
     }
 
     private func scheduleSave() {
