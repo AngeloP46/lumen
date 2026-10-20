@@ -160,6 +160,26 @@ enum DenoiseStore {
         return n
     }
 
+    /// At launch: files no cleaned copy refers to any more (a clean that iOS closed half way) are removed, and the
+    /// folder is kept out of iCloud backups (the copies can be made again).
+    static func sweep() {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        var dir = directory
+        var values = URLResourceValues(); values.isExcludedFromBackup = true
+        try? dir.setResourceValues(values)
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
+        var used = Set<String>()
+        for n in names where n.hasSuffix(".json") {
+            if let data = try? Data(contentsOf: directory.appendingPathComponent(n)), let i = try? JSONDecoder().decode(Info.self, from: data) {
+                used.insert(i.file); if let p = i.preview { used.insert(p) }
+            }
+        }
+        for n in names where !n.hasSuffix(".json") && !used.contains(n) {
+            try? fm.removeItem(at: directory.appendingPathComponent(n))
+        }
+    }
+
     /// The photo was removed from the library: its cleaned copies go too.
     static func remove(_ photo: URL) {
         for hdr in [false, true] {
@@ -271,7 +291,8 @@ extension EditSession {
         // Read the photo whole once (fastest) when there is plenty of memory for it, else strip by strip from the RAW
         // engine (memory stays the same whatever the size; 21 Oct: a 48 MP ProRAW held whole was closed by iOS).
         let wholeMB = W * H * 8 / 1_048_576
-        let whole = !Self.denoiseForceStrips && wholeMB * 4 < Self.availableMemoryMB
+        // ... and room for the RAW engine's own decode, ~50 MB per megapixel (21 Oct review: 48 MP whole = ~3.2 GB)
+        let whole = !Self.denoiseForceStrips && wholeMB * 4 + 50 * (W * H / 1_000_000) < Self.availableMemoryMB
         let source: CIImage
         if whole, let buffer = Self.materialized(scaled) {
             source = buffer.clampedToExtent()

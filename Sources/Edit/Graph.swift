@@ -221,7 +221,9 @@ extension EditSession {
     func renderCGImage(_ s: EditSettings, maxEdge: CGFloat) -> CGImage? {
         heals = s.effective.heals
         denoiseAmount = s.effective.aiDenoise / 100   // uses the cleaned copy if it has been made (thumbnails don't make it)
-        guard let src = makeSource(maxEdge: maxEdge, materialize: false) else { return nil }
+        // small renders are kept in a buffer (a few MB): the AI masks Lens Blur needs are worked out on it without
+        // re-running the RAW engine for each step (21 Oct review)
+        guard let src = makeSource(maxEdge: maxEdge, materialize: maxEdge <= 1024) else { return nil }
         if s.effective.lensBlur.amount > 0 { prepareAutoMasks(s, source: src) }
         return renderCGImage(s, source: src)
     }
@@ -239,12 +241,25 @@ extension EditSession {
         denoiseAmount = s.effective.aiDenoise / 100
         // an export must show the AI Denoise it was asked for: make the cleaned copy now if it isn't there yet
         if denoiseAmount > 0, !hasDenoised, Self.hasDenoiseModel {
-            _ = makeDenoised()
+            let ok = makeDenoised()
             Self.releaseDenoiseModel()
+            // never quietly export without the AI Denoise that was asked for
+            guard ok else { return nil }
         }
         // (Decoding into a buffer first was tried on 19 Oct: same peak, ~1.8 GB more kept afterwards.)
         guard let src = makeSource(maxEdge: nil, materialize: false) else { return nil }
         Self.healProbe?("export: full-size source ready")
+        // a big photo's AI masks are worked out on a 2560 px copy and scaled up (at full size, 48 MP, the masks' filters
+        // and models each re-ran the RAW engine at 8064 px: 21 Oct review); what is still missing is done at full size
+        let megapixels = nativeSize.width * nativeSize.height / 1_000_000
+        if megapixels > 30, let small = makeSource(maxEdge: 2560, materialize: true) {
+            prepareAutoMasks(s, source: small)
+            let (masks, tried) = small.snapshotMasks()
+            src.storeDepth(small.depthField)
+            src.storeScene(small.sceneField)
+            let sx = src.size.width / small.size.width, sy = src.size.height / small.size.height
+            for key in tried { src.storeMask(key, masks[key]?.transformed(by: CGAffineTransform(scaleX: sx, y: sy))) }
+        }
         prepareAutoMasks(s, source: src)
         Self.healProbe?("export: masks ready")
         // Never quietly export an unblurred photo when a requested focus map could not be prepared.

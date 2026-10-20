@@ -46,6 +46,18 @@
   free, never 4096); results with a small copy under 4096 px get one made once, row by row from the mapped file
   (`upgradePreview`); the job builds its small copy row by row too (`RowShrinker`; the whole-copy averaging held
   ~200 MB).
+- 21 Oct edge-case review (two read-only reviews, #75): nothing starts a clean by itself any more (`ensureDenoise(start:)`:
+  only the pill, or resuming one the background stopped; HDR switch / undo / presets / paste used to start a locked
+  1-2 min clean); a clean asked for during AI masks waits for them; masks and the original copy wait for a clean.
+  Hold-to-compare and the split's before half show the original (no heals, no AI Denoise: `makeSource(..., denoise:
+  false)`). Paste (editor and library) and presets keep each photo's own AI Denoise. The pill switches back on at
+  the strength it had. After a reload while zoomed the 100 % copy is rebuilt. Remove people frees memory first.
+  Thumbnails and preset previews use a materialized small source (lazy ones re-ran the RAW engine per AI step).
+  Export: a failed clean fails the export; photos > 30 MP get their AI masks from a 2560 px copy, scaled up. AI
+  Denoise reads whole only with room for the RAW decode too (+50 MB/MP). Cleaned copies moved to Application
+  Support (out of Files), excluded from backup, orphans swept at launch. Diagnostics: a 2 s heartbeat in the state
+  file ("last seen HH:MM:SS using N MB"), background written at once, iOS's daily exit counts (MXMetricPayload),
+  iOS reports capped at 20 KB. Open: paste keepOwn doesn't keep flips/transform or Heal's on/off (not fixed).
 - Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
   peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
   iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.

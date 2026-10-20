@@ -97,7 +97,18 @@ final class LibraryStore: ObservableObject {
         // healed patches (Heal tool) live with the library so they survive app updates
         HealStore.directory = root.appendingPathComponent("heals", isDirectory: true)
         // AI Denoise's cleaned copies (one per photo and HDR mode), removed with the photo
-        DenoiseStore.directory = root.appendingPathComponent("denoise", isDirectory: true)
+        // (Application Support, out of the Files app; moved there from the library folder on 21 Oct)
+        let oldDenoise = root.appendingPathComponent("denoise", isDirectory: true)
+        if testRoot == nil, let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            DenoiseStore.directory = support.appendingPathComponent("denoise", isDirectory: true)
+            try? fm.createDirectory(at: support, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: oldDenoise.path), !fm.fileExists(atPath: DenoiseStore.directory.path) {
+                try? fm.moveItem(at: oldDenoise, to: DenoiseStore.directory)
+            }
+        } else {
+            DenoiseStore.directory = oldDenoise
+        }
+        DispatchQueue.global(qos: .utility).async { DenoiseStore.sweep() }
         try? fm.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         // Smart fill (beta, 0.1.154) was taken out again: free the ~950 MB it may have downloaded
         if testRoot == nil {
@@ -442,6 +453,7 @@ final class LibraryStore: ObservableObject {
                 s.masks.removeAll { $0.id == id }; s.masks.append(focus)
             }
             s.heals = own.heals   // heals are made for one photo's pixels: always keep each photo's own
+            s.aiDenoise = own.aiDenoise   // so is AI Denoise (a clean each): pasting never starts or drops one
             if keepOwn {
                 s.masks = own.masks
                 s.straighten = own.straighten
