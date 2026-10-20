@@ -16,7 +16,7 @@ import UniformTypeIdentifiers
 enum DenoiseStore {
     nonisolated(unsafe) static var directory = FileManager.default.temporaryDirectory.appendingPathComponent("LumenDenoise")
     /// Changes when the model or the way it is run changes: older results are made again.
-    static let modelVersion = "scunet-real-512-gpu-1"
+    static let modelVersion = "scunet-real-512-gpu-2"
 
     struct Info: Codable {
         var model: String
@@ -71,7 +71,23 @@ extension EditSession {
         guard let url = denoiseModelURL else { return nil }
         let cfg = MLModelConfiguration()
         cfg.computeUnits = ProcessInfo.processInfo.environment["LUMEN_DENOISE_UNITS"] == "cpu" ? .cpuOnly : .cpuAndGPU
+        // float16 sums on the GPU: faster; SCUNet's values stay small (largest ~100 on a test tile), and every tile is
+        // checked against its input anyway
+        cfg.allowLowPrecisionAccumulationOnGPU = true
         return try? MLModel(contentsOf: url, configuration: cfg)
+    }
+    /// Loads the model and runs one blank tile, so the GPU's one-off setup (owner's phone, 0.1.388: 10 s load + 10 s
+    /// first tile) happens while Detail is open, before the button is tapped. Returns the seconds it took.
+    @discardableResult
+    static func warmDenoise() -> Double {
+        let t0 = Date()
+        guard let model = denoiseModel.model,
+              let shape = model.modelDescription.inputDescriptionsByName["image"]?.multiArrayConstraint?.shape,
+              let blank = try? MLMultiArray(shape: shape, dataType: .float16),
+              let features = try? MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(multiArray: blank)]) else { return 0 }
+        memset(blank.dataPointer, 0, blank.count * 2)
+        _ = try? model.prediction(from: features)
+        return Date().timeIntervalSince(t0)
     }
     /// The same model on the CPU (full precision), for a tile the Neural Engine got wrong.
     private static let denoiseCPU = LoadedModel<MLModel> {

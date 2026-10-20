@@ -235,3 +235,7 @@ Send diagnostics holds only the last 3 launches and recent iOS reports. Still Pr
 ## 20 Oct 2026: AI Denoise back to SCUNet, on the GPU (from main #62 + #63)
 NAFNet wrecked bright tiles on the Neural Engine (float16 overflow) and left half the noise. Back to SCUNet, run on the
 GPU (CI: CPU). Every tile is checked against its input and a wrong one redone on the CPU. Still Pro. No Store code changed.
+
+## 20 Oct 2026: AI Denoise faster (from main #65)
+Compact shifted-window attention mask (same output, far less memory), GPU float16 sums, model made ready in the
+background when Detail opens. Still Pro. No Store code changed.
