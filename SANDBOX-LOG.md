@@ -216,3 +216,8 @@ No Store code changed.
 Undo history read in the background when a photo opens; brush masks cached by a cheap key, newest version per brush;
 Heal scales by the square's 99.5 % brightness (a glint no longer darkens the model's input) and keeps brighter
 highlights outside the hole; export memory probes. No Store code changed.
+
+## 20 Oct 2026: AI Denoise (from main #55, SideStore 0.1.360)
+SCUNet real-noise model (Apache-2.0, pinned weights) converted in CI, run on the Neural Engine tile by tile, cleaned copy
+kept per photo; Detail → AI Denoise slider. Pro: `usesProFeatures` returns true when aiDenoise > 0 (like HDR, Heal and
+Lens Blur). tester-build.yml (main-only, personal tester builds) is not part of sandbox.
