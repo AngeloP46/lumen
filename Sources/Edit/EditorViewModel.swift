@@ -143,6 +143,7 @@ final class EditorViewModel: ObservableObject {
             EditSession.releaseMaskModels()
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                if self.denoiseProgress == nil { self.denoiseQueue.async { EditSession.releaseDenoiseModel() } }
                 if !self.healBusy && !self.healPreparing { EditSession.releaseHealModel() }
                 if self.zoomLevel <= 1.4 { self.detailSource = nil }
                 if !self.showOriginal { self.unhealedSource = nil }
@@ -308,12 +309,13 @@ final class EditorViewModel: ObservableObject {
                 }
             }, cancelled: { [weak self] in self?.denoiseCancel ?? true }, log: { Diagnostics.shared.note($0) })
             let stopped = self.denoiseCancel
-            EditSession.releaseDenoiseModel()
             LumenGPU.context.clearCaches()
             Diagnostics.shared.note(ok ? "denoise done in \(Int(Date().timeIntervalSince(began))) s: \(EditSession.denoiseTimings)"
                                     : stopped ? "denoise stopped (cancelled or the app left the screen)" : "denoise failed")
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self else { EditSession.releaseDenoiseModel(); return }
+                // kept while Detail is open (the next photo starts at once), let go of otherwise
+                if !self.detailOpen { EditSession.releaseDenoiseModel() }
                 self.denoiseProgress = nil
                 self.denoiseSecondsLeft = nil
                 UIApplication.shared.isIdleTimerDisabled = false
@@ -334,6 +336,33 @@ final class EditorViewModel: ObservableObject {
                     self.denoiseRequested = false
                 }
             }
+        }
+    }
+
+    /// Detail is the open tool: the model is made ready in the background (load + GPU setup, ~20 s the first time on
+    /// the owner's phone), so tapping AI Denoise starts cleaning at once. Let go of 30 s after leaving Detail.
+    private(set) var detailOpen = false
+    private var denoiseRelease: Task<Void, Never>?
+    private var denoiseWarming = false
+    func detailToolChanged(open: Bool, now: Bool = false) {
+        detailOpen = open
+        denoiseRelease?.cancel(); denoiseRelease = nil
+        if open {
+            refreshDenoiseReady()
+            guard !denoiseReady, !denoiseWarming, denoiseProgress == nil, EditSession.hasDenoiseModel,
+                  Diagnostics.availableMB > 1500 else { return }
+            denoiseWarming = true
+            denoiseQueue.async {
+                let s = EditSession.warmDenoise()
+                if s > 0.5 { Diagnostics.shared.note(String(format: "denoise model made ready in %.1f s (Detail open)", s)) }
+                Task { @MainActor [weak self] in self?.denoiseWarming = false }
+            }
+            return
+        }
+        denoiseRelease = Task { @MainActor [weak self] in
+            if !now { try? await Task.sleep(nanoseconds: 30_000_000_000) }
+            guard !Task.isCancelled, let self, !self.detailOpen, self.denoiseProgress == nil else { return }
+            self.denoiseQueue.async { EditSession.releaseDenoiseModel() }
         }
     }
 

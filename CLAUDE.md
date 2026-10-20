@@ -18,6 +18,12 @@
   (0.1.381, #60) was quick on the ANE but wrecked bright tiles (channel-attention sum ~200,000 > float16's 65,504; the
   CI Mac runs on the CPU in full precision and can't show it) and even fixed (#62: 8 x 8 block mean) left half the
   noise (SIDD-only training). Owner: one model, good and quick, use the chips to the full -> SCUNet on the GPU (#63).
+- Speed (owner, 20 Oct: good image, wants it faster). 0.1.388 on the phone: 84 s for 24 MP = load 10.3 s + first tile
+  10.4 s (GPU setup) + 0.50 s/tile; memory hit 2.75 GB while loading. #65: the shifted-window mask is two small
+  broadcast parts (was 89 M stored values; identical output, 24 % faster on a PC CPU), GPU float16 sums
+  (`allowLowPrecisionAccumulationOnGPU`), and the model is loaded + run once on a blank tile when Detail opens
+  (`detailToolChanged`, `warmDenoise`), kept while Detail is open, released 30 s after leaving it or on a memory
+  warning. Tile prep is negligible (~1 s of 84), so pipelining would not help. NAFNet on the ANE did 0.08 s/tile.
 - Every tile is checked against its input (finite, mean change < 0.1, < 0.5 % of samples off by > 0.3); a wrong one is
   redone on the CPU (`denoiseCPU`), else the photo's own pixels are kept. Diagnostics: "denoise model loaded in N s",
   "denoise first tiles a / b / c s", then "denoise done in N s: …, N redone on the CPU".

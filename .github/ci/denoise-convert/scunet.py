@@ -42,24 +42,25 @@ class WMSA(nn.Module):
         self.relative_position_params = torch.nn.Parameter(self.relative_position_params.view(2*window_size-1, 2*window_size-1, self.n_heads).transpose(1,2).transpose(0,1))
 
     def generate_mask(self, h, w, p, shift):
-        """ generating the mask of SW-MSA
-        Args:
-            shift: shift parameters in CyclicShift.
-        Returns:
-            attn_mask: should be (1 1 w p p),
+        """ Additive bias for SW-MSA (Lumen change, 20 Oct): -1e4 where the original mask is True.
+        The original builds a (1, 1, h*w, p*p, p*p) mask (16.8 M values per block, 89 M in the model at 512 px tiles,
+        mostly False); only the last row and the last column of windows are masked, the same way in every window of
+        that row / column. So it is kept as two small parts that broadcast: rows (h, 1, P, P) + cols (1, w, P, P).
+        Built in NumPy (Core ML can't convert the original's slice fills). Same result: exp(-1e4) is 0.
         """
-        # supporting sqaure.
-        # Built in NumPy and handed to the graph as a constant (Lumen change, 20 Oct): the original fills a torch
-        # tensor slice by slice, which Core ML's converter cannot translate. Same values.
-        m = np.zeros((h, w, p, p, p, p), dtype=bool)
-        if self.type != 'W':
-            s = p - shift
-            m[-1, :, :s, :, s:, :] = True
-            m[-1, :, s:, :, :s, :] = True
-            m[:, -1, :, :s, :, s:] = True
-            m[:, -1, :, s:, :, :s] = True
-        m = m.transpose(0, 1, 2, 3, 4, 5).reshape(1, 1, h * w, p * p, p * p)
-        return torch.from_numpy(m)
+        s = p - shift
+        q = np.arange(p)
+        r1 = (q[:, None, None, None] < s) & (q[None, None, :, None] >= s)
+        r2 = (q[:, None, None, None] >= s) & (q[None, None, :, None] < s)
+        row = np.broadcast_to(r1 | r2, (p, p, p, p)).reshape(p * p, p * p)       # by query row / key row
+        c1 = (q[None, :, None, None] < s) & (q[None, None, None, :] >= s)
+        c2 = (q[None, :, None, None] >= s) & (q[None, None, None, :] < s)
+        col = np.broadcast_to(c1 | c2, (p, p, p, p)).reshape(p * p, p * p)       # by query col / key col
+        rows = np.zeros((h, 1, p * p, p * p), dtype=np.float32)
+        cols = np.zeros((1, w, p * p, p * p), dtype=np.float32)
+        rows[-1, 0] = -1e4 * row
+        cols[0, -1] = -1e4 * col
+        return torch.from_numpy(rows), torch.from_numpy(cols)
 
     def forward(self, x):
         """ Forward pass of Window Multi-head Self-attention module.
@@ -84,8 +85,10 @@ class WMSA(nn.Module):
         sim = sim + rearrange(self.relative_embedding(), 'h p q -> h 1 1 p q')
         # Using Attn Mask to distinguish different subwindows.
         if self.type != 'W':
-            attn_mask = self.generate_mask(h_windows, w_windows, self.window_size, shift=self.window_size//2)
-            sim = sim.masked_fill_(attn_mask, float("-inf"))
+            rows, cols = self.generate_mask(h_windows, w_windows, self.window_size, shift=self.window_size//2)
+            n_h, n_b = sim.shape[0], sim.shape[1]
+            pp = self.window_size * self.window_size
+            sim = (sim.reshape(n_h, n_b, h_windows, w_windows, pp, pp) + rows + cols).reshape(n_h, n_b, h_windows * w_windows, pp, pp)
 
         probs = nn.functional.softmax(sim, dim=-1)
         output = torch.einsum('hbwij,hbwjc->hbwic', probs, v)

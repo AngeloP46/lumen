@@ -145,7 +145,7 @@ struct EditorView: View {
             vm.setLensBlurEditing(tool == .lensBlur)
             if DemoMode.isOn { applyDemo() }
         }
-        .onDisappear { vm.flushSave(); store.refreshThumbnail(item); vm.healToolChanged(open: false, now: true); EditSession.releaseMaskModels(); LumenGPU.context.clearCaches() }
+        .onDisappear { vm.flushSave(); store.refreshThumbnail(item); vm.healToolChanged(open: false, now: true); vm.detailToolChanged(open: false, now: true); EditSession.releaseMaskModels(); LumenGPU.context.clearCaches() }
         .onChange(of: tool) { _, new in
             vm.wbPicking = false
             vm.lensBlurPicking = false
@@ -159,6 +159,7 @@ struct EditorView: View {
             if new == .presets { vm.loadPresetThumbs(user: store.userPresets) }
             if new != .heal { vm.selectedHealID = nil; vm.healMessage = nil; vm.cancelPeople() }
             vm.healToolChanged(open: new == .heal)
+            vm.detailToolChanged(open: new == .detail)
             if new == .crop || (new != .masks && zoom < 0.999) { withAnimation(.easeOut(duration: 0.18)) { resetZoom() } }
         }
         .onChange(of: zoom) { _, z in vm.zoomChanged(z) }
