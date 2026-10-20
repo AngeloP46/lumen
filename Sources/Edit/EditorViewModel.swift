@@ -219,6 +219,13 @@ final class EditorViewModel: ObservableObject {
                 if let src { self.imageSize = src.size; self.sourceSize = src.size }
                 self.requestRender()
                 self.prepareAutoMasksIfNeeded()
+                if let s, let f = DenoiseStore.pausedFraction(s.originalURL), !s.hasDenoised {
+                    if Diagnostics.shared.closedDuringLastRun {
+                        self.message = String(format: "AI Denoise stopped at %.0f %% when iOS closed Lumen. Tap AI Denoise in Detail to carry on.", f * 100)
+                    } else {
+                        self.ensureDenoise(start: true)
+                    }
+                }
                 self.ensureDenoise()
                 self.warmDenoiseIfNeeded()
                 self.refreshUnhealed()
@@ -262,6 +269,10 @@ final class EditorViewModel: ObservableObject {
     private let denoiseQueue = DispatchQueue(label: "lumen.denoise", qos: .userInitiated)
     /// Set when the app leaves the screen: the running job stops at its next tile and starts again on return.
     nonisolated(unsafe) private var denoiseCancel = false
+    /// Set when Lumen leaves the screen: the clean pauses at its next tile, keeping the rows so far.
+    nonisolated(unsafe) private var denoisePausing = false
+    /// The strength AI Denoise is set to when the clean it waits for finishes (pasted edits ask for theirs).
+    private var denoiseTarget: Double?
     private var denoiseObservers: [NSObjectProtocol] = []
 
     /// The slider moved: the first time the photo is cleaned (tens of seconds, with progress); after that only the mix
@@ -282,7 +293,7 @@ final class EditorViewModel: ObservableObject {
         if denoiseObservers.isEmpty {
             let nc = NotificationCenter.default
             denoiseObservers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.denoiseCancel = true
+                self?.denoisePausing = true
                 // nothing of AI Denoise stays loaded in the background; Detail makes it ready again on return. A clean
                 // that was running starts again when Lumen is back on screen.
                 Task { @MainActor [weak self] in
@@ -305,7 +316,13 @@ final class EditorViewModel: ObservableObject {
         // the AI masks, the 100 % copy and the original copy are made one at a time with a clean, not together
         // (each is hundreds of MB on a 48 MP photo): a clean asked for while the masks are being worked out waits
         if autoMaskBusy { denoiseRequested = true; return }
+        if let batch = store?.denoiseBatch {
+            denoiseRequested = false
+            message = "AI Denoise is busy with \(batch.count - batch.done) photo\(batch.count - batch.done == 1 ? "" : "s") from the library. Try again when they're done."
+            return
+        }
         denoiseResume = false
+        denoisePausing = false
         denoiseProgress = 0
         denoiseSecondsLeft = nil
         denoiseCancel = false
@@ -314,29 +331,33 @@ final class EditorViewModel: ObservableObject {
         freeMemoryForHeal()
         detailSource = nil
         unhealedSource = nil
-        Diagnostics.shared.note("denoise start")
+        let from = DenoiseStore.pausedFraction(session.originalURL) ?? 0
+        Diagnostics.shared.note(from > 0 ? String(format: "denoise continues from %.0f %%", from * 100) : "denoise start")
         let began = Date()
         denoiseQueue.async {
             var noted = 0
-            let ok = session.makeDenoised(progress: { p in
+            let outcome = session.makeDenoised(progress: { p in
                 // the phone's real speed, for ⋯ → Send diagnostics
                 let quarter = Int(p * 4)
                 if quarter > noted, quarter < 4 {
                     noted = quarter
                     Diagnostics.shared.note("denoise \(quarter * 25)% after \(Int(Date().timeIntervalSince(began))) s")
                 }
+                // time left from this run's own pace (a continued clean starts part way)
                 let elapsed = Date().timeIntervalSince(began)
-                let left: Int? = p >= 0.08 ? Int((elapsed / p * (1 - p)).rounded()) : nil
+                let left: Int? = p - from >= 0.05 ? Int((elapsed / (p - from) * (1 - p)).rounded()) : nil
                 Task { @MainActor [weak self] in
                     guard let self, self.denoiseProgress != nil else { return }
                     self.denoiseProgress = p
                     self.denoiseSecondsLeft = left
                 }
-            }, cancelled: { [weak self] in self?.denoiseCancel ?? true }, log: { Diagnostics.shared.note($0) })
-            let stopped = self.denoiseCancel
+            }, pause: { [weak self] in self?.denoisePausing ?? true },
+               cancelled: { [weak self] in self?.denoiseCancel ?? true }, log: { Diagnostics.shared.note($0) })
+            let ok = outcome == .done, stopped = outcome == .paused || outcome == .cancelled
             LumenGPU.context.clearCaches()
             Diagnostics.shared.note(ok ? "denoise done in \(Int(Date().timeIntervalSince(began))) s: \(EditSession.denoiseTimings)"
-                                    : stopped ? "denoise stopped (cancelled or the app left the screen)" : "denoise failed")
+                                    : outcome == .paused ? "denoise paused (Lumen left the screen): it carries on from here"
+                                    : outcome == .cancelled ? "denoise cancelled" : "denoise failed")
             Task { @MainActor [weak self] in
                 // the model is let go of straight after a clean (owner's phone, 0.1.394: keeping it while Detail was
                 // open held ~600 MB, and iOS closed Lumen when it came back to the screen)
@@ -356,9 +377,11 @@ final class EditorViewModel: ObservableObject {
                 guard self.session === session else { if ok { self.reloadSource() }; return }
                 if !ok { self.prepareAutoMasksIfNeeded(); self.refreshUnhealed() }
                 if ok {
-                    if self.denoiseRequested && self.settings.aiDenoise == 0 {
+                    let target = self.denoiseTarget ?? 100
+                    self.denoiseTarget = nil
+                    if self.denoiseRequested && self.settings.aiDenoise != target {
                         self.denoiseRequested = false
-                        self.settings.aiDenoise = 100      // an undo step; decoding again follows from the change
+                        self.settings.aiDenoise = target   // an undo step; decoding again follows from the change
                     } else {
                         self.denoiseRequested = false
                         self.reloadSource()
@@ -392,7 +415,7 @@ final class EditorViewModel: ObservableObject {
 
     private func warmDenoiseIfNeeded() {
         refreshDenoiseReady()
-        guard detailOpen, !denoiseReady, !denoiseWarming, denoiseProgress == nil, EditSession.hasDenoiseModel,
+        guard detailOpen, !denoiseReady, !denoiseWarming, denoiseProgress == nil, store?.denoiseBatch == nil, EditSession.hasDenoiseModel,
               Diagnostics.availableMB > 1500, UIApplication.shared.applicationState != .background else { return }
         denoiseWarming = true
         denoiseQueue.async {
@@ -1297,11 +1320,16 @@ final class EditorViewModel: ObservableObject {
     // MARK: Paste some edits
 
     /// Pastes only the chosen tools from the copied edits.
-    func paste(_ sections: Set<EditSection>, from c: EditSettings) {
+    func paste(_ sections: Set<EditSection>, from c: EditSettings, denoise: Bool = false) {
         lastChange = .distantPast
         var s = settings
         for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: c) }
-        s.aiDenoise = settings.aiDenoise   // AI Denoise is made for one photo (a clean each): never pasted, like heals
+        // AI Denoise needs a clean of this photo (about a minute): only pasted when asked for, then cleaned at once
+        s.aiDenoise = settings.aiDenoise
+        if denoise, c.aiDenoise > 0 {
+            if session?.hasDenoised == true { s.aiDenoise = c.aiDenoise }
+            else { denoiseTarget = c.aiDenoise; DispatchQueue.main.async { [weak self] in self?.startDenoise() } }
+        }
         if sections.contains(.masks), let id = settings.lensBlur.maskID,
            let ownFocus = settings.masks.first(where: { $0.id == id }) {
             s.masks.removeAll { $0.id == id }; s.masks.append(ownFocus)

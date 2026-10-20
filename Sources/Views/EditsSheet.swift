@@ -81,9 +81,11 @@ struct EditsSheet: View {
 /// except Crop (a crop rarely fits another photo; Lightroom leaves it out by default too).
 struct PasteSomeSheet: View {
     let clip: EditSettings
-    let paste: (Set<EditSection>) -> Void
+    /// The sections, and whether AI Denoise goes too (it needs a clean of this photo).
+    let paste: (Set<EditSection>, Bool) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var chosen: Set<EditSection> = []
+    @State private var denoise = false
 
     var body: some View {
         NavigationStack {
@@ -107,14 +109,29 @@ struct PasteSomeSheet: View {
                 } footer: {
                     Text("Only the ticked tools are pasted. Everything else on this photo stays as it is.")
                 }
+                if clip.aiDenoise > 0, EditSession.hasDenoiseModel {
+                    Section {
+                        Toggle(isOn: $denoise) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "wand.and.sparkles").frame(width: 26)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("AI Denoise \(Int(clip.aiDenoise))")
+                                    Text("Cleans this photo: about a minute (2 for 48 MP ProRAW)")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("paste-toggle-denoise")
+                    }
+                }
             }
             .navigationTitle("Paste some edits")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Paste") { paste(chosen); dismiss() }
-                        .disabled(chosen.isEmpty)
+                    Button("Paste") { paste(chosen, denoise); dismiss() }
+                        .disabled(chosen.isEmpty && !denoise)
                         .accessibilityIdentifier("paste-go")
                 }
             }

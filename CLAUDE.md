@@ -57,7 +57,20 @@
   Denoise reads whole only with room for the RAW decode too (+50 MB/MP). Cleaned copies moved to Application
   Support (out of Files), excluded from backup, orphans swept at launch. Diagnostics: a 2 s heartbeat in the state
   file ("last seen HH:MM:SS using N MB"), background written at once, iOS's daily exit counts (MXMetricPayload),
-  iOS reports capped at 20 KB. Open: paste keepOwn doesn't keep flips/transform or Heal's on/off (not fixed).
+  iOS reports capped at 20 KB.
+- **21 Oct (#76): one clean for HDR on and off, pause/resume, batch paste.** Results now keep the *noise* the model
+  took out (`.noise`, RGBA half floats, linear light x scale, alpha 1; 0 where the model input was >= 0.98) in one
+  file per photo (`<stem>-noise.json`); every decode takes it out by the amount (kernel `lumenNoiseRemove`), in either
+  HDR mode (noise is in shadows/midtones, where both decodes match; engine test "AI Denoise in the other HDR mode"
+  + sheet `denoise-other-mode.jpg`). Older cleaned-copy results (per mode, `kind` nil) are still read. A clean pauses
+  (Lumen leaves the screen: `pause`) keeping rows so far + `<stem>-noise.partial.json`, and continues from there next
+  time (also after a swipe-away: opening the photo carries on, the library shows "AI Denoise paused on ... ·
+  Continue"; not by itself after iOS closed Lumen mid-clean: `Diagnostics.closedDuringLastRun`). `makeDenoised`
+  returns `DenoiseOutcome` and takes a job lock (one clean at a time). Paste: AI Denoise only when asked (library:
+  "Paste AI Denoise too?" with a time estimate, max `denoiseBatchCap` = 5 photos, cleaned one after another by
+  `LibraryStore.cleanWithAIDenoise` with a progress banner, Cancel, pause/continue, queue kept in UserDefaults;
+  editor's Paste some: an AI Denoise toggle). Library paste keepOwn keeps flips/perspective (`take(.crop)`) and Heal's
+  on/off. `RowShrinker<P: ShrinkPixel>` serves UInt16 and Float16 rows.
 - Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
   peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
   iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.

@@ -241,7 +241,7 @@ extension EditSession {
         denoiseAmount = s.effective.aiDenoise / 100
         // an export must show the AI Denoise it was asked for: make the cleaned copy now if it isn't there yet
         if denoiseAmount > 0, !hasDenoised, Self.hasDenoiseModel {
-            let ok = makeDenoised()
+            let ok = makeDenoised() == .done
             Self.releaseDenoiseModel()
             // never quietly export without the AI Denoise that was asked for
             guard ok else { return nil }
