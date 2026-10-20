@@ -8,6 +8,23 @@
 - Tell Angelo which of the two each change has reached.
 - App Store pricing, Free vs Pro, claims and the marketing plan: `MARKETING.md` on the sandbox branch (`Lumen-Sandbox\MARKETING.md`). Keep it out of main.
 
+## AI Denoise (0.1.360, 20 Oct; owner asked for it)
+- Model: SCUNet colour real-noise (cszn/SCUNet, Apache-2.0). Weights pinned: HF `WAS/was-node-suite-weights` revision
+  dcc864ea…, SHA-256 fa78899b… (`.github/ci/denoise-convert/fetch.py`). Converted in CI to Core ML, float16, fixed
+  512 x 512 tiles (`build-denoise.sh`, cached with the other models; on failure an empty `Denoise.mlmodelc` keeps the
+  project building and the slider is hidden). `scunet.py` change: the shifted-window attention mask is built in NumPy
+  (Core ML can't convert the original's slice fills). NAFNet-SIDD was tested and lost (speckles at high ISO).
+- WSL on the owner's PC crashes converting it (7 GB): don't retry locally; CI Macs swap and manage.
+- App (`Sources/Edit/Denoise.swift`): `makeDenoised` cleans the full-size camera decode (no heals) once, tiles keep a
+  32 px margin (no blending), runs on `.cpuAndNeuralEngine` (on the GPU the CI Mac ran out of memory at 24 MP), saves a
+  16-bit PNG + json per photo and HDR mode in Library/denoise (`DenoiseStore`, removed with the photo). Every decode
+  mixes it in by `EditSettings.aiDenoise` (0...100) with `withDenoise`, keeping highlights above the cleaned range.
+  Export makes it if missing. Detail → Noise reduction → AI Denoise; progress capsule `denoise-busy`.
+- Measured on the CI Mac (no Neural Engine, CPU): ~6.8 s per tile; 24 MP ARW = 126 tiles, 668 s; memory +~190 MB.
+  Phone speed is not measured yet (Neural Engine should be far faster): check ⋯ → Send diagnostics after a first run.
+- Engine test: Gaussian noise std 0.04 on cat.jpg: error 0.039 → 0.011, edges 95 % kept, 50 % mixes between, 0 = off,
+  files removed; sheet `denoise.jpg`. Memory test step "AI denoise". Sandbox: Pro (`usesProFeatures`).
+
 ## Status — 19 October (overnight stability work; SideStore 0.1.311+)
 - **Send diagnostics** (⋯ menu in editor and library, `Sources/Diagnostics.swift`): memory log in Library/Diagnostics
   (`Diagnostics.shared.note(...)` at photo open, heal steps, 100 % copy, export, memory warnings; a 2 s sampler logs big
