@@ -432,6 +432,31 @@ final class LumenUITests: XCTestCase {
 
     // MARK: undo / redo
 
+    /// ⋯ → History lists the edit steps; tapping the first ("Opened") goes back to how the photo opened, and redo
+    /// brings the edit back (owner's request, 21 Oct: like Lightroom's history).
+    func testHistoryGoesBack() {
+        launch(open: 0, tool: "Light")
+        let s = el("slider-Highlights")
+        XCTAssertTrue(s.waitForExistence(timeout: 30))
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        sleep(2)
+        XCTAssertNotEqual(valueOf("reset-Highlights"), "0", "the drag should change Highlights")
+        el("btn-menu").tap()
+        let item = app.buttons["menu-history"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "the ⋯ menu should have History")
+        item.tap()
+        let steps = app.buttons.matching(identifier: "history-step")
+        XCTAssertTrue(steps.firstMatch.waitForExistence(timeout: 5), "History should list the steps")
+        XCTAssertGreaterThanOrEqual(steps.count, 2, "History should show the edit and how it opened")
+        XCTAssertTrue(steps.firstMatch.label.contains("Highlights"), "the newest step should name Highlights (\(steps.firstMatch.label))")
+        shot("history")
+        steps.element(boundBy: steps.count - 1).tap()
+        sleep(2)
+        XCTAssertEqual(valueOf("reset-Highlights"), "0", "going back to Opened should undo the edit")
+        XCTAssertTrue(el("btn-redo").isEnabled, "redo should bring it back")
+    }
+
     func testUndoRedoRestoresSliderValue() {
         launch(open: 0, tool: "Light")
         XCTAssertFalse(el("btn-undo").isEnabled, "undo should be disabled before any edit")

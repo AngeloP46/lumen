@@ -61,6 +61,7 @@ struct EditorView: View {
     @State private var showEdits = false
     @State private var showPhotoInfo = false
     @State private var showDiagnostics = false
+    @State private var showHistory = false
     @State private var showPasteSome = false
     @State private var wbMark: CGPoint?
 
@@ -205,6 +206,7 @@ struct EditorView: View {
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .sheet(isPresented: $showEdits) { EditsSheet(vm: vm) }
         .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
+        .sheet(isPresented: $showHistory) { HistorySheet(vm: vm) }
         .sheet(isPresented: $showPhotoInfo) { PhotoInfoView(item: item, url: store.fileURL(item)) }
         .sheet(isPresented: $showPasteSome) {
             if let c = store.clipboard { PasteSomeSheet(clip: c) { vm.paste($0, from: c, denoise: $1) } }
@@ -680,12 +682,14 @@ struct EditorView: View {
             Menu {
                 // Short, flat, most-used first. Nothing in here changes while the menu is open.
                 Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
-                Button { if var c = store.clipboard { c.heals = vm.settings.heals; vm.settings = c } } label: {
+                Button { if var c = store.clipboard { c.heals = vm.settings.heals; c.aiDenoise = vm.settings.aiDenoise; vm.settings = c } } label: {
                     Label("Paste edits", systemImage: "doc.on.clipboard")
                 }.disabled(store.clipboard == nil)
                 Button { showPasteSome = true } label: {
                     Label("Paste some edits…", systemImage: "checklist")
                 }.disabled(store.clipboard == nil)
+                Button { showHistory = true } label: { Label("History", systemImage: "clock.arrow.circlepath") }
+                    .accessibilityIdentifier("menu-history")
                 Button(role: .destructive) { vm.reset() } label: { Label("Reset all edits", systemImage: "arrow.counterclockwise") }
                 Divider()
                 Button { go(-1) } label: { Label("Previous photo", systemImage: "chevron.left") }.disabled(neighbour(-1) == nil)

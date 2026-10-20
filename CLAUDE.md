@@ -78,6 +78,11 @@
   "waiting for ..."); one long job at a time; short of room when alone, `HeavyWork.release` clears GPU caches and
   mask models first; optional jobs (100 % copy, original copy) are skipped instead ("skipped, N MB free").
   Light work (preview, thumbnails, histogram, preset previews) doesn't go through it.
+- **History (21 Oct, owner: like Lightroom, don't overdo it)**: ⋯ → History (`menu-history`, `HistorySheet`) lists
+  the steps of the photo's undo history newest first, named by `EditSettings.historyLabel(from:)` (Mirror diff:
+  one slider = "Highlights +34", masks/heals "Mask added"/"Heal", many at once "Preset or pasted edits" or "Reset");
+  tap = `goBack(n)` (redo comes forward). UI test `testHistoryGoesBack`. The plain ⋯ → Paste edits keeps the photo's
+  own AI Denoise (Paste some edits can include it). Ratings and flags already exist in ⋯ → Rating and flags.
 - Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
   peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
   iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.

@@ -946,6 +946,35 @@ final class EditorViewModel: ObservableObject {
         lastChange = .distantPast
     }
 
+    /// One step of the History list (newest first). `back` = how many undo steps away it is (0 = now).
+    struct HistoryStep: Identifiable { let id: Int; let label: String; let back: Int }
+
+    /// The edit steps since the photo's undo history began, newest first, ending with how it was opened.
+    var historySteps: [HistoryStep] {
+        let states = undoStack + [settings]
+        var steps: [HistoryStep] = []
+        for k in stride(from: states.count - 1, to: 0, by: -1) {
+            steps.append(HistoryStep(id: k, label: states[k].historyLabel(from: states[k - 1]), back: states.count - 1 - k))
+        }
+        steps.append(HistoryStep(id: 0, label: undoStack.count >= 100 ? "Earlier" : "Opened", back: states.count - 1))
+        return steps
+    }
+
+    /// Goes back `n` steps at once (History list); redo comes forward again.
+    func goBack(_ n: Int) {
+        guard !healBusy, n > 0, n <= undoStack.count else { return }
+        var current = settings
+        for _ in 0..<n {
+            guard let last = undoStack.popLast() else { break }
+            redoStack.append(current)
+            current = last
+        }
+        applyingHistory = true
+        settings = current
+        applyingHistory = false
+        lastChange = .distantPast
+    }
+
     func redo() {
         guard !healBusy, let next = redoStack.popLast() else { return }
         undoStack.append(settings)
