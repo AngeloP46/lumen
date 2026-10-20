@@ -59,6 +59,8 @@ struct LumenKernels {
     var skyWeigh: CIColorKernel?, leafWeigh: CIColorKernel?, skyGaps: CIColorKernel?
     /// Full-resolution texture for big heals (optional: without it big heals keep the model's softer fill).
     var healDetail: CIColorKernel?, healEnergy: CIColorKernel?
+    /// AI Denoise: the stored noise taken out of a decode (optional: without it AI Denoise is off).
+    var noiseRemove: CIColorKernel?
 
     static let shared: LumenKernels? = {
         var url = LumenGPU.libraryURL
@@ -83,7 +85,8 @@ struct LumenKernels {
                             lensWeigh: k("lumenLensWeigh"), lensCompose: k("lumenLensCompose"),
                             gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
                             skyWeigh: k("lumenSkyWeigh"), leafWeigh: k("lumenLeafWeigh"), skyGaps: k("lumenSkyGaps"),
-                            healDetail: k("lumenHealDetail"), healEnergy: k("lumenHealEnergy"))
+                            healDetail: k("lumenHealDetail"), healEnergy: k("lumenHealEnergy"),
+                            noiseRemove: k("lumenNoiseRemove"))
     }()
 }
 
@@ -502,17 +505,33 @@ final class EditSession: @unchecked Sendable {
     /// Decodes and analyses the photo. `materialize` renders the pieces into GPU buffers so slider drags are cheap.
     func makeSource(maxEdge: CGFloat?, materialize: Bool) -> ImageSource? {
         guard LumenKernels.shared != nil, let decoded = decode(maxEdge: maxEdge) else { return nil }
-        var base = decoded
-        if materialize, let m = Self.materialized(decoded) { base = m }
-        return analyse(base, materialize: materialize)
+        return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
+    }
+
+    /// The decoded photo in a GPU buffer. If that fails the lazy graph is used, which re-runs the RAW engine for every
+    /// render (21 Oct review: a likely cause of memory running out), so it is tried again once and logged.
+    private func materializedOrLazy(_ decoded: CIImage, _ materialize: Bool) -> CIImage {
+        guard materialize else { return decoded }
+        if let m = Self.materialized(decoded) { return m }
+        ctx.clearCaches()
+        if let m = Self.materialized(decoded) { return m }
+        Self.stepNote?("couldn't keep a \(Int(decoded.extent.width))x\(Int(decoded.extent.height)) copy in memory: working from the file")
+        return decoded
     }
 
     /// The same with an explicit heal list (the before view and the split compare use the photo without heals).
-    func makeSource(maxEdge: CGFloat?, materialize: Bool, heals list: [HealSpot]) -> ImageSource? {
-        guard LumenKernels.shared != nil, let decoded = decode(maxEdge: maxEdge, heals: list) else { return nil }
-        var base = decoded
-        if materialize, let m = Self.materialized(decoded) { base = m }
-        return analyse(base, materialize: materialize)
+    func makeSource(maxEdge: CGFloat?, materialize: Bool, heals list: [HealSpot], denoise: Bool = true) -> ImageSource? {
+        guard LumenKernels.shared != nil else { return nil }
+        let decoded: CIImage?
+        if denoise { decoded = decode(maxEdge: maxEdge, heals: list) }
+        else {
+            // the original: as the camera made it (no AI Denoise), with only the heals asked for
+            decodeLock.lock()
+            decoded = decodeCamera(maxEdge: maxEdge).map { HealStore.apply(list, to: $0) }
+            decodeLock.unlock()
+        }
+        guard let decoded else { return nil }
+        return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
     }
 
     private func analyse(_ base: CIImage, materialize: Bool) -> ImageSource? {

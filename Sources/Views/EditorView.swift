@@ -193,7 +193,7 @@ struct EditorView: View {
                         ProgressView(value: p).tint(.white).frame(width: 220)
                         Text(p < 0.02 ? "Getting ready…" : "\(Int(p * 100))%" + (vm.denoiseSecondsLeft.map { " · about \($0) s left" } ?? ""))
                             .font(.subheadline).monospacedDigit()
-                        Text("Keep Lumen open until it finishes.").font(.caption).foregroundStyle(.secondary)
+                        Text("If you leave Lumen it pauses, and carries on when you're back.").font(.caption).foregroundStyle(.secondary)
                         Button("Cancel", role: .cancel) { vm.cancelDenoise() }
                             .buttonStyle(.bordered).accessibilityIdentifier("denoise-cancel")
                     }
@@ -235,7 +235,7 @@ struct EditorView: View {
         .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
         .sheet(isPresented: $showPhotoInfo) { PhotoInfoView(item: item, url: store.fileURL(item)) }
         .sheet(isPresented: $showPasteSome) {
-            if let c = store.clipboard { PasteSomeSheet(clip: c) { vm.paste($0, from: c) } }
+            if let c = store.clipboard { PasteSomeSheet(clip: c) { vm.paste($0, from: c, denoise: $1) } }
         }
         .onChange(of: vm.wbPicking) { _, on in if !on { wbMark = nil } }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },

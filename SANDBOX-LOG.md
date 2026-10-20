@@ -252,3 +252,10 @@ Still Pro. No Store code changed.
 ## 21 Oct 2026: crash report, memory after AI Denoise (from main #72, SideStore 0.1.414)
 Send diagnostics: short crash report first after a crash (last 3 closures, step before each), compact full report.
 AI Denoise reads through its own decoder; 4096 px small copy; photo-open steps logged. No Store code changed.
+
+## 21 Oct 2026: big photos, edge cases, one clean for HDR on/off (from main #74, #75, #76; SideStore 0.1.436+)
+100 % view memory scaled by photo size; crash report and step logging; no automatic AI Denoise cleans; original view
+without AI Denoise; paste/presets keep own AI Denoise; export masks on big photos from a small copy; storage hygiene;
+diagnostics heartbeat; AI Denoise keeps the noise (one clean for HDR on and off), pauses and resumes (also after a
+swipe-away), opt-in batch paste (max 5) with progress; paste keeps flips/perspective/Heal on-off. AI Denoise stays Pro
+(aiDenoise > 0). No Store code changed.
