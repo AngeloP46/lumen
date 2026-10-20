@@ -1054,6 +1054,8 @@ final class LumenUITests: XCTestCase {
         el("lib-paste").tap()
         let look = app.buttons["Paste the look (keep each photo's crop and masks)"]
         XCTAssertTrue(look.waitForExistence(timeout: 5), "Paste edits should offer pasting the look")
+        XCTAssertTrue(app.buttons["Paste the look and masks (keep each photo's crop)"].exists,
+                      "Paste edits should offer pasting the look and masks")
         look.tap()
         XCTAssertTrue(el("library-notice").waitForExistence(timeout: 5), "pasting should confirm")
         el("btn-select-done").tap()

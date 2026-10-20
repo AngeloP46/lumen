@@ -459,8 +459,9 @@ final class LibraryStore: ObservableObject {
     }
 
     /// Puts `edits` on every photo in `list`. `keepOwn` keeps each photo's own crop, straighten, rotation and masks
-    /// (those belong to one picture), so only the look is copied.
-    func apply(_ edits: EditSettings, to list: [LibraryItem], keepOwn: Bool) {
+    /// (those belong to one picture), so only the look is copied; `masks` then copies the masks too (worked out again
+    /// on each photo) while still keeping each photo's crop.
+    func apply(_ edits: EditSettings, to list: [LibraryItem], keepOwn: Bool, masks pasteMasks: Bool = false) {
         for item in list {
             var s = edits
             let own = settings(for: item)
@@ -472,8 +473,15 @@ final class LibraryStore: ObservableObject {
             s.heals = own.heals   // heals are made for one photo's pixels: always keep each photo's own
             s.aiDenoise = own.aiDenoise   // so is AI Denoise (a clean each): pasting never starts or drops one
             s.setOn(.heal, own.isOn(.heal))   // Heal's on/off belongs with the photo's own heals
+            if keepOwn && pasteMasks {
+                // the clipboard's masks, adapted to this photo, plus this photo's own Lens Blur focus mask
+                let focus = own.lensBlur.maskID.flatMap { id in own.masks.first { $0.id == id } }
+                s.masks = edits.masks.filter { $0.id != edits.lensBlur.maskID }.forAnotherPhoto + (focus.map { [$0] } ?? [])
+            } else if !keepOwn {
+                s.masks = s.masks.forAnotherPhoto
+            }
             if keepOwn {
-                s.masks = own.masks
+                if !pasteMasks { s.masks = own.masks }
                 // crop, straighten, turns, flips and perspective all belong to one picture (21 Oct review: flips and
                 // the Transform sliders used to be pasted over)
                 s.take(.crop, from: own)

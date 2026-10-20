@@ -1365,6 +1365,7 @@ final class EditorViewModel: ObservableObject {
         lastChange = .distantPast
         var s = settings
         for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: c) }
+        if sections.contains(.masks) { s.masks = s.masks.forAnotherPhoto }
         // AI Denoise needs a clean of this photo (about a minute): only pasted when asked for, then cleaned at once
         s.aiDenoise = settings.aiDenoise
         if denoise, c.aiDenoise > 0 {

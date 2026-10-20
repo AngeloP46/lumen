@@ -83,6 +83,10 @@
   one slider = "Highlights +34", masks/heals "Mask added"/"Heal", many at once "Preset or pasted edits" or "Reset");
   tap = `goBack(n)` (redo comes forward). UI test `testHistoryGoesBack`. The plain ⋯ → Paste edits keeps the photo's
   own AI Denoise (Paste some edits can include it). Ratings and flags already exist in ⋯ → Rating and flags.
+- **Paste masks (21 Oct, owner's yes)**: library Paste edits has "Paste the look and masks (keep each photo's crop)"
+  (`apply(..., masks: true)`); pasted masks go through `[Mask].forAnotherPhoto` (AI parts are worked out again on
+  each photo, a tapped subject point becomes that photo's detected subject; brushes and gradients stay put), the
+  photo's own Lens Blur focus mask is kept; editor Paste some does the same. Thumbnails work out AI masks too.
 - Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
   peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
   iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.

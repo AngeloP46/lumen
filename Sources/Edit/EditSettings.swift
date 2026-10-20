@@ -678,3 +678,17 @@ extension EditSettings {
         return self == EditSettings() ? "Reset" : "Preset or pasted edits"
     }
 }
+
+
+extension Array where Element == Mask {
+    /// These masks put on a different photo: AI parts (subject, sky, people, landscape, depth) are worked out again
+    /// there by themselves; a subject picked by a tap becomes that photo's detected subject (the tap was on the other
+    /// photo). Brushes and gradients stay where they are, as in Lightroom.
+    var forAnotherPhoto: [Mask] {
+        map { m in
+            var m = m
+            for i in m.components.indices where m.components[i].kind == .subject { m.components[i].subjectPoint = nil }
+            return m
+        }
+    }
+}
