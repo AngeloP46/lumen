@@ -96,6 +96,8 @@ final class LibraryStore: ObservableObject {
         }
         // healed patches (Heal tool) live with the library so they survive app updates
         HealStore.directory = root.appendingPathComponent("heals", isDirectory: true)
+        // AI Denoise's cleaned copies (one per photo and HDR mode), removed with the photo
+        DenoiseStore.directory = root.appendingPathComponent("denoise", isDirectory: true)
         try? fm.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         // Smart fill (beta, 0.1.154) was taken out again: free the ~950 MB it may have downloaded
         if testRoot == nil {
@@ -578,6 +580,7 @@ final class LibraryStore: ObservableObject {
         }
         // reading every other photo's edits is only needed when this one has Heal patches to clean up
         let retained = patches.isEmpty ? Set<UUID>() : retainedHealIDs(excluding: item)
+        DenoiseStore.remove(fileURL(item))
         for u in [fileURL(item), thumbURL(item), editURL(item), historyURL(item)] { try? fm.removeItem(at: u) }
         // The thumbnail queue is serial: this runs after any render already in flight for this photo.
         let thumb = thumbURL(item)

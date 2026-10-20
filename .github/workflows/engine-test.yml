@@ -45,12 +45,13 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 pinned
         with:
           path: Models/.verified-packages
-          key: models-verified-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/ci/model-lock.json', '.github/ci/heal-convert/**') }}
+          key: models-verified-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/ci/model-lock.json', '.github/ci/heal-convert/**', '.github/ci/denoise-convert/**') }}
       - name: AI models (depth, scene, heal)
         run: |
           bash .github/ci/get-depth-model.sh Models
           bash .github/ci/get-seg-model.sh Models
           bash .github/ci/get-heal-model.sh Models
+          bash .github/ci/denoise-convert/build-denoise.sh Models
       - name: Build kernels and test tool
         run: |
           mkdir -p out
@@ -58,7 +59,7 @@ jobs:
           xcrun -sdk macosx metallib -cikernel out/k.air -o out/k.metallib
           swiftc -Onone -g -o out/engine-test \
             Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift \
-            Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift \
+            Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift Sources/Edit/Denoise.swift \
             Sources/Edit/Histogram.swift Sources/Edit/PhotoInformation.swift Sources/Edit/Auto.swift \
             Tests/engine/main.swift
       - name: Run
@@ -71,6 +72,7 @@ jobs:
           export LUMEN_DEPTH_MODEL="$PWD/Models/DepthAnythingV2SmallF16.mlmodelc"
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
+          export LUMEN_DENOISE_MODEL="$PWD/Models/Denoise.mlmodelc"
           export LUMEN_HEAL_EXPECT_SIDE=800
           export LUMEN_PEOPLE_SAMPLE="$PWD/people/bus.jpg"
           export LUMEN_TREES_SAMPLE="$PWD/people/building.jpg"
@@ -90,6 +92,7 @@ jobs:
         if: ${{ always() && github.event.inputs.only != 'lens-blur' }}
         run: |
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
+          export LUMEN_DENOISE_MODEL="$PWD/Models/Denoise.mlmodelc"
           export LUMEN_HEAL_EXPECT_SIDE=800
           ./out/engine-test out/k.metallib samples out/memory --memory
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned

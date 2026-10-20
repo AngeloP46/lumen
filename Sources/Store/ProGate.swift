@@ -6,7 +6,8 @@ import Foundation
 extension EditSettings {
     var usesProFeatures: Bool {
         let s = effective
-        if s.hdr || !s.heals.isEmpty || s.lensBlur.amount > 0 { return true }
+        // AI Denoise is Pro like HDR, Heal and Lens Blur (no preset uses it)
+        if s.hdr || !s.heals.isEmpty || s.lensBlur.amount > 0 || s.aiDenoise > 0 { return true }
         if s.masks.contains(where: { !$0.adjust.isNeutral && $0.amount > 0 && !$0.components.isEmpty }) { return true }
         if s.matchesFreeRecipe(EditSettings()) { return false }
 

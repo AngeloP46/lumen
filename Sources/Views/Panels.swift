@@ -201,6 +201,7 @@ struct DetailPanel: View {
             vm.param("Dehaze", \.dehaze, section: "Effects"),
             vm.param("Sharpen", \.sharpness, range: 0...100, section: "Sharpening"),
             vm.param("Masking", \.sharpenMasking, range: 0...100, section: "Sharpening"),
+        ] + (EditSession.hasDenoiseModel ? [vm.param("AI Denoise", \.aiDenoise, range: 0...100, section: "Noise reduction")] : []) + [
             vm.param("Noise", \.noiseReduction, range: 0...100, section: "Noise reduction"),
             vm.param("Colour noise", \.colorNoise, range: 0...100, section: "Noise reduction"),
             vm.param("Vignette", \.vignette, section: "Vignette"),
