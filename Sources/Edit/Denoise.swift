@@ -26,7 +26,7 @@ protocol ShrinkPixel {
     static var opaque: Self { get }
 }
 extension UInt16: ShrinkPixel {
-    init(averaging value: Float) { self = UInt16(min(65535, max(0, value.rounded()))) }
+    init(averaging value: Float) { self = UInt16(Swift.min(65535, Swift.max(0, value.rounded()))) }
     var floatValue: Float { Float(self) }
     static var opaque: UInt16 { 65535 }
 }
