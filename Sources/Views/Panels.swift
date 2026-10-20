@@ -195,24 +195,9 @@ struct DetailPanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var sel = "Texture"
     var body: some View {
-        VStack(spacing: 0) {
-            // AI Denoise is a one-off job (tens of seconds, the screen locks), not a slider you drag: a button until the
-            // photo has been cleaned, then a strength slider in the list (instant, it only mixes)
-            if EditSession.hasDenoiseModel && !vm.denoiseReady {
-                Button { vm.startDenoise() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "wand.and.sparkles")
-                        Text("AI Denoise").font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Text("Removes noise · about a minute").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 14).frame(height: 40)
-                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12).padding(.top, 6)
-                .accessibilityIdentifier("btn-ai-denoise")
-            }
+        // AI Denoise is a one-off job (the screen locks with progress), not a slider you drag. Its pill sits in the
+        // actions row like Light's Auto and Colour's B&W: the first tap cleans the photo, then it is lit while AI
+        // Denoise is on and switches it off / on; the strength slider is in Noise reduction once the photo is cleaned.
         ParamPanel(items: [
             vm.param("Texture", \.texture, section: "Effects"),
             vm.param("Clarity", \.clarity, section: "Effects"),
@@ -229,9 +214,16 @@ struct DetailPanel: View {
             vm.param("Grain", \.grain, range: 0...100, section: "Grain"),
             vm.param("Grain size", \.grainSize, range: 0...100, neutral: 25, section: "Grain"),
             vm.param("Roughness", \.grainRoughness, range: 0...100, neutral: 50, section: "Grain"),
-        ], selected: $sel,
-           pageReset: { vm.settings.reset(.detail) }, pageResetEnabled: vm.settings.hasEdits(.detail))
-        }
+        ], selected: $sel, header: AnyView(
+            PanelActions(resetEnabled: vm.settings.hasEdits(.detail), reset: { vm.settings.reset(.detail) }) {
+                if EditSession.hasDenoiseModel {
+                    PillButton(title: "AI Denoise", system: "wand.and.sparkles", active: vm.denoiseReady && vm.settings.effective.aiDenoise > 0) {
+                        vm.toggleDenoise()
+                    }
+                    .accessibilityIdentifier("btn-ai-denoise")
+                    .accessibilityValue(vm.denoiseReady && vm.settings.effective.aiDenoise > 0 ? "on" : "off")
+                }
+            }))
     }
 }
 
