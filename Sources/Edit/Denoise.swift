@@ -4,10 +4,11 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// AI Denoise: NAFNet-SIDD-width32 (megvii-research/NAFNet, MIT, trained on real phone-camera noise), converted to
-/// Core ML in CI (.github/ci/denoise-convert, 512 x 512 tiles, float16), run on the Neural Engine. It replaced SCUNet
-/// on 20 Oct: SCUNet cleaned about 1 dB better but took over 2 s per tile on an iPhone 17 Pro Max (4+ minutes for a
-/// 24 MP photo, and iOS closed Lumen for memory); the owner wants one model that is consistently good and quick.
+/// AI Denoise: SCUNet's real-noise model (cszn/SCUNet, Apache-2.0), converted to Core ML in CI
+/// (.github/ci/denoise-convert, 512 x 512 tiles, float16), run on the GPU. History (20 Oct): SCUNet on the Neural
+/// Engine never got a quarter through a 24 MP photo in 100 s (its attention layers don't suit it); NAFNet-SIDD was
+/// quick there but left half the noise and wrecked bright tiles (float16 overflow). The owner wants one model that
+/// is good and quick, using the phone's chips to the full: SCUNet's quality on the GPU.
 ///
 /// The full-size photo as the camera made it (no heals) is cleaned once, tile by tile, and kept on disk per photo and
 /// HDR mode (`DenoiseStore`). Every decode then mixes it in by the AI Denoise amount, so preview, 100 % view, heals,
@@ -15,7 +16,7 @@ import UniformTypeIdentifiers
 enum DenoiseStore {
     nonisolated(unsafe) static var directory = FileManager.default.temporaryDirectory.appendingPathComponent("LumenDenoise")
     /// Changes when the model or the way it is run changes: older results are made again.
-    static let modelVersion = "nafnet-sidd32-512-1"
+    static let modelVersion = "scunet-real-512-gpu-1"
 
     struct Info: Codable {
         var model: String
@@ -65,11 +66,18 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "Denoise", withExtension: "mlmodelc")
     }()
-    /// The model on the Neural Engine (all convolutions, which it runs well; the CPU takes any layer it can't).
+    /// The model on the GPU. `LUMEN_DENOISE_UNITS=cpu` (CI: the Mac's virtual GPU ran out of memory at 24 MP) uses the CPU.
     private static let denoiseModel = LoadedModel<MLModel> {
         guard let url = denoiseModelURL else { return nil }
         let cfg = MLModelConfiguration()
-        cfg.computeUnits = .cpuAndNeuralEngine
+        cfg.computeUnits = ProcessInfo.processInfo.environment["LUMEN_DENOISE_UNITS"] == "cpu" ? .cpuOnly : .cpuAndGPU
+        return try? MLModel(contentsOf: url, configuration: cfg)
+    }
+    /// The same model on the CPU (full precision), for a tile the Neural Engine got wrong.
+    private static let denoiseCPU = LoadedModel<MLModel> {
+        guard let url = denoiseModelURL else { return nil }
+        let cfg = MLModelConfiguration()
+        cfg.computeUnits = .cpuOnly
         return try? MLModel(contentsOf: url, configuration: cfg)
     }
     /// What the last clean measured (seconds), for the diagnostics log.
@@ -77,7 +85,7 @@ extension EditSession {
     /// Only looks for the model's files (the Detail panel asks while drawing).
     static var hasDenoiseModel: Bool { modelFilesExist(denoiseModelURL) }
     /// Lets go of the model (it is only needed while a photo is being cleaned).
-    static func releaseDenoiseModel() { denoiseModel.release() }
+    static func releaseDenoiseModel() { denoiseModel.release(); denoiseCPU.release() }
 
     /// Whether the cleaned copy for the current HDR mode exists.
     var hasDenoised: Bool { DenoiseStore.info(originalURL, hdr: hdrDecode, size: nativeSize) != nil }
@@ -134,6 +142,7 @@ extension EditSession {
         var done = 0.0
         let plane = T * T
         var tileTimes: [Double] = []
+        var redone = 0
         for ty in ys {
             for tx in xs {
                 if cancelled?() == true { return false }
@@ -150,14 +159,57 @@ extension EditSession {
                         dst[2 * plane + i] = Float16(tile[i * 4 + 2])
                     }
                     let tp = Date()
-                    guard let features = try? MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(multiArray: input)]),
-                          let result = try? model.prediction(from: features),
-                          let o = result.featureValue(for: "output")?.multiArrayValue, o.dataType == .float16 else { return false }
-                    let st = o.strides.map(\.intValue)
-                    let src = o.dataPointer.bindMemory(to: Float16.self, capacity: o.count)
                     // keep the middle; at the photo's edges keep up to the edge
                     let x0 = tx == 0 ? 0 : margin, y0 = ty == 0 ? 0 : margin
                     let x1 = tx + T >= W ? min(T, W - tx) : T - margin, y1 = ty + T >= H ? min(T, H - ty) : T - margin
+                    func predict(_ m: MLModel) -> MLMultiArray? {
+                        guard let features = try? MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(multiArray: input)]),
+                              let result = try? m.prediction(from: features),
+                              let o = result.featureValue(for: "output")?.multiArrayValue, o.dataType == .float16 else { return nil }
+                        return o
+                    }
+                    // A denoised tile stays close to its input (noise is a few percent). Owner's phone, 0.1.381: some
+                    // tiles came back white or false-coloured from the Neural Engine (NAFNet, a float16 overflow); any
+                    // such tile is done again on the CPU (full precision), so it can never reach the photo.
+                    func plausible(_ o: MLMultiArray) -> Bool {
+                        let st = o.strides.map(\.intValue)
+                        let src = o.dataPointer.bindMemory(to: Float16.self, capacity: o.count)
+                        // on average close, and hardly any pixel far off (a wrecked patch can be small)
+                        var diff: Float = 0, n: Float = 0, far: Float = 0
+                        for y in stride(from: y0, to: y1, by: 4) {
+                            for x in stride(from: x0, to: x1, by: 4) {
+                                for c in 0..<3 {
+                                    let v = Float(src[c * st[1] + y * st[2] + x * st[3]])
+                                    guard v.isFinite else { return false }
+                                    let d = abs(min(1, max(0, v)) - min(1, max(0, tile[(y * T + x) * 4 + c])))
+                                    diff += d
+                                    if d > 0.3 { far += 1 }
+                                    n += 1
+                                }
+                            }
+                        }
+                        return n == 0 || (diff / n < 0.1 && far / n < 0.005)
+                    }
+                    var output = predict(model)
+                    if output.map(plausible) != true {
+                        redone += 1
+                        if redone == 1 { log?("denoise: tile \(Int(done) + 1) looked wrong from the GPU, redone on the CPU") }
+                        if let cpu = Self.denoiseCPU.model, let o = predict(cpu), plausible(o) { output = o }
+                        else { output = nil }
+                    }
+                    guard let o = output else {
+                        // keep the photo's own pixels for this tile rather than a wrong one
+                        for y in y0..<y1 {
+                            for x in x0..<x1 {
+                                let o4 = ((ty + y) * W + tx + x) * 4
+                                for c in 0..<3 { out[o4 + c] = UInt16(max(0, min(1, tile[(y * T + x) * 4 + c])) * 65535 + 0.5) }
+                            }
+                        }
+                        tileTimes.append(Date().timeIntervalSince(tp))
+                        return true
+                    }
+                    let st = o.strides.map(\.intValue)
+                    let src = o.dataPointer.bindMemory(to: Float16.self, capacity: o.count)
                     for y in y0..<y1 {
                         let row = (ty + y) * W
                         for x in x0..<x1 {
@@ -182,9 +234,9 @@ extension EditSession {
         }
         Self.healProbe?("denoise: tiles done")
         let sorted = tileTimes.sorted()
-        Self.denoiseTimings = String(format: "load %.1f s, %d tiles, median %.2f s/tile, first %.1f s",
+        Self.denoiseTimings = String(format: "load %.1f s, %d tiles, median %.2f s/tile, first %.1f s, %d redone on the CPU",
                                      loadSeconds, tileTimes.count, sorted.isEmpty ? 0 : sorted[sorted.count / 2],
-                                     tileTimes.first ?? 0)
+                                     tileTimes.first ?? 0, redone)
 
         // 3. keep it: 16-bit PNG (lossless) in the model's space, with the scale to undo
         try? FileManager.default.createDirectory(at: DenoiseStore.directory, withIntermediateDirectories: true)
