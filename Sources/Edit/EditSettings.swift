@@ -360,6 +360,8 @@ struct EditSettings: Codable, Equatable {
     var sharpenMasking: Double = 0 // 0...100
     var noiseReduction: Double = 0 // 0...100 (luminance)
     var colorNoise: Double = 0     // 0...100
+    /// AI Denoise strength, 0...100 (0 = off). The cleaned photo is made once per photo (Denoise.swift).
+    @Defaulted<DefaultZero> var aiDenoise: Double
     // Looks
     var curves = ToneCurves()
     var hsl = HSLSettings()
@@ -455,7 +457,7 @@ extension EditSettings {
             vignetteRoundness = d.vignetteRoundness
             grain = d.grain; grainSize = d.grainSize; grainRoughness = d.grainRoughness
             sharpness = d.sharpness; sharpenMasking = d.sharpenMasking
-            noiseReduction = d.noiseReduction; colorNoise = d.colorNoise
+            noiseReduction = d.noiseReduction; colorNoise = d.colorNoise; aiDenoise = d.aiDenoise
         case .masks:
             masks = d.masks
         case .heal:
@@ -488,7 +490,7 @@ extension EditSettings {
             vignetteRoundness = o.vignetteRoundness
             grain = o.grain; grainSize = o.grainSize; grainRoughness = o.grainRoughness
             sharpness = o.sharpness; sharpenMasking = o.sharpenMasking
-            noiseReduction = o.noiseReduction; colorNoise = o.colorNoise
+            noiseReduction = o.noiseReduction; colorNoise = o.colorNoise; aiDenoise = o.aiDenoise
         case .masks:
             masks = o.masks
         case .heal:
@@ -525,6 +527,7 @@ extension EditSettings {
         r.grainRoughness = m(a.grainRoughness, b.grainRoughness)
         r.sharpness = m(a.sharpness, b.sharpness); r.sharpenMasking = m(a.sharpenMasking, b.sharpenMasking)
         r.noiseReduction = m(a.noiseReduction, b.noiseReduction); r.colorNoise = m(a.colorNoise, b.colorNoise)
+        r.aiDenoise = m(a.aiDenoise, b.aiDenoise)
         for i in r.hsl.bands.indices where i < a.hsl.bands.count {
             r.hsl.bands[i] = HSLBand(hue: m(a.hsl.bands[i].hue, b.hsl.bands[i].hue),
                                      sat: m(a.hsl.bands[i].sat, b.hsl.bands[i].sat),

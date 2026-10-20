@@ -396,6 +396,15 @@ final class EditSession: @unchecked Sendable {
         set { decodeLock.lock(); healList = newValue; decodeLock.unlock() }
     }
     private var healList: [HealSpot] = []
+    /// AI Denoise amount (0...1) mixed into every decode when the cleaned copy exists (Denoise.swift). Set from the
+    /// edits like `heals`.
+    var denoiseAmount: Double {
+        get { decodeLock.lock(); defer { decodeLock.unlock() }; return denoiseValue }
+        set { decodeLock.lock(); denoiseValue = newValue; decodeLock.unlock() }
+    }
+    private var denoiseValue: Double = 0
+    /// Decoded in HDR mode (RAW with extended range, gain-map photos expanded): AI Denoise keeps one copy per mode.
+    let hdrDecode: Bool
 
     // Look table cache
     private let cubeLock = NSLock()
@@ -410,6 +419,7 @@ final class EditSession: @unchecked Sendable {
     /// path unchanged.
     init?(url: URL, expandHDR: Bool = false) {
         originalURL = url
+        hdrDecode = expandHDR
         let isRaw = UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .rawImage) ?? false
         if isRaw, let f = CIRAWFilter(imageURL: url) {
             f.extendedDynamicRangeAmount = expandHDR ? 2.0 : 1.0
@@ -453,8 +463,20 @@ final class EditSession: @unchecked Sendable {
         return HealStore.apply(healList, to: img)
     }
 
-    /// The photo as the camera made it, without heals (Heal needs it to rebuild a spot from scratch).
+    /// The photo without heals (Heal needs it to rebuild a spot from scratch), with AI Denoise if it is on.
     func decodeUnhealed(maxEdge: CGFloat?) -> CIImage? {
+        guard let img = decodeCamera(maxEdge: maxEdge) else { return nil }
+        return withDenoise(img, amount: denoiseValue)
+    }
+
+    /// `decodeCamera` taking the decode lock (AI Denoise reads the photo this way).
+    func decodeCameraLocked(maxEdge: CGFloat?) -> CIImage? {
+        decodeLock.lock(); defer { decodeLock.unlock() }
+        return decodeCamera(maxEdge: maxEdge)
+    }
+
+    /// The photo exactly as the camera made it (no heals, no AI Denoise).
+    func decodeCamera(maxEdge: CGFloat?) -> CIImage? {
         let longEdge = max(nativeSize.width, nativeSize.height)
         let target = maxEdge.map { min(1, $0 / longEdge) } ?? 1
         if let raw {
