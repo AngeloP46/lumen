@@ -211,6 +211,9 @@ final class EditorViewModel: ObservableObject {
                 self.source = src
                 self.sourceHeals = heals.map(\.id)
                 self.unhealedSource = nil   // belonged to the previous photo
+                // what runs next is logged step by step (owner's phone, 21 Oct: a 48 MP ProRAW closed Lumen 2-4 s after
+                // opening, with nothing in the log to say which step)
+                Diagnostics.shared.note("photo ready (\(heals.count) heals, AI Denoise \(Int(denoise * 100)), Lens Blur \(Int(self.settings.effective.lensBlur.amount)), \(self.settings.masks.count) masks, HDR \(wantsHDR))")
                 self.isLoading = false
                 self.loadFailed = (src == nil)
                 if let src { self.imageSize = src.size; self.sourceSize = src.size }
@@ -848,6 +851,7 @@ final class EditorViewModel: ObservableObject {
         if lensBlurEditing { snapshot.lensBlur.amount = max(snapshot.lensBlur.amount, 1) }
         let analysisSettings = snapshot
         autoMaskBusy = true
+        Diagnostics.shared.note("AI masks: working them out")
         let slow = DemoMode.value("-lumenDemoSlowAI") != nil   // CI: time to see the busy notice
         workQueue.async {
             if slow { Thread.sleep(forTimeInterval: 4) }
@@ -1116,6 +1120,7 @@ final class EditorViewModel: ObservableObject {
         unhealedSource = nil
         let hdr = settings.hdr
         let generation = loadGeneration
+        Diagnostics.shared.note("copy without heals: making it")
         workQueue.async {
             let src = session.makeSource(maxEdge: 2560, materialize: true, heals: [])
             Task { @MainActor [weak self] in

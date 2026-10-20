@@ -25,13 +25,14 @@ enum DenoiseStore {
         var width: Int
         var height: Int
         var file: String
-        /// A copy at most `previewEdge` px long for the preview, thumbnails and the unhealed view (20 Oct: every
-        /// decode read the whole 24 MP file, ~400 MB at a time, and opening a cleaned photo was slow).
+        /// A copy at most `previewEdge` px long for the preview, the 100 % view's copy, thumbnails and the unhealed view
+        /// (20 Oct: every decode read the whole file, ~400 MB at a time; 21 Oct: the 100 % view of a 48 MP ProRAW
+        /// still read the whole 372 MB result at 2560 px, so the copy is 4096 px, as big as that view's copy).
         var preview: String? = nil
         var previewWidth: Int? = nil
         var previewHeight: Int? = nil
     }
-    static let previewEdge = 2560
+    static let previewEdge = 4096
 
     static func key(_ photo: URL, hdr: Bool) -> String { photo.deletingPathExtension().lastPathComponent + (hdr ? "-hdr" : "-sdr") }
     static func infoURL(_ photo: URL, hdr: Bool) -> URL { directory.appendingPathComponent(key(photo, hdr: hdr) + ".json") }
@@ -165,7 +166,10 @@ extension EditSession {
 
         // 1. the photo (not decoded yet: each row of tiles is decoded on its own below), divided by its bright end
         // (HDR highlights above 1)
-        guard let camera = decodeCameraLocked(maxEdge: nil) else { return false }
+        // read through a decoder of its own: the photo's RAW decoder keeps a full-size decode cached for as long as
+        // the photo stays open (owner's phone, 21 Oct: ~1 GB more after a clean, then Heal on top closed Lumen)
+        let reader = EditSession(url: originalURL, expandHDR: hdrDecode)
+        guard let camera = (reader ?? self).decodeCameraLocked(maxEdge: nil) else { return false }
         let e = camera.extent
         let W = Int(e.width.rounded()), H = Int(e.height.rounded())
         let scale = max(1, Double(Self.brightEnd99(camera)))
