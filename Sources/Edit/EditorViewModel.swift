@@ -227,8 +227,33 @@ final class EditorViewModel: ObservableObject {
 
     /// 0...1 while the photo is being cleaned (Detail → AI Denoise), nil otherwise.
     @Published private(set) var denoiseProgress: Double?
+    /// The cleaned copy for this photo (and HDR mode) exists: Detail shows the strength slider instead of the button.
+    @Published private(set) var denoiseReady = false
+    /// Seconds left, estimated from the tiles done so far (nil until there is enough to go on).
+    @Published private(set) var denoiseSecondsLeft: Int?
+    /// The button was tapped: the photo is cleaned now and AI Denoise set to 100 when done.
+    private var denoiseRequested = false
+
+    /// Detail → AI Denoise button: cleans the photo (locked screen with progress), then turns AI Denoise on.
+    func startDenoise() {
+        denoiseRequested = true
+        ensureDenoise()
+    }
+
+    /// Cancel on the locked screen.
+    func cancelDenoise() {
+        denoiseRequested = false
+        denoiseUserCancelled = true
+        denoiseCancel = true
+    }
+    private var denoiseUserCancelled = false
+
+    private func refreshDenoiseReady() { denoiseReady = session?.hasDenoised ?? false }
     private var denoiseReload: DispatchWorkItem?
     private let denoiseQueue = DispatchQueue(label: "lumen.denoise", qos: .userInitiated)
+    /// Set when the app leaves the screen: the running job stops at its next tile and starts again on return.
+    nonisolated(unsafe) private var denoiseCancel = false
+    private var denoiseObservers: [NSObjectProtocol] = []
 
     /// The slider moved: the first time the photo is cleaned (tens of seconds, with progress); after that only the mix
     /// changes, so the photo is decoded again once the slider rests.
@@ -243,23 +268,71 @@ final class EditorViewModel: ObservableObject {
 
     /// Starts cleaning the photo if AI Denoise is on and the cleaned copy for this HDR mode doesn't exist yet.
     func ensureDenoise() {
-        guard denoiseProgress == nil, settings.effective.aiDenoise > 0, let session, !session.hasDenoised,
-              EditSession.hasDenoiseModel else { return }
+        if denoiseObservers.isEmpty {
+            let nc = NotificationCenter.default
+            denoiseObservers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.denoiseCancel = true
+            })
+            denoiseObservers.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.ensureDenoise() }
+            })
+        }
+        refreshDenoiseReady()
+        guard denoiseProgress == nil, settings.effective.aiDenoise > 0 || denoiseRequested, let session, !session.hasDenoised,
+              EditSession.hasDenoiseModel, UIApplication.shared.applicationState != .background else { return }
         denoiseProgress = 0
+        denoiseSecondsLeft = nil
+        denoiseCancel = false
+        denoiseUserCancelled = false
+        UIApplication.shared.isIdleTimerDisabled = true   // a long clean must not stop when the screen dims
         freeMemoryForHeal()
+        detailSource = nil
+        unhealedSource = nil
         Diagnostics.shared.note("denoise start")
+        let began = Date()
         denoiseQueue.async {
-            let ok = session.makeDenoised { p in
-                Task { @MainActor [weak self] in if self?.denoiseProgress != nil { self?.denoiseProgress = p } }
-            }
+            var noted = 0
+            let ok = session.makeDenoised(progress: { p in
+                // the phone's real speed, for ⋯ → Send diagnostics
+                let quarter = Int(p * 4)
+                if quarter > noted, quarter < 4 {
+                    noted = quarter
+                    Diagnostics.shared.note("denoise \(quarter * 25)% after \(Int(Date().timeIntervalSince(began))) s")
+                }
+                let elapsed = Date().timeIntervalSince(began)
+                let left: Int? = p >= 0.08 ? Int((elapsed / p * (1 - p)).rounded()) : nil
+                Task { @MainActor [weak self] in
+                    guard let self, self.denoiseProgress != nil else { return }
+                    self.denoiseProgress = p
+                    self.denoiseSecondsLeft = left
+                }
+            }, cancelled: { [weak self] in self?.denoiseCancel ?? true })
+            let stopped = self.denoiseCancel
             EditSession.releaseDenoiseModel()
             LumenGPU.context.clearCaches()
-            Diagnostics.shared.note(ok ? "denoise done" : "denoise failed")
+            Diagnostics.shared.note(ok ? "denoise done in \(Int(Date().timeIntervalSince(began))) s: \(EditSession.denoiseTimings)"
+                                    : stopped ? "denoise stopped (cancelled or the app left the screen)" : "denoise failed")
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.denoiseProgress = nil
+                self.denoiseSecondsLeft = nil
+                UIApplication.shared.isIdleTimerDisabled = false
+                self.refreshDenoiseReady()
                 guard self.session === session else { self.ensureDenoise(); return }
-                if ok { self.reloadSource() } else { self.message = "AI Denoise couldn't clean this photo." }
+                if ok {
+                    if self.denoiseRequested && self.settings.aiDenoise == 0 {
+                        self.denoiseRequested = false
+                        self.settings.aiDenoise = 100      // an undo step; decoding again follows from the change
+                    } else {
+                        self.denoiseRequested = false
+                        self.reloadSource()
+                    }
+                } else if !stopped {
+                    self.denoiseRequested = false
+                    self.message = "AI Denoise couldn't clean this photo."
+                } else if self.denoiseUserCancelled {
+                    self.denoiseRequested = false
+                }
             }
         }
     }
@@ -471,7 +544,8 @@ final class EditorViewModel: ObservableObject {
     private var detailSkipNoted = false
 
     private func buildDetail() {
-        guard let session, let source, !detailBuilding else { return }
+        // not while AI Denoise is cleaning the full-size photo: both together are too much memory (diagnostics 20 Oct)
+        guard let session, let source, !detailBuilding, denoiseProgress == nil else { return }
         let native = max(session.nativeSize.width, session.nativeSize.height)
         // 4096 (was 6000): a 24 MP full-size source plus its layers pushed Lumen past iOS's 3.4 GB per-app limit
         // while zoomed in (owner's JetsamEvent, 18 Oct: killed at 3388 MB, per-process-limit).
