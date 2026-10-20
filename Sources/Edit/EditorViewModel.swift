@@ -602,8 +602,12 @@ final class EditorViewModel: ObservableObject {
         // while zoomed in (owner's JetsamEvent, 18 Oct: killed at 3388 MB, per-process-limit).
         // A 4096 px copy with its layers needs roughly 700 MB: with less room left than that allows, build a
         // smaller one, or none (the preview stays, a little softer, instead of iOS closing the app).
+        // Bigger photos cost more to make the copy from (owner's phone, 21 Oct: a 48 MP ProRAW's 4096 px copy went from
+        // 214 MB to 2851 MB in a second and iOS closed Lumen): the room asked for grows with the photo past 24 MP.
         let left = Diagnostics.availableMB
-        let edge = left > 2000 ? min(native, 4096) : left > 1300 ? min(native, 3072) : 0
+        let megapixels = session.nativeSize.width * session.nativeSize.height / 1_000_000
+        let f = max(1, Double(megapixels) / 24)
+        let edge = Double(left) > 2000 * f ? min(native, 4096) : Double(left) > 1300 * f ? min(native, 3072) : 0
         guard edge > source.longEdge * 1.15 else {
             // zoom fires this on every pinch step: note it once
             if native > source.longEdge * 1.15 && !detailSkipNoted {
@@ -747,6 +751,7 @@ final class EditorViewModel: ObservableObject {
     private func finishLensFocus() {
         guard lensFocusPending, let source, let session else { return }
         lensFocusPending = false
+        Diagnostics.shared.note("Lens Blur: finding the subject's distance")
         if let range = session.lensSubjectRange(source, point: settings.lensBlur.subjectPoint) {
             var s = settings
             s.lensBlur.focusDistance = (range.lowerBound + range.upperBound) / 2
