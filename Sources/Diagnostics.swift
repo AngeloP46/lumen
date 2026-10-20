@@ -171,15 +171,15 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
             out += "Version \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))\n"
             out += "\(Self.device), iOS \(UIDevice.current.systemVersion)\n"
             out += "Memory now: \(Self.footprintMB) MB used, \(Self.availableMB) MB left, peak this run \(peakMB) MB\n\n"
-            // Only what's recent: the last three launches (the one sending this and the two before, so a run that
-            // iOS closed is in it) and the newest iOS reports from the past three days, written compactly.
-            // (20 Oct: a report carried two days of log and every saved iOS report.)
-            out += "== Memory log, last 3 launches (newest last) ==\n"
+            // Only what's recent and only what matters (owner, 21 Oct: the report was mostly routine memory samples and
+            // runs of identical warnings): a summary line per launch for the last three, then their log with the
+            // routine samples left out (except new highs and the last lines before iOS closed Lumen) and repeated
+            // memory warnings folded into one line; iOS reports only when they hold more than their time stamps.
             if let log = try? String(contentsOf: logURL, encoding: .utf8) {
-                let lines = log.split(separator: "\n", omittingEmptySubsequences: false)
+                let lines = log.split(separator: "\n", omittingEmptySubsequences: true)
                 let launches = lines.indices.filter { lines[$0].contains("  launch ") }
                 let from = launches.count >= 3 ? launches[launches.count - 3] : lines.startIndex
-                out += lines[from...].suffix(400).joined(separator: "\n")
+                out += Self.compact(Array(lines[from...]))
             }
             let cutoff = Date().addingTimeInterval(-3 * 86_400).timeIntervalSince1970
             let recent = savedReports()
@@ -187,19 +187,80 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
                 .sorted { $0.lastPathComponent > $1.lastPathComponent }
                 .prefix(3)
             for url in recent {
-                out += "\n\n== \(url.lastPathComponent) ==\n"
-                guard let data = try? Data(contentsOf: url) else { continue }
-                if let obj = try? JSONSerialization.jsonObject(with: data),
-                   let compact = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
-                   let s = String(data: compact, encoding: .utf8) {
-                    out += s
-                } else if let s = String(data: data, encoding: .utf8) {
-                    out += s
-                }
+                guard let data = try? Data(contentsOf: url), let obj = try? JSONSerialization.jsonObject(with: data) else { continue }
+                if let d = obj as? [String: Any], Set(d.keys).isSubset(of: ["timeStampBegin", "timeStampEnd"]) { continue }
+                guard let compact = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
+                      let text = String(data: compact, encoding: .utf8) else { continue }
+                out += "\n\n== iOS report \(url.lastPathComponent) ==\n" + text
             }
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("Lumen-diagnostics.txt")
             do { try out.write(to: file, atomically: true, encoding: .utf8); return file } catch { return nil }
         }
+    }
+
+    /// The log of a few launches, shortened for sharing (see makeReport).
+    static func compact(_ lines: [Substring]) -> String {
+        func number(before marker: String, in l: Substring) -> Int? {
+            guard let r = l.range(of: marker) else { return nil }
+            let digits = l[..<r.lowerBound].reversed().prefix { $0.isNumber }
+            return Int(String(digits.reversed()))
+        }
+        func used(_ l: Substring) -> Int? { number(before: " MB used", in: l) }
+        func left(_ l: Substring) -> Int? { number(before: " MB left", in: l) }
+        func event(_ l: Substring) -> Substring { l.count > 21 ? l.dropFirst(21) : l }
+        func time(_ l: Substring) -> Substring { l.prefix(19).dropFirst(11) }
+
+        // one run per launch; "previous run ended while open" is written at the next launch, so it closes the run before
+        var runs: [[Substring]] = []
+        for l in lines {
+            if event(l).hasPrefix("launch ") || runs.isEmpty { runs.append([l]) } else { runs[runs.count - 1].append(l) }
+        }
+        var summary = "== Summary, last \(runs.count) launch\(runs.count == 1 ? "" : "es") (newest last) ==\n"
+        var body = "\n== Log (routine memory samples left out) ==\n"
+        for (n, run) in runs.enumerated() {
+            let closed = run.last.map { event($0).hasPrefix("previous run ended") } ?? false
+            let version = run.first.flatMap { event($0).split(separator: " ").dropFirst().first } ?? "?"
+            let peak = run.compactMap(used).max() ?? 0, low = run.compactMap(left).min() ?? 0
+            let ending = closed ? "closed by iOS (memory) or crashed"
+                : n == runs.count - 1 ? "open now" : (run.last.map { event($0).hasPrefix("background") } ?? false) ? "went to the background" : "ended"
+            var denoise: [String] = []
+            for l in run {
+                let e = event(l)
+                if e.hasPrefix("denoise done in "), let secs = e.dropFirst(16).split(separator: " ").first {
+                    let tiles = e.range(of: " tiles,").map { r in String(e[..<r.lowerBound].reversed().prefix { $0.isNumber }.reversed()) }
+                    denoise.append("\(secs) s" + (tiles.map { " (\($0) tiles)" } ?? ""))
+                } else if e.hasPrefix("denoise stopped") { denoise.append("stopped") }
+                else if e.hasPrefix("denoise failed") { denoise.append("failed") }
+            }
+            let heals = run.filter { event($0).hasPrefix("heal done") }.count
+            summary += "• \(version) · \(run.first.map(time) ?? "")–\(run.last.map(time) ?? "") · \(ending) · peak \(peak) MB, lowest \(low) MB left"
+            if !denoise.isEmpty { summary += " · AI Denoise: " + denoise.joined(separator: ", ") }
+            if heals > 0 { summary += " · \(heals) heal\(heals == 1 ? "" : "s")" }
+            summary += "\n"
+
+            let keepAllFrom = closed ? max(0, run.count - 8) : run.count
+            var high = 0, i = 0
+            while i < run.count {
+                let l = run[i]
+                if event(l).hasPrefix("iOS memory warning") {
+                    var j = i, lowest = Int.max
+                    while j < run.count, event(run[j]).hasPrefix("iOS memory warning") { lowest = min(lowest, left(run[j]) ?? lowest); j += 1 }
+                    body += (j - i == 1 ? String(l) : "\(l.prefix(19))  iOS memory warning ×\(j - i), lowest \(lowest) MB left") + "\n"
+                    i = j
+                    continue
+                }
+                if event(l).hasPrefix("memory "), i < keepAllFrom {
+                    // a routine sample: kept only when memory climbed well past what the log has shown so far
+                    if let u = used(l), u > high + 300 { high = u; body += String(l) + "\n" }
+                    i += 1
+                    continue
+                }
+                if let u = used(l) { high = max(high, u) }
+                body += String(l) + "\n"
+                i += 1
+            }
+        }
+        return summary + body
     }
 
     static var device: String {

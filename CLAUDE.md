@@ -38,6 +38,12 @@
   once when 4x its size is free (fastest; 24 MP = ~190 MB), else strip by strip from the RAW engine (diagnostics line
   "denoise reads the photo whole / in strips", strip read times in "denoise done"). The engine test forces strips
   (`denoiseForceStrips`); the memory step reads whole.
+- 21 Oct (#72, owner's 48 MP ProRAW: clean worked, 221 tiles 110 s, but memory stayed ~2 GB after and Heal on top
+  closed Lumen): the clean reads through its own `EditSession` (the photo's CIRAWFilter kept the full-size decode
+  cached), and the small copy is 4096 px so the 100 % view never reads the whole result (it did, 372 MB, each time).
+- Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
+  peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
+  iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.
 - Every tile is checked against its input (finite, mean change < 0.1, < 0.5 % of samples off by > 0.3); a wrong one is
   redone on the CPU (`denoiseCPU`), else the photo's own pixels are kept. Diagnostics: "denoise model loaded in N s",
   "denoise first tiles a / b / c s", then "denoise done in N s: …, N redone on the CPU".
