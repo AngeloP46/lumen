@@ -516,6 +516,22 @@ struct EditorView: View {
                     .accessibilityIdentifier("clip-badge")
                 }
             }
+            .overlay(alignment: .top) {
+                // AI Denoise is cleaning the photo (once per photo; tens of seconds for a big RAW)
+                if let p = vm.denoiseProgress, !chromeHidden {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small).tint(.white)
+                        Text("Removing noise… \(Int(p * 100))%").font(.caption.weight(.semibold)).monospacedDigit()
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .foregroundStyle(.white)
+                    .padding(.top, 56)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("denoise-busy")
+                }
+            }
             .overlay {
                 // an automatic mask is still being worked out: say so on the photo (a tap must never look ignored)
                 if tool == .masks, !chromeHidden, let busy = vm.aiPending(vm.selectedMask) {
