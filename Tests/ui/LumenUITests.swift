@@ -438,22 +438,30 @@ final class LumenUITests: XCTestCase {
         launch(open: 0, tool: "Light")
         let s = el("slider-Highlights")
         XCTAssertTrue(s.waitForExistence(timeout: 30))
+        let before = valueOf("reset-Highlights")
         s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
         sleep(2)
-        XCTAssertNotEqual(valueOf("reset-Highlights"), "0", "the drag should change Highlights")
+        XCTAssertNotEqual(valueOf("reset-Highlights"), before, "the drag should change Highlights")
         el("btn-menu").tap()
         let item = app.buttons["menu-history"]
         XCTAssertTrue(item.waitForExistence(timeout: 5), "the ⋯ menu should have History")
         item.tap()
         let steps = app.buttons.matching(identifier: "history-step")
         XCTAssertTrue(steps.firstMatch.waitForExistence(timeout: 5), "History should list the steps")
-        XCTAssertGreaterThanOrEqual(steps.count, 2, "History should show the edit and how it opened")
         XCTAssertTrue(steps.firstMatch.label.contains("Highlights"), "the newest step should name Highlights (\(steps.firstMatch.label))")
         shot("history")
-        steps.element(boundBy: steps.count - 1).tap()
+        // the photo may have older history from other tests: go back to the first step that isn't this drag
+        var target: XCUIElement?
+        for i in 1..<8 {
+            let row = steps.element(boundBy: i)
+            guard row.exists else { break }
+            if !row.label.contains("Highlights") { target = row; break }
+        }
+        guard let target else { XCTFail("History should list the step before the drag"); return }
+        target.tap()
         sleep(2)
-        XCTAssertEqual(valueOf("reset-Highlights"), "0", "going back to Opened should undo the edit")
+        XCTAssertEqual(valueOf("reset-Highlights"), before, "going back past the drag should restore Highlights")
         XCTAssertTrue(el("btn-redo").isEnabled, "redo should bring it back")
     }
 
