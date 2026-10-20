@@ -4,10 +4,10 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// AI Denoise: SCUNet's real-noise model (cszn/SCUNet, Apache-2.0), converted to Core ML in CI
-/// (.github/ci/denoise-convert, 512 x 512 tiles, float16). Picked over NAFNet-SIDD on 20 Oct: on the owner's McLaren
-/// photo with ISO 6400 / 25600-like noise added, SCUNet scored +3.7 / +4.7 dB PSNR over NAFNet and kept more detail
-/// (NAFNet left speckles at high noise).
+/// AI Denoise: NAFNet-SIDD-width32 (megvii-research/NAFNet, MIT, trained on real phone-camera noise), converted to
+/// Core ML in CI (.github/ci/denoise-convert, 512 x 512 tiles, float16), run on the Neural Engine. It replaced SCUNet
+/// on 20 Oct: SCUNet cleaned about 1 dB better but took over 2 s per tile on an iPhone 17 Pro Max (4+ minutes for a
+/// 24 MP photo, and iOS closed Lumen for memory); the owner wants one model that is consistently good and quick.
 ///
 /// The full-size photo as the camera made it (no heals) is cleaned once, tile by tile, and kept on disk per photo and
 /// HDR mode (`DenoiseStore`). Every decode then mixes it in by the AI Denoise amount, so preview, 100 % view, heals,
@@ -15,7 +15,7 @@ import UniformTypeIdentifiers
 enum DenoiseStore {
     nonisolated(unsafe) static var directory = FileManager.default.temporaryDirectory.appendingPathComponent("LumenDenoise")
     /// Changes when the model or the way it is run changes: older results are made again.
-    static let modelVersion = "scunet-real-512-1"
+    static let modelVersion = "nafnet-sidd32-512-1"
 
     struct Info: Codable {
         var model: String
@@ -65,28 +65,19 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "Denoise", withExtension: "mlmodelc")
     }()
-    /// The model on the Neural Engine, and on the GPU. The first clean on a phone times a couple of tiles on each and
-    /// keeps the faster (`denoiseUnits`, remembered); the CI Mac (no Neural Engine, its GPU ran out of memory at 24 MP)
-    /// is told to use the Neural Engine path (CPU there) with `LUMEN_DENOISE_UNITS`.
-    private static func loadDenoise(_ units: MLComputeUnits) -> MLModel? {
+    /// The model on the Neural Engine (all convolutions, which it runs well; the CPU takes any layer it can't).
+    private static let denoiseModel = LoadedModel<MLModel> {
         guard let url = denoiseModelURL else { return nil }
         let cfg = MLModelConfiguration()
-        cfg.computeUnits = units
+        cfg.computeUnits = .cpuAndNeuralEngine
         return try? MLModel(contentsOf: url, configuration: cfg)
-    }
-    private static let denoiseANE = LoadedModel<MLModel> { loadDenoise(.cpuAndNeuralEngine) }
-    private static let denoiseGPU = LoadedModel<MLModel> { loadDenoise(.cpuAndGPU) }
-    /// "ane" or "gpu" once measured on this phone; nil = not yet.
-    static var denoiseUnits: String? {
-        get { ProcessInfo.processInfo.environment["LUMEN_DENOISE_UNITS"] ?? UserDefaults.standard.string(forKey: "denoiseUnits") }
-        set { UserDefaults.standard.set(newValue, forKey: "denoiseUnits") }
     }
     /// What the last clean measured (seconds), for the diagnostics log.
     nonisolated(unsafe) static var denoiseTimings = ""
     /// Only looks for the model's files (the Detail panel asks while drawing).
     static var hasDenoiseModel: Bool { modelFilesExist(denoiseModelURL) }
     /// Lets go of the model (it is only needed while a photo is being cleaned).
-    static func releaseDenoiseModel() { denoiseANE.release(); denoiseGPU.release() }
+    static func releaseDenoiseModel() { denoiseModel.release() }
 
     /// Whether the cleaned copy for the current HDR mode exists.
     var hasDenoised: Bool { DenoiseStore.info(originalURL, hdr: hdrDecode, size: nativeSize) != nil }
@@ -95,13 +86,17 @@ extension EditSession {
     /// seconds): call off the main thread. `progress` gets 0...1 as tiles finish. Returns false if it couldn't be made.
     /// `cancelled` is asked before every tile: the app leaving the screen stops the job (iOS doesn't allow GPU work in
     /// the background; owner's diagnostics 20 Oct: a job left running was killed on return at 2.7 GB).
-    func makeDenoised(progress: ((Double) -> Void)? = nil, cancelled: (() -> Bool)? = nil) -> Bool {
+    /// `log` gets the load time and the first tiles' times straight away, so even a run that never finishes shows the
+    /// phone's speed in ⋯ → Send diagnostics.
+    func makeDenoised(progress: ((Double) -> Void)? = nil, cancelled: (() -> Bool)? = nil,
+                      log: ((String) -> Void)? = nil) -> Bool {
         if hasDenoised { return true }
         let t0 = Date()
-        var model: MLModel? = Self.denoiseUnits == "gpu" ? Self.denoiseGPU.model : Self.denoiseANE.model
+        let model = Self.denoiseModel.model
         let loadSeconds = Date().timeIntervalSince(t0)
-        guard let first = model,
-              let shape = first.modelDescription.inputDescriptionsByName["image"]?.multiArrayConstraint?.shape,
+        log?(String(format: "denoise model %@ in %.1f s", model == nil ? "failed to load" : "loaded", loadSeconds))
+        guard let model,
+              let shape = model.modelDescription.inputDescriptionsByName["image"]?.multiArrayConstraint?.shape,
               shape.count == 4 else { return false }
         let T = shape[3].intValue
         let margin = 32, step = T - 2 * margin
@@ -138,16 +133,9 @@ extension EditSession {
         let total = Double(xs.count * ys.count)
         var done = 0.0
         let plane = T * T
-        // Probe (first clean on this phone): tiles 1-2 on the Neural Engine, 3-4 on the GPU; the 2nd and 4th (warm) are
-        // compared and the faster is kept for the rest and remembered.
-        let probing = Self.denoiseUnits == nil && total >= 6
         var tileTimes: [Double] = []
-        var aneWarm = 0.0, gpuWarm = 0.0
-        let spots = ys.flatMap { ty in xs.map { tx in (tx: tx, ty: ty) } }
-        var next = 0
-        while next < spots.count {
-            let (tx, ty) = spots[next]
-            do {
+        for ty in ys {
+            for tx in xs {
                 if cancelled?() == true { return false }
                 let ok: Bool = autoreleasepool {
                     // Core Image's y goes up: the tile whose top row is `ty`
@@ -161,15 +149,8 @@ extension EditSession {
                         dst[plane + i] = Float16(tile[i * 4 + 1])
                         dst[2 * plane + i] = Float16(tile[i * 4 + 2])
                     }
-                    let index = Int(done)
-                    if probing, index == 2 { model = Self.denoiseGPU.model ?? model }
-                    if probing, index == 4 {
-                        let gpuWins = gpuWarm > 0 && gpuWarm < aneWarm * 0.9
-                        Self.denoiseUnits = gpuWins ? "gpu" : "ane"
-                        if gpuWins { Self.denoiseANE.release() } else { Self.denoiseGPU.release(); model = Self.denoiseANE.model ?? model }
-                    }
                     let tp = Date()
-                    guard let model, let features = try? MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(multiArray: input)]),
+                    guard let features = try? MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(multiArray: input)]),
                           let result = try? model.prediction(from: features),
                           let o = result.featureValue(for: "output")?.multiArrayValue, o.dataType == .float16 else { return false }
                     let st = o.strides.map(\.intValue)
@@ -187,29 +168,23 @@ extension EditSession {
                             }
                         }
                     }
-                    let dt = Date().timeIntervalSince(tp)
-                    tileTimes.append(dt)
-                    if probing, index == 1 { aneWarm = dt }
-                    if probing, index == 3 { gpuWarm = dt }
+                    tileTimes.append(Date().timeIntervalSince(tp))
                     return true
                 }
-                if !ok, probing, Int(done) >= 2, Int(done) < 4, Self.denoiseUnits == nil {
-                    // the GPU failed on this tile (out of memory, unsupported): stay on the Neural Engine, redo the tile
-                    Self.denoiseUnits = "ane"; Self.denoiseGPU.release(); model = Self.denoiseANE.model
-                    continue
-                }
-                guard ok else { return false }
-                next += 1
+                guard ok else { log?("denoise: tile \(Int(done) + 1) of \(Int(total)) failed"); return false }
                 done += 1
+                if tileTimes.count == 3 {
+                    log?(String(format: "denoise first tiles %.2f / %.2f / %.2f s, %d tiles in all",
+                                tileTimes[0], tileTimes[1], tileTimes[2], Int(total)))
+                }
                 progress?(done / total)
             }
         }
         Self.healProbe?("denoise: tiles done")
         let sorted = tileTimes.sorted()
-        Self.denoiseTimings = String(format: "load %.1f s, %d tiles, median %.2f s/tile, first %.1f s, units %@%@",
+        Self.denoiseTimings = String(format: "load %.1f s, %d tiles, median %.2f s/tile, first %.1f s",
                                      loadSeconds, tileTimes.count, sorted.isEmpty ? 0 : sorted[sorted.count / 2],
-                                     tileTimes.first ?? 0, Self.denoiseUnits ?? "?",
-                                     probing ? String(format: " (probe: ANE %.2f s, GPU %.2f s)", aneWarm, gpuWarm) : "")
+                                     tileTimes.first ?? 0)
 
         // 3. keep it: 16-bit PNG (lossless) in the model's space, with the scale to undo
         try? FileManager.default.createDirectory(at: DenoiseStore.directory, withIntermediateDirectories: true)
