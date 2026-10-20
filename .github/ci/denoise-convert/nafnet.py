@@ -12,9 +12,13 @@ class LayerNorm2d(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        mu = x.mean(1, keepdim=True)
-        var = (x - mu).pow(2).mean(1, keepdim=True)
-        y = (x - mu) / torch.sqrt(var + self.eps)
+        # Scaled by 1/16 first (Lumen change): in float16 on the Neural Engine (x - mu)^2 reached 67315 on a test tile,
+        # past float16's 65504. The norm is scale-free, so only eps's weight changes (matches the original at 76 dB).
+        xs = x * (1 / 16)
+        mu = xs.mean(1, keepdim=True)
+        d = xs - mu
+        var = (d * d).mean(1, keepdim=True)
+        y = d / torch.sqrt(var + self.eps)
         return self.weight.view(1, -1, 1, 1) * y + self.bias.view(1, -1, 1, 1)
 
 
