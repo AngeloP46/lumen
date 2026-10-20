@@ -2,6 +2,7 @@
 (the original's custom autograd function can't be traced), no dropout, no local (TLC) variant."""
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class LayerNorm2d(nn.Module):
@@ -22,6 +23,16 @@ class LayerNorm2d(nn.Module):
         return self.weight.view(1, -1, 1, 1) * y + self.bias.view(1, -1, 1, 1)
 
 
+class BlockMean(nn.Module):
+    """Mean over the whole picture in 8 x 8 steps (Lumen change, 20 Oct). The original's AdaptiveAvgPool2d(1) adds up
+    512 x 512 values at once: ~200,000 here, past float16's 65,504, which wrecked bright tiles on the Neural Engine."""
+
+    def forward(self, x):
+        while x.shape[-1] > 8:
+            x = F.avg_pool2d(x, 8)
+        return F.avg_pool2d(x, x.shape[-1])
+
+
 class SimpleGate(nn.Module):
     def forward(self, x):
         x1, x2 = x.chunk(2, dim=1)
@@ -37,7 +48,7 @@ class NAFBlock(nn.Module):
         self.conv3 = nn.Conv2d(dw_channel // 2, c, 1, padding=0, stride=1, groups=1, bias=True)
         # Simplified Channel Attention
         self.sca = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
+            BlockMean(),
             nn.Conv2d(dw_channel // 2, dw_channel // 2, 1, padding=0, stride=1, groups=1, bias=True),
         )
         self.sg = SimpleGate()

@@ -2323,6 +2323,7 @@ if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil {
             let ok = session.makeDenoised { p in steps = p }
             print("::notice::AI Denoise \(Int(e.width))x\(Int(e.height)): \(String(format: "%.1f", now() - t0)) s, progress reached \(steps)")
             check(ok && session.hasDenoised, "AI Denoise: makeDenoised failed")
+            check(EditSession.denoiseTimings.contains(", 0 redone"), "AI Denoise: no tile should need redoing (\(EditSession.denoiseTimings))")
             session.denoiseAmount = 1
             if ok, let cleaned = session.decode(maxEdge: nil) {
                 let before = mae(noisy, clean), after = mae(cleaned, clean)

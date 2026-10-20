@@ -15,6 +15,12 @@
   and quick, target < 30 s. If the phone has lots of time to spare, NAFNet width 64 (~4x the work) is the step up.
   Weights pinned: HF `WAS/was-node-suite-weights` revision dcc864ea…, `denoise/NAFNet-SIDD-width32.pth`, SHA-256
   89c70e80… (`.github/ci/denoise-convert/fetch.py`; `nafnet.py` = the architecture with LayerNorm2d as plain ops).
+  **0.1.381 wrecked bright tiles on the phone** (white / false colour in sky, white paint): NAFNet's channel attention
+  (AdaptiveAvgPool2d over 512 x 512) sums ~200,000, past float16's 65,504, on the Neural Engine; the CI Mac runs the
+  CPU (full precision) and never showed it. Fixed in `nafnet.py`: `BlockMean` averages in 8 x 8 steps (same result,
+  153 dB), LayerNorm scaled by 1/16 ((x-mu)^2 reached 67,315). The app also checks every tile against its input
+  (finite, mean change < 0.1, < 0.5 % of samples off by > 0.3) and redoes a wrong one on the CPU (`denoiseCPU`), else
+  keeps the photo's own pixels; result version -2 remakes old results. Check new layers for float16 sums: CI can't.
   Converted in CI to Core ML, float16, fixed 512 x 512 tiles (`build-denoise.sh`, cached; on failure an empty
   `Denoise.mlmodelc` keeps the project building and the button is hidden).
 - WSL on the owner's PC crashes converting it (7 GB): don't retry locally; CI Macs swap and manage.
