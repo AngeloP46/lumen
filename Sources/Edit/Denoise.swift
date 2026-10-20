@@ -68,7 +68,9 @@ extension EditSession {
     private static let denoiseStore = LoadedModel<MLModel> {
         guard let url = denoiseModelURL else { return nil }
         let cfg = MLModelConfiguration()
-        cfg.computeUnits = .all
+        // Neural Engine (CPU where there is none), never the GPU: the GPU holds the photo being cleaned, and on the CI
+        // Mac model + photo on the GPU ran out of memory on a 24 MP RAW (20 Oct)
+        cfg.computeUnits = .cpuAndNeuralEngine
         return try? MLModel(contentsOf: url, configuration: cfg)
     }
     /// Only looks for the model's files (the Detail panel asks while drawing).

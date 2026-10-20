@@ -2271,15 +2271,17 @@ if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil {
        let cleanSession = EditSession(url: cleanURL), let clean0 = cleanSession.decode(maxEdge: 1600) {
         let e = clean0.extent
         let clean = clean0.cropped(to: e)
-        // camera-like noise: per-pixel random, stronger in the dark (written as a 16-bit PNG so it survives the file)
+        // camera-like noise as a phone or camera at high ISO shows it: added to the gamma-encoded picture (not linear
+        // light, which made the shadows far noisier than any camera), std ~0.04 (written as a 16-bit PNG)
         let rnd = CIFilter(name: "CIRandomGenerator")!.outputImage!.cropped(to: e)
-            .applyingFilter("CIColorMatrix", parameters: ["inputBiasVector": CIVector(x: -0.5, y: -0.5, z: -0.5, w: 0),
-                                                         "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0)])
-            .applyingFilter("CIColorMatrix", parameters: ["inputRVector": CIVector(x: 0.12, y: 0, z: 0, w: 0),
-                                                         "inputGVector": CIVector(x: 0, y: 0.12, z: 0, w: 0),
-                                                         "inputBVector": CIVector(x: 0, y: 0, z: 0.12, w: 0),
-                                                         "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)])
-        let noisyImg = rnd.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: clean]).cropped(to: e)
+            .applyingFilter("CIColorMatrix", parameters: ["inputRVector": CIVector(x: 0.14, y: 0, z: 0, w: 0),
+                                                         "inputGVector": CIVector(x: 0, y: 0.14, z: 0, w: 0),
+                                                         "inputBVector": CIVector(x: 0, y: 0, z: 0.14, w: 0),
+                                                         "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                                                         "inputBiasVector": CIVector(x: -0.07, y: -0.07, z: -0.07, w: 1)])
+        let noisyImg = rnd.applyingFilter("CIAdditionCompositing", parameters: [
+            kCIInputBackgroundImageKey: clean.applyingFilter("CILinearToSRGBToneCurve")])
+            .applyingFilter("CISRGBToneCurveToLinear").cropped(to: e)
         let noisyURL = outDir.appendingPathComponent("denoise-noisy.png")
         try? LumenGPU.context.writePNGRepresentation(of: noisyImg, to: noisyURL, format: .RGBA16, colorSpace: LumenGPU.displaySpace)
         func mae(_ a: CIImage, _ b: CIImage) -> Float {
