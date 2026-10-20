@@ -577,13 +577,14 @@ final class LibraryStore: ObservableObject {
             // the model stays loaded from one photo to the next (released when the batch ends)
             let session = EditSession(url: url, expandHDR: hdr)
             let mp = session.map { Double($0.nativeSize.width * $0.nativeSize.height) / 1_000_000 } ?? 24
-            let outcome: DenoiseOutcome = HeavyWork.shared.run(.denoise, megapixels: mp, long: true) {
+            let result: DenoiseOutcome?? = HeavyWork.shared.run(.denoise, megapixels: mp, long: true) { () -> DenoiseOutcome? in
                 session?.makeDenoised(progress: { p in
                     Task { @MainActor [weak self] in self?.denoiseBatch?.fraction = p }
                 }, pause: { [weak self] in self?.batchPausing ?? true },
                    cancelled: { [weak self] in self?.batchCancel ?? true },
                    log: { Diagnostics.shared.note($0) })
-            } ?? nil ?? .failed
+            }
+            let outcome: DenoiseOutcome = (result ?? nil) ?? .failed
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.batchRunning = false
