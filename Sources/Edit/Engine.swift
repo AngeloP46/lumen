@@ -59,6 +59,8 @@ struct LumenKernels {
     var skyWeigh: CIColorKernel?, leafWeigh: CIColorKernel?, skyGaps: CIColorKernel?
     /// Full-resolution texture for big heals (optional: without it big heals keep the model's softer fill).
     var healDetail: CIColorKernel?, healEnergy: CIColorKernel?
+    /// AI Denoise: the stored noise taken out of a decode (optional: without it AI Denoise is off).
+    var noiseRemove: CIColorKernel?
 
     static let shared: LumenKernels? = {
         var url = LumenGPU.libraryURL
@@ -83,7 +85,8 @@ struct LumenKernels {
                             lensWeigh: k("lumenLensWeigh"), lensCompose: k("lumenLensCompose"),
                             gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
                             skyWeigh: k("lumenSkyWeigh"), leafWeigh: k("lumenLeafWeigh"), skyGaps: k("lumenSkyGaps"),
-                            healDetail: k("lumenHealDetail"), healEnergy: k("lumenHealEnergy"))
+                            healDetail: k("lumenHealDetail"), healEnergy: k("lumenHealEnergy"),
+                            noiseRemove: k("lumenNoiseRemove"))
     }()
 }
 

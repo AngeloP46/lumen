@@ -46,6 +46,8 @@ struct LibraryView: View {
     @State private var showBatchExport = false
     @State private var showDiagnostics = false
     @State private var notice: String?
+    /// Pasting edits that include AI Denoise asks first (it needs a clean of each photo).
+    @State private var denoisePaste: (list: [LibraryItem], keepOwn: Bool)?
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
 
@@ -134,6 +136,32 @@ struct LibraryView: View {
                           matching: .images, preferredItemEncoding: .current, photoLibrary: .shared())
             .safeAreaInset(edge: .bottom) { if selecting { selectionBar } }
             .overlay { progressOverlay }
+            .overlay(alignment: .bottom) { denoiseBanner }
+            .onAppear { store.refreshPausedCleans() }
+            .confirmationDialog("Paste AI Denoise too?", isPresented: Binding(get: { denoisePaste != nil }, set: { if !$0 { denoisePaste = nil } }),
+                                titleVisibility: .visible) {
+                if let d = denoisePaste, let clip = store.clipboard {
+                    let n = min(d.list.count, LibraryStore.denoiseBatchCap)
+                    Button("Paste and clean \(n == 1 ? "it" : "\(n) photos") (\(denoiseMinutes(n)))") {
+                        store.apply(clip, to: d.list, keepOwn: d.keepOwn)
+                        store.cleanWithAIDenoise(d.list, strength: clip.aiDenoise)
+                        denoisePaste = nil
+                    }
+                    Button("Paste without AI Denoise") {
+                        store.apply(clip, to: d.list, keepOwn: d.keepOwn)
+                        show("Edits pasted onto \(d.list.count) photo\(d.list.count == 1 ? "" : "s"), without AI Denoise.")
+                        denoisePaste = nil
+                    }
+                    Button("Cancel", role: .cancel) { denoisePaste = nil }
+                }
+            } message: {
+                if let d = denoisePaste {
+                    let n = min(d.list.count, LibraryStore.denoiseBatchCap)
+                    Text("AI Denoise cleans each photo on its own: \(denoiseMinutes(n)). "
+                         + (d.list.count > LibraryStore.denoiseBatchCap ? "At most \(LibraryStore.denoiseBatchCap) photos at a time: the first \(n) of the \(d.list.count) selected get it. " : "")
+                         + "Progress shows here; leaving Lumen pauses it and it carries on when you're back.")
+                }
+            }
             .overlay(alignment: .bottom) {
                 if let notice {
                     Text(notice).font(.footnote.weight(.semibold)).padding(.horizontal, 14).padding(.vertical, 9)
@@ -246,7 +274,7 @@ struct LibraryView: View {
                         Label("Copy edits", systemImage: "doc.on.doc")
                     }
                     if let clip = store.clipboard {
-                        Button { store.apply(clip, to: [item], keepOwn: true); show("Edits pasted.") } label: {
+                        Button { paste(clip, to: [item], keepOwn: true) } label: {
                             Label("Paste edits", systemImage: "doc.on.clipboard")
                         }
                     }
@@ -340,9 +368,59 @@ struct LibraryView: View {
 
     private func paste(keepOwn: Bool) {
         guard let clip = store.clipboard else { return }
-        let list = selectedItems
+        paste(clip, to: selectedItems, keepOwn: keepOwn)
+    }
+
+    private func paste(_ clip: EditSettings, to list: [LibraryItem], keepOwn: Bool) {
+        if clip.aiDenoise > 0, EditSession.hasDenoiseModel { denoisePaste = (list, keepOwn); return }
         store.apply(clip, to: list, keepOwn: keepOwn)
         show("Edits pasted onto \(list.count) photo\(list.count == 1 ? "" : "s").")
+    }
+
+    /// About a minute per 24 MP photo on an iPhone 17 Pro Max (owner's phone, 21 Oct: 57 s), twice that at 48 MP.
+    private func denoiseMinutes(_ n: Int) -> String {
+        n <= 1 ? "about a minute (2 for 48 MP ProRAW)" : "about \(n) minutes (twice that for 48 MP ProRAW)"
+    }
+
+    @ViewBuilder
+    private var denoiseBanner: some View {
+        if let b = store.denoiseBatch {
+            HStack(spacing: 10) {
+                Image(systemName: "wand.and.sparkles")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(b.paused ? "AI Denoise paused · \(b.count - b.done) photo\(b.count - b.done == 1 ? "" : "s") left"
+                                  : "AI Denoise · photo \(b.done + 1) of \(b.count) · \(Int(b.fraction * 100))%")
+                        .font(.footnote.weight(.semibold)).monospacedDigit()
+                    if !b.paused { ProgressView(value: (Double(b.done) + b.fraction) / Double(max(1, b.count))).tint(.white) }
+                    Text(b.paused ? b.name : "\(b.name) · leaving Lumen pauses it").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                if b.paused {
+                    Button("Continue") { store.continueDenoiseBatch() }.buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("denoise-batch-continue")
+                }
+                Button(role: .cancel) { store.cancelDenoiseBatch() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.bordered).accessibilityIdentifier("denoise-batch-cancel")
+            }
+            .padding(12)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .padding(.horizontal, 12).padding(.bottom, selecting ? 84 : 12)
+            .accessibilityIdentifier("denoise-batch")
+        } else if let p = store.pausedCleans.first {
+            Button { path = [p.item] } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "wand.and.sparkles")
+                    Text("AI Denoise paused on \(p.item.displayName) at \(Int(p.fraction * 100))%").font(.footnote.weight(.semibold))
+                    Spacer(minLength: 4)
+                    Text("Continue").font(.footnote.weight(.semibold)).foregroundStyle(Theme.accent)
+                }
+                .padding(12)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12).padding(.bottom, selecting ? 84 : 12)
+            .accessibilityIdentifier("denoise-paused")
+        }
     }
 
     private func show(_ text: String) {

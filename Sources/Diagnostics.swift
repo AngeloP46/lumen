@@ -20,6 +20,8 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
     private var peakMB = 0
     private var sampler: Timer?
     private var started = false
+    /// The last run ended while Lumen was on screen (closed by iOS, a crash, or the phone went off).
+    private(set) var closedDuringLastRun = false
 
     private override init() {
         let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
@@ -36,6 +38,7 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
         if let state = try? String(contentsOf: stateURL, encoding: .utf8), state.hasPrefix("open") {
             // "open <time> <MB>": written every 2 s while on screen (21 Oct review: the ended time used to be the last
             // logged line, and a dead battery or the phone turning off reads the same way, hence "or the phone went off")
+            closedDuringLastRun = true
             let parts = state.split(separator: " ")
             let seen = parts.count >= 3 ? " (last seen \(parts[1]) using \(parts[2]) MB)" : ""
             note("previous run ended while Lumen was open\(seen): closed by iOS for memory, a crash, or the phone went off")

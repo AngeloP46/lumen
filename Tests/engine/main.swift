@@ -315,9 +315,35 @@ if args.contains("--memory") {
         DenoiseStore.directory = outDir.appendingPathComponent("denoise-memory")
         var ok = false
         let t = now()
-        peaks["AI denoise"] = stepPeak("AI denoise") { ok = session.makeDenoised() }
+        peaks["AI denoise"] = stepPeak("AI denoise") { ok = session.makeDenoised() == .done }
         check(ok, "memory test: AI Denoise failed on the 24 MP ARW")
         print("::notice::AI Denoise on the 24 MP ARW: \(String(format: "%.0f", now() - t)) s on the CI Mac")
+        // one clean serves HDR on and off (21 Oct): the SDR decode of the same ARW takes the same noise out
+        if ok, let sdr = EditSession(url: arw, expandHDR: false) {
+            check(sdr.hasDenoised, "AI Denoise: the HDR clean should serve HDR off too")
+            func average(_ i: CIImage) -> SIMD3<Float> {
+                var v = [Float](repeating: 0, count: 4)
+                let a = i.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: i.extent)])
+                LumenGPU.context.render(a, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                return SIMD3(v[0], v[1], v[2])
+            }
+            sdr.denoiseAmount = 0
+            let off = sdr.decode(maxEdge: 1024)
+            sdr.denoiseAmount = 1
+            let on = sdr.decode(maxEdge: 1024)
+            if let off, let on {
+                let mOff = average(off), mOn = average(on)
+                let shift = abs((mOn.x + mOn.y + mOn.z) / max(0.0001, mOff.x + mOff.y + mOff.z) - 1)
+                let change = average(on.applyingFilter("CIColorAbsoluteDifference", parameters: ["inputImage2": off]))
+                print("::notice::AI Denoise in the other HDR mode: brightness shift \(shift), mean change \(change)")
+                check(shift < 0.01, "AI Denoise with HDR off should keep the brightness (shift \(shift))")
+                check((change.x + change.y + change.z) / 3 < 0.03, "AI Denoise with HDR off should only take noise out (\(change))")
+                if let a = LumenGPU.context.createCGImage(off, from: off.extent), let b = LumenGPU.context.createCGImage(on, from: on.extent),
+                   let sh = sheet([("HDR off, AI Denoise 0", a), ("HDR off, AI Denoise 100 (HDR clean)", b)], cell: 1024, cols: 2) {
+                    saveJPEG(sh, "denoise-other-mode.jpg")
+                }
+            }
+        }
         EditSession.releaseDenoiseModel()
     }
     peak.lock.lock(); peak.stop = true; peak.lock.unlock()
@@ -2321,7 +2347,7 @@ if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil {
             let t0 = now()
             var steps = 0.0
             EditSession.denoiseForceStrips = true    // the strip path (big photos, little memory); the memory step reads whole
-            let ok = session.makeDenoised { p in steps = p }
+            let ok = session.makeDenoised(progress: { p in steps = p }) == .done
             EditSession.denoiseForceStrips = false
             print("::notice::AI Denoise \(Int(e.width))x\(Int(e.height)): \(String(format: "%.1f", now() - t0)) s, progress reached \(steps)")
             check(ok && session.hasDenoised, "AI Denoise: makeDenoised failed")
