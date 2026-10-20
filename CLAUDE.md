@@ -24,6 +24,9 @@
   (`allowLowPrecisionAccumulationOnGPU`), and the model is loaded + run once on a blank tile when Detail opens
   (`detailToolChanged`, `warmDenoise`), kept while Detail is open, released 30 s after leaving it or on a memory
   warning. Tile prep is negligible (~1 s of 84), so pipelining would not help. NAFNet on the ANE did 0.08 s/tile.
+- **Measured 0.1.394 (owner, 20 Oct): 57 s for 24 MP** (median 0.42 s/tile, first tile 0.4 s after Detail's warm-up
+  of 2.7 s, peak 1.9 GB, no memory warnings, 0 tiles redone). Owner: "results were very good". Next idea to try:
+  1024 px tiles (overlap work 31 % -> 14 %, estimate ~45 s; check memory).
 - Every tile is checked against its input (finite, mean change < 0.1, < 0.5 % of samples off by > 0.3); a wrong one is
   redone on the CPU (`denoiseCPU`), else the photo's own pixels are kept. Diagnostics: "denoise model loaded in N s",
   "denoise first tiles a / b / c s", then "denoise done in N s: …, N redone on the CPU".
@@ -35,7 +38,7 @@
   Export makes it if missing. Detail → AI Denoise button; full-screen lock `denoise-busy` with progress, time left and
   Cancel; the job stops if Lumen leaves the screen. The diagnostics log gets "denoise model loaded in N s" and
   "denoise first tiles a / b / c s, N tiles in all" straight away, then 25 % steps and "denoise done in N s: …".
-- 24 MP ARW = 126 tiles. SCUNet on the phone GPU not measured yet (target < 30 s): read the diagnostics lines.
+- 24 MP ARW = 126 tiles of 512 px. Target < 30 s (owner's ideal).
 - Send diagnostics now holds only the last 3 launches of the log and the 3 newest iOS reports from the past 3 days,
   as compact JSON (20 Oct: a report carried two days of log and every saved report).
 - Engine test: Gaussian noise std 0.04 on cat.jpg: error 0.039 → 0.011, edges 95 % kept, 50 % mixes between, 0 = off,
