@@ -265,6 +265,8 @@ final class EditorViewModel: ObservableObject {
     private var denoiseLastStrength: Double = 100
 
     private func refreshDenoiseReady() { denoiseReady = session?.hasDenoised ?? false }
+    /// The photo's size in megapixels (the heavy-work coordinator's estimates scale with it).
+    private var megapixels: Double { session.map { Double($0.nativeSize.width * $0.nativeSize.height) / 1_000_000 } ?? 24 }
     private var denoiseReload: DispatchWorkItem?
     private let denoiseQueue = DispatchQueue(label: "lumen.denoise", qos: .userInitiated)
     /// Set when the app leaves the screen: the running job stops at its next tile and starts again on return.
@@ -334,9 +336,10 @@ final class EditorViewModel: ObservableObject {
         let from = DenoiseStore.pausedFraction(session.originalURL) ?? 0
         Diagnostics.shared.note(from > 0 ? String(format: "denoise continues from %.0f %%", from * 100) : "denoise start")
         let began = Date()
+        let mp = megapixels
         denoiseQueue.async {
             var noted = 0
-            let outcome = session.makeDenoised(progress: { p in
+            let outcome = HeavyWork.shared.run(.denoise, megapixels: mp, long: true) { session.makeDenoised(progress: { p in
                 // the phone's real speed, for ⋯ → Send diagnostics
                 let quarter = Int(p * 4)
                 if quarter > noted, quarter < 4 {
@@ -352,7 +355,7 @@ final class EditorViewModel: ObservableObject {
                     self.denoiseSecondsLeft = left
                 }
             }, pause: { [weak self] in self?.denoisePausing ?? true },
-               cancelled: { [weak self] in self?.denoiseCancel ?? true }, log: { Diagnostics.shared.note($0) })
+               cancelled: { [weak self] in self?.denoiseCancel ?? true }, log: { Diagnostics.shared.note($0) }) } ?? .failed
             let ok = outcome == .done, stopped = outcome == .paused || outcome == .cancelled
             LumenGPU.context.clearCaches()
             Diagnostics.shared.note(ok ? "denoise done in \(Int(Date().timeIntervalSince(began))) s: \(EditSession.denoiseTimings)"
@@ -669,8 +672,11 @@ final class EditorViewModel: ObservableObject {
         detailLoading = true
         Diagnostics.shared.note("100% view: building \(Int(edge)) px copy")
         let generation = loadGeneration
+        let mp = megapixels
         workQueue.async {
-            let src = session.makeSource(maxEdge: edge, materialize: true)
+            let src = HeavyWork.shared.run(.fullSizeCopy, megapixels: mp, optional: true) {
+                session.makeSource(maxEdge: edge, materialize: true)
+            } ?? nil
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.detailBuilding = false
@@ -906,9 +912,10 @@ final class EditorViewModel: ObservableObject {
         autoMaskBusy = true
         Diagnostics.shared.note("AI masks: working them out")
         let slow = DemoMode.value("-lumenDemoSlowAI") != nil   // CI: time to see the busy notice
+        let mp = megapixels
         workQueue.async {
             if slow { Thread.sleep(forTimeInterval: 4) }
-            session.prepareAutoMasks(analysisSettings, source: source)
+            _ = HeavyWork.shared.run(.aiMasks, megapixels: mp) { session.prepareAutoMasks(analysisSettings, source: source) }
             let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople, EditSession.aiDepth, EditSession.aiScene].filter { source.hasTried($0) && source.cachedMask($0) == nil })
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -1135,8 +1142,9 @@ final class EditorViewModel: ObservableObject {
         healBusyText = EditSession.healModelReady ? "Removing…" : "Preparing Heal…"
         freeMemoryForHeal()
         Diagnostics.shared.note("heal start (model ready \(EditSession.healModelReady))")
+        let mp = megapixels
         workQueue.async {
-            let spot = session.makeHeal(strokes: [stroke], earlier: earlier)
+            let spot = HeavyWork.shared.run(.heal, megapixels: mp) { session.makeHeal(strokes: [stroke], earlier: earlier) } ?? nil
             LumenGPU.context.clearCaches()
             Diagnostics.shared.note(spot == nil ? "heal failed" : "heal done")
             let why = EditSession.healFailure ?? .failed
@@ -1182,7 +1190,9 @@ final class EditorViewModel: ObservableObject {
         let generation = loadGeneration
         Diagnostics.shared.note("original copy (no heals, no AI Denoise): making it")
         workQueue.async {
-            let src = session.makeSource(maxEdge: 2560, materialize: true, heals: [], denoise: false)
+            let src = HeavyWork.shared.run(.original, megapixels: 0, optional: true) {
+                session.makeSource(maxEdge: 2560, materialize: true, heals: [], denoise: false)
+            } ?? nil
             Task { @MainActor [weak self] in
                 guard let self, generation == self.loadGeneration, let src, src.size == self.source?.size else { return }
                 guard hdr == self.settings.hdr else { return }
@@ -1214,8 +1224,9 @@ final class EditorViewModel: ObservableObject {
         healBusyText = "Finding people…"
         peopleSearch += 1
         let search = peopleSearch
+        let mp = megapixels
         workQueue.async {
-            let people = demo ?? session.findPeople(earlier: earlier)
+            let people = demo ?? HeavyWork.shared.run(.findPeople, megapixels: mp) { session.findPeople(earlier: earlier) } ?? []
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.healBusy = false
@@ -1277,6 +1288,7 @@ final class EditorViewModel: ObservableObject {
         healBusy = true
         healBusyText = chosen.count == 1 ? "Removing…" : "Removing 1 of \(chosen.count)…"
         freeMemoryForHeal()
+        let mp = megapixels
         workQueue.async {
             var made: [HealSpot] = []
             var failures: [HealFailure] = []
@@ -1286,7 +1298,7 @@ final class EditorViewModel: ObservableObject {
                     Task { @MainActor [weak self] in self?.healBusyText = text }
                 }
                 Diagnostics.shared.note("remove person \(i + 1) of \(chosen.count)")
-                let spot = session.makeHeal(person: person, earlier: earlier + made)
+                let spot = HeavyWork.shared.run(.heal, megapixels: mp) { session.makeHeal(person: person, earlier: earlier + made) } ?? nil
                 LumenGPU.context.clearCaches()
                 if let spot {
                     made.append(spot)
@@ -1607,10 +1619,13 @@ final class EditorViewModel: ObservableObject {
         unhealedSource = nil
         if Diagnostics.availableMB < 2000 { detailSource = nil; EditSession.releaseMaskModels() }
         LumenGPU.context.clearCaches()
+        let mp = megapixels
         workQueue.async {
             defer { patches.close() }
             Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
-            let data = session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+            let data = HeavyWork.shared.run(.export, megapixels: mp) {
+                session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+            } ?? nil
             var url: URL?
             if let data {
                 let u = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-lumen.\(o.format.ext)")

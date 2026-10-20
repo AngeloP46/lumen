@@ -575,11 +575,15 @@ final class LibraryStore: ObservableObject {
         Diagnostics.shared.note("denoise batch: \(done + 1) of \(total)")
         batchDenoiseQueue.async { [weak self] in
             // the model stays loaded from one photo to the next (released when the batch ends)
-            let outcome: DenoiseOutcome = EditSession(url: url, expandHDR: hdr)?.makeDenoised(progress: { p in
-                Task { @MainActor [weak self] in self?.denoiseBatch?.fraction = p }
-            }, pause: { [weak self] in self?.batchPausing ?? true },
-               cancelled: { [weak self] in self?.batchCancel ?? true },
-               log: { Diagnostics.shared.note($0) }) ?? .failed
+            let session = EditSession(url: url, expandHDR: hdr)
+            let mp = session.map { Double($0.nativeSize.width * $0.nativeSize.height) / 1_000_000 } ?? 24
+            let outcome: DenoiseOutcome = HeavyWork.shared.run(.denoise, megapixels: mp, long: true) {
+                session?.makeDenoised(progress: { p in
+                    Task { @MainActor [weak self] in self?.denoiseBatch?.fraction = p }
+                }, pause: { [weak self] in self?.batchPausing ?? true },
+                   cancelled: { [weak self] in self?.batchCancel ?? true },
+                   log: { Diagnostics.shared.note($0) })
+            } ?? nil ?? .failed
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.batchRunning = false
@@ -629,9 +633,11 @@ final class LibraryStore: ObservableObject {
             var used = Set<String>()
             for (n, job) in jobs.enumerated() {
                 autoreleasepool {
-                    guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr && o.hdr),
-                          let data = session.renderData(job.edits, format: o.format, quality: o.quality / 100,
-                                                        maxEdge: o.maxEdge, includeHDR: o.hdr) else { return }
+                    guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr && o.hdr) else { return }
+                    let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
+                    guard let data = HeavyWork.shared.run(.export, megapixels: mp, {
+                        session.renderData(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+                    }) ?? nil else { return }
                     var name = job.name + "-lumen", k = 2
                     // the file system ignores case: IMG_1 and img_1 would overwrite each other
                     while used.contains(name.lowercased()) { name = "\(job.name)-lumen-\(k)"; k += 1 }

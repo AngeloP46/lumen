@@ -71,6 +71,13 @@
   `LibraryStore.cleanWithAIDenoise` with a progress banner, Cancel, pause/continue, queue kept in UserDefaults;
   editor's Paste some: an AI Denoise toggle). Library paste keepOwn keeps flips/perspective (`take(.crop)`) and Heal's
   on/off. `RowShrinker<P: ShrinkPixel>` serves UInt16 and Float16 rows.
+- **Heavy-work coordinator (21 Oct, `Sources/HeavyWork.swift`)**: the 100 % copy, AI masks, heal, Remove people,
+  the original copy, AI Denoise (long) and exports (editor and library batch) run through `HeavyWork.shared.run`.
+  Each states ~MB needed for the photo's size (`needMB`: 50 MB/MP for the RAW engine's full decode plus a base);
+  it starts at once when nothing heavy runs, beside others only with 700 MB to spare, else it waits (logged
+  "waiting for ..."); one long job at a time; short of room when alone, `HeavyWork.release` clears GPU caches and
+  mask models first; optional jobs (100 % copy, original copy) are skipped instead ("skipped, N MB free").
+  Light work (preview, thumbnails, histogram, preset previews) doesn't go through it.
 - Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
   peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
   iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.
