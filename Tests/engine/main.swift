@@ -2271,19 +2271,37 @@ if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil {
        let cleanSession = EditSession(url: cleanURL), let clean0 = cleanSession.decode(maxEdge: 1600) {
         let e = clean0.extent
         let clean = clean0.cropped(to: e)
-        // camera-like noise as a phone or camera at high ISO shows it: added to the gamma-encoded picture (not linear
-        // light, which made the shadows far noisier than any camera), std ~0.04 (written as a 16-bit PNG)
-        let rnd = CIFilter(name: "CIRandomGenerator")!.outputImage!.cropped(to: e)
-            .applyingFilter("CIColorMatrix", parameters: ["inputRVector": CIVector(x: 0.14, y: 0, z: 0, w: 0),
-                                                         "inputGVector": CIVector(x: 0, y: 0.14, z: 0, w: 0),
-                                                         "inputBVector": CIVector(x: 0, y: 0, z: 0.14, w: 0),
-                                                         "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
-                                                         "inputBiasVector": CIVector(x: -0.07, y: -0.07, z: -0.07, w: 1)])
-        let noisyImg = rnd.applyingFilter("CIAdditionCompositing", parameters: [
-            kCIInputBackgroundImageKey: clean.applyingFilter("CILinearToSRGBToneCurve")])
-            .applyingFilter("CISRGBToneCurveToLinear").cropped(to: e)
+        // Camera-like noise, made in plain Swift so it is exactly what it says: Gaussian, std 0.04 per channel, added to
+        // the gamma-encoded picture (as photos are stored), fixed seed, written as a 16-bit PNG. (CIRandomGenerator +
+        // matrices gave far stronger, speckly noise and an 8-bit file: the first two CI runs measured that, not the model.)
+        let W = Int(e.width), H = Int(e.height)
+        var px = [Float](repeating: 0, count: W * H * 4)
+        LumenGPU.context.render(clean, toBitmap: &px, rowBytes: W * 16, bounds: e, format: .RGBAf, colorSpace: LumenGPU.displaySpace)
+        var seed: UInt64 = 0x9E3779B97F4A7C15
+        func uniform() -> Float {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return (Float(seed >> 40) + 0.5) / Float(1 << 24)
+        }
+        var noisy16 = [UInt16](repeating: 65535, count: W * H * 4)
+        var i = 0
+        while i < W * H * 4 {
+            for c in 0..<3 {
+                let g = (-2 * log(uniform())).squareRoot() * cos(2 * Float.pi * uniform())
+                noisy16[i + c] = UInt16(max(0, min(1, px[i + c] + 0.04 * g)) * 65535 + 0.5)
+            }
+            i += 4
+        }
         let noisyURL = outDir.appendingPathComponent("denoise-noisy.png")
-        try? LumenGPU.context.writePNGRepresentation(of: noisyImg, to: noisyURL, format: .RGBA16, colorSpace: LumenGPU.displaySpace)
+        noisy16.withUnsafeMutableBytes { buf in
+            if let provider = CGDataProvider(data: Data(bytesNoCopy: buf.baseAddress!, count: buf.count, deallocator: .none) as CFData),
+               let cg = CGImage(width: W, height: H, bitsPerComponent: 16, bitsPerPixel: 64, bytesPerRow: W * 8, space: LumenGPU.displaySpace,
+                                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder16Little.rawValue),
+                                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+               let dest = CGImageDestinationCreateWithURL(noisyURL as CFURL, UTType.png.identifier as CFString, 1, nil) {
+                CGImageDestinationAddImage(dest, cg, nil)
+                _ = CGImageDestinationFinalize(dest)
+            }
+        }
         func mae(_ a: CIImage, _ b: CIImage) -> Float {
             var v = [Float](repeating: 0, count: 4)
             let d = a.applyingFilter("CIColorAbsoluteDifference", parameters: ["inputImage2": b])
