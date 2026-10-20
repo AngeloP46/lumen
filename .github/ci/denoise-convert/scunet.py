@@ -86,9 +86,10 @@ class WMSA(nn.Module):
         # Using Attn Mask to distinguish different subwindows.
         if self.type != 'W':
             rows, cols = self.generate_mask(h_windows, w_windows, self.window_size, shift=self.window_size//2)
+            # heads and batch folded into one axis: Core ML allows at most rank 5
             n_h, n_b = sim.shape[0], sim.shape[1]
             pp = self.window_size * self.window_size
-            sim = (sim.reshape(n_h, n_b, h_windows, w_windows, pp, pp) + rows + cols).reshape(n_h, n_b, h_windows * w_windows, pp, pp)
+            sim = (sim.reshape(n_h * n_b, h_windows, w_windows, pp, pp) + rows + cols).reshape(n_h, n_b, h_windows * w_windows, pp, pp)
 
         probs = nn.functional.softmax(sim, dim=-1)
         output = torch.einsum('hbwij,hbwjc->hbwic', probs, v)
