@@ -231,3 +231,7 @@ and restarts on return; first clean races Neural Engine vs GPU and keeps the fas
 SCUNet took 4+ minutes for 24 MP on the owner's iPhone 17 Pro Max; replaced by NAFNet-SIDD-width32 (MIT, all
 convolutions, about a quarter of the work), Neural Engine only (no GPU probe), speed logged from the first tiles.
 Send diagnostics holds only the last 3 launches and recent iOS reports. Still Pro (aiDenoise > 0). No Store code changed.
+
+## 20 Oct 2026: AI Denoise back to SCUNet, on the GPU (from main #62 + #63)
+NAFNet wrecked bright tiles on the Neural Engine (float16 overflow) and left half the noise. Back to SCUNet, run on the
+GPU (CI: CPU). Every tile is checked against its input and a wrong one redone on the CPU. Still Pro. No Store code changed.

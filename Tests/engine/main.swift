@@ -2323,15 +2323,14 @@ if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil {
             let ok = session.makeDenoised { p in steps = p }
             print("::notice::AI Denoise \(Int(e.width))x\(Int(e.height)): \(String(format: "%.1f", now() - t0)) s, progress reached \(steps)")
             check(ok && session.hasDenoised, "AI Denoise: makeDenoised failed")
+            check(EditSession.denoiseTimings.contains(", 0 redone"), "AI Denoise: no tile should need redoing (\(EditSession.denoiseTimings))")
             session.denoiseAmount = 1
             if ok, let cleaned = session.decode(maxEdge: nil) {
                 let before = mae(noisy, clean), after = mae(cleaned, clean)
                 let edgeClean = edges(clean), edgeOut = edges(cleaned)
                 print("::notice::AI Denoise error vs clean: noisy \(before), denoised \(after); edges clean \(edgeClean), denoised \(edgeOut)")
                 check(after < before * 0.6, "AI Denoise should remove most of the added noise (\(before) -> \(after))")
-                // NAFNet-SIDD (20 Oct) keeps ~48 % by this measure on fur with clipped Gaussian noise (SCUNet kept 95 %, but took
-                // 4+ minutes for 24 MP on the phone); the bar catches a broken model, the owner judges real photos
-                check(edgeOut > edgeClean * 0.4, "AI Denoise should keep edges (\(edgeClean) -> \(edgeOut))")
+                check(edgeOut > edgeClean * 0.6, "AI Denoise should keep edges (\(edgeClean) -> \(edgeOut))")
                 session.denoiseAmount = 0.5
                 if let half = session.decode(maxEdge: nil) {
                     let m = mae(half, clean)

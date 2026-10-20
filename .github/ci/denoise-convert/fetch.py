@@ -2,7 +2,7 @@
 
 The mirror (WAS/was-node-suite-weights) re-hosts the official checkpoints; the hashes below are the LFS SHA-256 OIDs
 of that revision. Changing either is an explicit, reviewed code change.
-Usage: python fetch.py nafnet <dest.pth>
+Usage: python fetch.py scunet <dest.pth>
 """
 import hashlib
 import sys
@@ -10,8 +10,8 @@ import urllib.request
 
 REVISION = 'dcc864eaa1478f7b82b97b682543117cc8c6d632'
 FILES = {
-    'nafnet': ('denoise/NAFNet-SIDD-width32.pth', 116861841,
-               '89c70e808d1783b6c07911306e106aaf0d4f7f3da8c61078b99ff7f8929a26f4'),
+    'scunet': ('denoise/scunet_color_real_psnr.pth', 71982841,
+               'fa78899ba2caec9d235a900e91d96c689da71c42029230c2028b00f09f809c2e'),
 }
 
 name, dest = sys.argv[1], sys.argv[2]
