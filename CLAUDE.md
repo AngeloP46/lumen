@@ -9,29 +9,27 @@
 - App Store pricing, Free vs Pro, claims and the marketing plan: `MARKETING.md` on the sandbox branch (`Lumen-Sandbox\MARKETING.md`). Keep it out of main.
 
 ## AI Denoise (0.1.360, 20 Oct; owner asked for it)
-- Model: **NAFNet-SIDD-width32** (megvii-research/NAFNet, MIT, real phone-camera noise), replacing SCUNet on 20 Oct:
-  on the owner's iPhone 17 Pro Max, SCUNet (0.1.371) never reached 25 % of a 24 MP photo in 60-100 s (> 2 s per tile,
-  4+ minutes in all) and iOS closed Lumen for memory. SCUNet cleans ~1 dB better; owner: one model, consistently good
-  and quick, target < 30 s. If the phone has lots of time to spare, NAFNet width 64 (~4x the work) is the step up.
-  Weights pinned: HF `WAS/was-node-suite-weights` revision dcc864ea…, `denoise/NAFNet-SIDD-width32.pth`, SHA-256
-  89c70e80… (`.github/ci/denoise-convert/fetch.py`; `nafnet.py` = the architecture with LayerNorm2d as plain ops).
-  **0.1.381 wrecked bright tiles on the phone** (white / false colour in sky, white paint): NAFNet's channel attention
-  (AdaptiveAvgPool2d over 512 x 512) sums ~200,000, past float16's 65,504, on the Neural Engine; the CI Mac runs the
-  CPU (full precision) and never showed it. Fixed in `nafnet.py`: `BlockMean` averages in 8 x 8 steps (same result,
-  153 dB), LayerNorm scaled by 1/16 ((x-mu)^2 reached 67,315). The app also checks every tile against its input
-  (finite, mean change < 0.1, < 0.5 % of samples off by > 0.3) and redoes a wrong one on the CPU (`denoiseCPU`), else
-  keeps the photo's own pixels; result version -2 remakes old results. Check new layers for float16 sums: CI can't.
-  Converted in CI to Core ML, float16, fixed 512 x 512 tiles (`build-denoise.sh`, cached; on failure an empty
-  `Denoise.mlmodelc` keeps the project building and the button is hidden).
+- Model: **SCUNet** colour real-noise (cszn/SCUNet, Apache-2.0), run on the **GPU** (`.cpuAndGPU`; CI sets
+  `LUMEN_DENOISE_UNITS=cpu`). Weights pinned: HF `WAS/was-node-suite-weights` revision dcc864ea…, SHA-256 fa78899b…
+  (`fetch.py`). Converted in CI to Core ML, float16, 512 x 512 tiles (`build-denoise.sh`, cached; on failure an empty
+  `Denoise.mlmodelc` keeps the project building). `scunet.py`: the shifted-window mask is built in NumPy.
+- 20 Oct history: SCUNet on the Neural Engine (0.1.371) never reached 25 % of 24 MP in 100 s (attention layers don't
+  suit the ANE) and iOS closed Lumen once (that build also loaded the GPU copy for a probe). NAFNet-SIDD-width32
+  (0.1.381, #60) was quick on the ANE but wrecked bright tiles (channel-attention sum ~200,000 > float16's 65,504; the
+  CI Mac runs on the CPU in full precision and can't show it) and even fixed (#62: 8 x 8 block mean) left half the
+  noise (SIDD-only training). Owner: one model, good and quick, use the chips to the full -> SCUNet on the GPU (#63).
+- Every tile is checked against its input (finite, mean change < 0.1, < 0.5 % of samples off by > 0.3); a wrong one is
+  redone on the CPU (`denoiseCPU`), else the photo's own pixels are kept. Diagnostics: "denoise model loaded in N s",
+  "denoise first tiles a / b / c s", then "denoise done in N s: …, N redone on the CPU".
 - WSL on the owner's PC crashes converting it (7 GB): don't retry locally; CI Macs swap and manage.
 - App (`Sources/Edit/Denoise.swift`): `makeDenoised` cleans the full-size camera decode (no heals) once, tiles keep a
-  32 px margin (no blending), runs on `.cpuAndNeuralEngine` only (the GPU probe was dropped with SCUNet), saves a
+  32 px margin (no blending), one model on the GPU (no probe: two loaded copies cost memory), saves a
   16-bit PNG + json per photo and HDR mode in Library/denoise (`DenoiseStore`, removed with the photo). Every decode
   mixes it in by `EditSettings.aiDenoise` (0...100) with `withDenoise`, keeping highlights above the cleaned range.
   Export makes it if missing. Detail → AI Denoise button; full-screen lock `denoise-busy` with progress, time left and
   Cancel; the job stops if Lumen leaves the screen. The diagnostics log gets "denoise model loaded in N s" and
   "denoise first tiles a / b / c s, N tiles in all" straight away, then 25 % steps and "denoise done in N s: …".
-- 24 MP ARW = 126 tiles. Phone speed of NAFNet not measured yet: read those lines in ⋯ → Send diagnostics.
+- 24 MP ARW = 126 tiles. SCUNet on the phone GPU not measured yet (target < 30 s): read the diagnostics lines.
 - Send diagnostics now holds only the last 3 launches of the log and the 3 newest iOS reports from the past 3 days,
   as compact JSON (20 Oct: a report carried two days of log and every saved report).
 - Engine test: Gaussian noise std 0.04 on cat.jpg: error 0.039 → 0.011, edges 95 % kept, 50 % mixes between, 0 = off,

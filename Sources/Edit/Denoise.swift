@@ -4,10 +4,11 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// AI Denoise: NAFNet-SIDD-width32 (megvii-research/NAFNet, MIT, trained on real phone-camera noise), converted to
-/// Core ML in CI (.github/ci/denoise-convert, 512 x 512 tiles, float16), run on the Neural Engine. It replaced SCUNet
-/// on 20 Oct: SCUNet cleaned about 1 dB better but took over 2 s per tile on an iPhone 17 Pro Max (4+ minutes for a
-/// 24 MP photo, and iOS closed Lumen for memory); the owner wants one model that is consistently good and quick.
+/// AI Denoise: SCUNet's real-noise model (cszn/SCUNet, Apache-2.0), converted to Core ML in CI
+/// (.github/ci/denoise-convert, 512 x 512 tiles, float16), run on the GPU. History (20 Oct): SCUNet on the Neural
+/// Engine never got a quarter through a 24 MP photo in 100 s (its attention layers don't suit it); NAFNet-SIDD was
+/// quick there but left half the noise and wrecked bright tiles (float16 overflow). The owner wants one model that
+/// is good and quick, using the phone's chips to the full: SCUNet's quality on the GPU.
 ///
 /// The full-size photo as the camera made it (no heals) is cleaned once, tile by tile, and kept on disk per photo and
 /// HDR mode (`DenoiseStore`). Every decode then mixes it in by the AI Denoise amount, so preview, 100 % view, heals,
@@ -15,7 +16,7 @@ import UniformTypeIdentifiers
 enum DenoiseStore {
     nonisolated(unsafe) static var directory = FileManager.default.temporaryDirectory.appendingPathComponent("LumenDenoise")
     /// Changes when the model or the way it is run changes: older results are made again.
-    static let modelVersion = "nafnet-sidd32-512-2"   // -2: results from 0.1.381 had wrecked tiles
+    static let modelVersion = "scunet-real-512-gpu-1"
 
     struct Info: Codable {
         var model: String
@@ -65,11 +66,11 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "Denoise", withExtension: "mlmodelc")
     }()
-    /// The model on the Neural Engine (all convolutions, which it runs well; the CPU takes any layer it can't).
+    /// The model on the GPU. `LUMEN_DENOISE_UNITS=cpu` (CI: the Mac's virtual GPU ran out of memory at 24 MP) uses the CPU.
     private static let denoiseModel = LoadedModel<MLModel> {
         guard let url = denoiseModelURL else { return nil }
         let cfg = MLModelConfiguration()
-        cfg.computeUnits = .cpuAndNeuralEngine
+        cfg.computeUnits = ProcessInfo.processInfo.environment["LUMEN_DENOISE_UNITS"] == "cpu" ? .cpuOnly : .cpuAndGPU
         return try? MLModel(contentsOf: url, configuration: cfg)
     }
     /// The same model on the CPU (full precision), for a tile the Neural Engine got wrong.
@@ -168,8 +169,8 @@ extension EditSession {
                         return o
                     }
                     // A denoised tile stays close to its input (noise is a few percent). Owner's phone, 0.1.381: some
-                    // tiles came back white or false-coloured from the Neural Engine (a float16 overflow, since fixed in
-                    // the model); any such tile is done again on the CPU, so it can never reach the photo.
+                    // tiles came back white or false-coloured from the Neural Engine (NAFNet, a float16 overflow); any
+                    // such tile is done again on the CPU (full precision), so it can never reach the photo.
                     func plausible(_ o: MLMultiArray) -> Bool {
                         let st = o.strides.map(\.intValue)
                         let src = o.dataPointer.bindMemory(to: Float16.self, capacity: o.count)
@@ -192,7 +193,7 @@ extension EditSession {
                     var output = predict(model)
                     if output.map(plausible) != true {
                         redone += 1
-                        if redone == 1 { log?("denoise: tile \(Int(done) + 1) looked wrong from the Neural Engine, redone on the CPU") }
+                        if redone == 1 { log?("denoise: tile \(Int(done) + 1) looked wrong from the GPU, redone on the CPU") }
                         if let cpu = Self.denoiseCPU.model, let o = predict(cpu), plausible(o) { output = o }
                         else { output = nil }
                     }

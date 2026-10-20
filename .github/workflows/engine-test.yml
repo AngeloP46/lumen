@@ -73,6 +73,7 @@ jobs:
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           export LUMEN_DENOISE_MODEL="$PWD/Models/Denoise.mlmodelc"
+          export LUMEN_DENOISE_UNITS=cpu   # the CI Mac's virtual GPU runs out of memory at 24 MP; the phone uses its GPU
           export LUMEN_HEAL_EXPECT_SIDE=800
           export LUMEN_PEOPLE_SAMPLE="$PWD/people/bus.jpg"
           export LUMEN_TREES_SAMPLE="$PWD/people/building.jpg"
@@ -93,6 +94,7 @@ jobs:
         run: |
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           export LUMEN_DENOISE_MODEL="$PWD/Models/Denoise.mlmodelc"
+          export LUMEN_DENOISE_UNITS=cpu   # the CI Mac's virtual GPU runs out of memory at 24 MP; the phone uses its GPU
           export LUMEN_HEAL_EXPECT_SIDE=800
           ./out/engine-test out/k.metallib samples out/memory --memory
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
