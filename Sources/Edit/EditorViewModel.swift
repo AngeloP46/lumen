@@ -751,6 +751,7 @@ final class EditorViewModel: ObservableObject {
     private func finishLensFocus() {
         guard lensFocusPending, let source, let session else { return }
         lensFocusPending = false
+        Diagnostics.shared.note("Lens Blur: finding the subject's distance")
         if let range = session.lensSubjectRange(source, point: settings.lensBlur.subjectPoint) {
             var s = settings
             s.lensBlur.focusDistance = (range.lowerBound + range.upperBound) / 2
