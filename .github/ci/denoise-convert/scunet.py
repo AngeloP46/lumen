@@ -49,17 +49,17 @@ class WMSA(nn.Module):
             attn_mask: should be (1 1 w p p),
         """
         # supporting sqaure.
-        attn_mask = torch.zeros(h, w, p, p, p, p, dtype=torch.bool, device=self.relative_position_params.device)
-        if self.type == 'W':
-            return attn_mask
-
-        s = p - shift
-        attn_mask[-1, :, :s, :, s:, :] = True
-        attn_mask[-1, :, s:, :, :s, :] = True
-        attn_mask[:, -1, :, :s, :, s:] = True
-        attn_mask[:, -1, :, s:, :, :s] = True
-        attn_mask = rearrange(attn_mask, 'w1 w2 p1 p2 p3 p4 -> 1 1 (w1 w2) (p1 p2) (p3 p4)')
-        return attn_mask
+        # Built in NumPy and handed to the graph as a constant (Lumen change, 20 Oct): the original fills a torch
+        # tensor slice by slice, which Core ML's converter cannot translate. Same values.
+        m = np.zeros((h, w, p, p, p, p), dtype=bool)
+        if self.type != 'W':
+            s = p - shift
+            m[-1, :, :s, :, s:, :] = True
+            m[-1, :, s:, :, :s, :] = True
+            m[:, -1, :, :s, :, s:] = True
+            m[:, -1, :, s:, :, :s] = True
+        m = m.transpose(0, 1, 2, 3, 4, 5).reshape(1, 1, h * w, p * p, p * p)
+        return torch.from_numpy(m)
 
     def forward(self, x):
         """ Forward pass of Window Multi-head Self-attention module.
