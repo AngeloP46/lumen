@@ -82,7 +82,7 @@ extension EditSession {
         set { UserDefaults.standard.set(newValue, forKey: "denoiseUnits") }
     }
     /// What the last clean measured (seconds), for the diagnostics log.
-    nonisolated(unsafe) static var denoiseTimings = 
+    nonisolated(unsafe) static var denoiseTimings = ""
     /// Only looks for the model's files (the Detail panel asks while drawing).
     static var hasDenoiseModel: Bool { modelFilesExist(denoiseModelURL) }
     /// Lets go of the model (it is only needed while a photo is being cleaned).
