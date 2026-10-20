@@ -54,6 +54,22 @@ final class LibraryStore: ObservableObject {
     @Published var importing = false
     @Published var importTotal = 0
     @Published var importDone = 0
+    /// AI Denoise for photos edits were pasted onto (owner, 21 Oct: asked for, at most 5 at a time, with progress):
+    /// cleaned one after another in the background of the library; pauses when Lumen leaves the screen.
+    struct DenoiseBatch: Equatable { var done: Int; var count: Int; var fraction: Double; var name: String; var paused: Bool }
+    @Published private(set) var denoiseBatch: DenoiseBatch?
+    static let denoiseBatchCap = 5
+    private var batchQueue: [UUID] = []
+    private var batchTotal = 0
+    private var batchStrength: Double = 100
+    private var batchRunning = false
+    nonisolated(unsafe) private var batchPausing = false
+    nonisolated(unsafe) private var batchCancel = false
+    private let batchDenoiseQueue = DispatchQueue(label: "lumen.denoise.batch", qos: .userInitiated)
+    private var batchObservers: [NSObjectProtocol] = []
+    /// Cleans that paused in the editor (Lumen left the screen or was swiped away): photo and how far it got.
+    @Published private(set) var pausedCleans: [(item: LibraryItem, fraction: Double)] = []
+
     /// Batch export in progress (done, total), and its result.
     @Published var batchProgress: (done: Int, total: Int)?
     @Published var batchResult: BatchResult?
@@ -97,7 +113,19 @@ final class LibraryStore: ObservableObject {
         // healed patches (Heal tool) live with the library so they survive app updates
         HealStore.directory = root.appendingPathComponent("heals", isDirectory: true)
         // AI Denoise's cleaned copies (one per photo and HDR mode), removed with the photo
-        DenoiseStore.directory = root.appendingPathComponent("denoise", isDirectory: true)
+        // (Application Support, out of the Files app; moved there from the library folder on 21 Oct)
+        let oldDenoise = root.appendingPathComponent("denoise", isDirectory: true)
+        if testRoot == nil, let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            DenoiseStore.directory = support.appendingPathComponent("denoise", isDirectory: true)
+            try? fm.createDirectory(at: support, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: oldDenoise.path), !fm.fileExists(atPath: DenoiseStore.directory.path) {
+                try? fm.moveItem(at: oldDenoise, to: DenoiseStore.directory)
+            }
+        } else {
+            DenoiseStore.directory = oldDenoise
+        }
+        DispatchQueue.global(qos: .utility).async { DenoiseStore.sweep() }
+        Task { @MainActor [weak self] in self?.restoreDenoiseWork() }
         try? fm.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         // Smart fill (beta, 0.1.154) was taken out again: free the ~950 MB it may have downloaded
         if testRoot == nil {
@@ -442,15 +470,144 @@ final class LibraryStore: ObservableObject {
                 s.masks.removeAll { $0.id == id }; s.masks.append(focus)
             }
             s.heals = own.heals   // heals are made for one photo's pixels: always keep each photo's own
+            s.aiDenoise = own.aiDenoise   // so is AI Denoise (a clean each): pasting never starts or drops one
+            s.setOn(.heal, own.isOn(.heal))   // Heal's on/off belongs with the photo's own heals
             if keepOwn {
                 s.masks = own.masks
-                s.straighten = own.straighten
-                s.quarterTurns = own.quarterTurns
-                s.cropAspect = own.cropAspect
-                s.cropL = own.cropL; s.cropT = own.cropT; s.cropR = own.cropR; s.cropB = own.cropB
+                // crop, straighten, turns, flips and perspective all belong to one picture (21 Oct review: flips and
+                // the Transform sliders used to be pasted over)
+                s.take(.crop, from: own)
             }
             save(s, for: item)
             refreshThumbnail(item)
+        }
+    }
+
+    // MARK: AI Denoise for many photos
+
+    /// Cleans the first `denoiseBatchCap` of `list` with AI Denoise, one after another, then sets it to `strength` on
+    /// each. Photos already cleaned only get the strength.
+    func cleanWithAIDenoise(_ list: [LibraryItem], strength: Double) {
+        guard EditSession.hasDenoiseModel, !list.isEmpty else { return }
+        batchQueue = list.prefix(Self.denoiseBatchCap).map(\.id)
+        batchTotal = batchQueue.count
+        batchStrength = strength
+        batchCancel = false
+        saveBatch()
+        runBatch()
+    }
+
+    /// A batch that paused (Lumen left the screen, or was swiped away and opened again) carries on.
+    func continueDenoiseBatch() {
+        batchCancel = false
+        batchPausing = false
+        runBatch()
+    }
+
+    func cancelDenoiseBatch() {
+        batchCancel = true
+        batchQueue = []
+        saveBatch()
+        if !batchRunning { denoiseBatch = nil }
+    }
+
+    private func saveBatch() {
+        let d = UserDefaults.standard
+        d.set(batchQueue.map(\.uuidString), forKey: "denoiseBatchQueue")
+        d.set(batchTotal, forKey: "denoiseBatchTotal")
+        d.set(batchStrength, forKey: "denoiseBatchStrength")
+    }
+
+    /// At launch: a batch left from before shows as paused (it carries on when asked, so a closure by iOS doesn't loop),
+    /// and cleans paused in the editor are listed for the library's "Continue".
+    func restoreDenoiseWork() {
+        let d = UserDefaults.standard
+        batchQueue = (d.stringArray(forKey: "denoiseBatchQueue") ?? []).compactMap(UUID.init).filter { id in items.contains { $0.id == id } }
+        batchTotal = max(batchQueue.count, d.integer(forKey: "denoiseBatchTotal"))
+        batchStrength = d.object(forKey: "denoiseBatchStrength") as? Double ?? 100
+        if let first = batchQueue.first, let item = self.item(first) {
+            denoiseBatch = DenoiseBatch(done: batchTotal - batchQueue.count, count: batchTotal, fraction: 0, name: item.displayName, paused: true)
+        }
+        refreshPausedCleans()
+        guard batchObservers.isEmpty else { return }
+        let nc = NotificationCenter.default
+        batchObservers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.batchPausing = true
+        })
+        batchObservers.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.refreshPausedCleans()
+                // a batch the background paused carries on by itself
+                if self.denoiseBatch?.paused == true, !self.batchRunning, !self.batchQueue.isEmpty, self.batchPausedByBackground {
+                    self.continueDenoiseBatch()
+                }
+            }
+        })
+    }
+    private var batchPausedByBackground = false
+
+    func refreshPausedCleans() {
+        let paused = DenoiseStore.pausedCleans()
+        pausedCleans = paused.compactMap { p in
+            guard let item = items.first(where: { $0.fileName == p.photo }), !batchQueue.contains(item.id) else { return nil }
+            return (item, p.fraction)
+        }
+    }
+
+    private func runBatch() {
+        guard !batchRunning else { return }
+        guard let id = batchQueue.first, let item = self.item(id) else {
+            if denoiseBatch != nil, !batchQueue.isEmpty { batchQueue.removeFirst(); saveBatch(); runBatch(); return }
+            denoiseBatch = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+            batchDenoiseQueue.async { EditSession.releaseDenoiseModel() }
+            return
+        }
+        batchRunning = true
+        batchPausing = false
+        batchPausedByBackground = false
+        let done = batchTotal - batchQueue.count, total = batchTotal, strength = batchStrength
+        denoiseBatch = DenoiseBatch(done: done, count: total, fraction: 0, name: item.displayName, paused: false)
+        UIApplication.shared.isIdleTimerDisabled = true
+        let url = fileURL(item)
+        let hdr = settings(for: item).hdr
+        Diagnostics.shared.note("denoise batch: \(done + 1) of \(total)")
+        batchDenoiseQueue.async { [weak self] in
+            // the model stays loaded from one photo to the next (released when the batch ends)
+            let outcome: DenoiseOutcome = EditSession(url: url, expandHDR: hdr)?.makeDenoised(progress: { p in
+                Task { @MainActor [weak self] in self?.denoiseBatch?.fraction = p }
+            }, pause: { [weak self] in self?.batchPausing ?? true },
+               cancelled: { [weak self] in self?.batchCancel ?? true },
+               log: { Diagnostics.shared.note($0) }) ?? .failed
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.batchRunning = false
+                switch outcome {
+                case .done:
+                    var s = self.settings(for: item)   // as it is now (it may have been edited meanwhile)
+                    s.aiDenoise = strength
+                    self.save(s, for: item)
+                    self.refreshThumbnail(item)
+                    if self.batchQueue.first == id { self.batchQueue.removeFirst() }
+                    self.saveBatch()
+                    self.runBatch()
+                case .paused:
+                    self.batchPausedByBackground = true
+                    self.denoiseBatch?.paused = true
+                    UIApplication.shared.isIdleTimerDisabled = false
+                case .cancelled:
+                    self.denoiseBatch = nil
+                    UIApplication.shared.isIdleTimerDisabled = false
+                    self.batchDenoiseQueue.async { EditSession.releaseDenoiseModel() }
+                case .failed:
+                    Diagnostics.shared.note("denoise batch: \(item.displayName) failed, going on")
+                    if self.batchQueue.first == id { self.batchQueue.removeFirst() }
+                    self.saveBatch()
+                    self.lastError = "AI Denoise couldn't clean \(item.displayName)."
+                    self.runBatch()
+                }
+            }
         }
     }
 

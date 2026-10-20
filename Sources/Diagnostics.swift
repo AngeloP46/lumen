@@ -20,6 +20,8 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
     private var peakMB = 0
     private var sampler: Timer?
     private var started = false
+    /// The last run ended while Lumen was on screen (closed by iOS, a crash, or the phone went off).
+    private(set) var closedDuringLastRun = false
 
     private override init() {
         let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
@@ -34,7 +36,12 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
         started = true
         // the previous run never reached the background: iOS (or a crash) closed it while it was on screen
         if let state = try? String(contentsOf: stateURL, encoding: .utf8), state.hasPrefix("open") {
-            note("previous run ended while Lumen was open (closed by iOS for memory, or a crash)")
+            // "open <time> <MB>": written every 2 s while on screen (21 Oct review: the ended time used to be the last
+            // logged line, and a dead battery or the phone turning off reads the same way, hence "or the phone went off")
+            closedDuringLastRun = true
+            let parts = state.split(separator: " ")
+            let seen = parts.count >= 3 ? " (last seen \(parts[1]) using \(parts[2]) MB)" : ""
+            note("previous run ended while Lumen was open\(seen): closed by iOS for memory, a crash, or the phone went off")
         }
         let info = Bundle.main.infoDictionary
         note("launch \(info?["CFBundleShortVersionString"] as? String ?? "?") on \(Self.device) iOS \(UIDevice.current.systemVersion)")
@@ -44,7 +51,8 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
 
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.note("background"); self?.setState("background")
+            // written at once (the app can be suspended straight after this)
+            self?.note("background"); self?.setState("background", now: true)
         }
         nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.note("foreground"); self?.setState("open")
@@ -73,9 +81,15 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
     /// How much more Lumen may use before iOS closes it (MB).
     static var availableMB: Int { Int(os_proc_available_memory() / 1_048_576) }
 
+    private static let clock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; f.locale = Locale(identifier: "en_GB_POSIX"); return f
+    }()
+
     private func sample() {
         let used = Self.footprintMB, left = Self.availableMB
+        let onScreen = UIApplication.shared.applicationState != .background
         queue.async { [self] in
+            if onScreen { try? "open \(Self.clock.string(from: Date())) \(used)".write(to: stateURL, atomically: true, encoding: .utf8) }
             peakMB = max(peakMB, used)
             if abs(used - lastLoggedMB) >= 150 || (left < 600 && abs(used - lastLoggedMB) >= 40) {
                 write("memory \(used) MB used, \(left) MB left")
@@ -121,13 +135,27 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
         try? Data(tail).write(to: logURL, options: .atomic)
     }
 
-    private func setState(_ s: String) {
+    private func setState(_ s: String, now: Bool = false) {
+        if now { queue.sync { [self] in try? s.write(to: stateURL, atomically: true, encoding: .utf8) }; return }
         queue.async { [self] in try? s.write(to: stateURL, atomically: true, encoding: .utf8) }
     }
 
     // MARK: MetricKit
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) { save(payloads) }
+
+    /// iOS's daily summary: how often Lumen was closed for memory or crashed, on screen and in the background (iOS
+    /// never sends a memory-limit closure as a crash report; 21 Oct review).
+    func didReceive(_ payloads: [MXMetricPayload]) {
+        for p in payloads {
+            guard let exits = p.applicationExitMetrics else { continue }
+            let fg = exits.foregroundExitData, bg = exits.backgroundExitData
+            let line = "iOS day summary: on screen \(fg.cumulativeMemoryResourceLimitExitCount) memory closures, " +
+                "\(fg.cumulativeAbnormalExitCount) crashes, \(fg.cumulativeAppWatchdogExitCount) hangs; in the background " +
+                "\(bg.cumulativeMemoryResourceLimitExitCount + bg.cumulativeMemoryPressureExitCount) memory closures, \(bg.cumulativeAbnormalExitCount) crashes"
+            note(line)
+        }
+    }
 
     private func save(_ payloads: [MXDiagnosticPayload]) {
         guard !payloads.isEmpty else { return }
@@ -204,7 +232,7 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
                 if let d = obj as? [String: Any], Set(d.keys).isSubset(of: ["timeStampBegin", "timeStampEnd"]) { continue }
                 guard let compact = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
                       let text = String(data: compact, encoding: .utf8) else { continue }
-                out += "\n\n== iOS report \(url.lastPathComponent) ==\n" + text
+                out += "\n\n== iOS report \(url.lastPathComponent) ==\n" + (text.count > 20_000 ? String(text.prefix(20_000)) + " … (cut)" : text)
             }
             let file = FileManager.default.temporaryDirectory.appendingPathComponent(crashOnly ? "Lumen-crashes.txt" : "Lumen-diagnostics.txt")
             do { try out.write(to: file, atomically: true, encoding: .utf8); return file } catch { return nil }

@@ -537,4 +537,10 @@ float4 lumenHealEnergy(sample_t real, sample_t blurred) {
     return float4(e, e, e, 1.0);
 }
 
+// AI Denoise (21 Oct): the noise the model took out (stored once, linear light, for HDR on and off) taken out of a
+// decode by `amount`. The decode's alpha is kept.
+float4 lumenNoiseRemove(sample_t img, sample_t noise, float amount) {
+    return float4(img.rgb - noise.rgb * amount, img.a);
+}
+
 }}
