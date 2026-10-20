@@ -221,3 +221,8 @@ highlights outside the hole; export memory probes. No Store code changed.
 SCUNet real-noise model (Apache-2.0, pinned weights) converted in CI, run on the Neural Engine tile by tile, cleaned copy
 kept per photo; Detail → AI Denoise slider. Pro: `usesProFeatures` returns true when aiDenoise > 0 (like HDR, Heal and
 Lens Blur). tester-build.yml (main-only, personal tester builds) is not part of sandbox.
+
+## 20 Oct 2026: AI Denoise as a one-off action (from main #58, SideStore 0.1.371)
+Detail button → locked screen with progress, time left and Cancel; strength slider afterwards. Stops in the background
+and restarts on return; first clean races Neural Engine vs GPU and keeps the faster; timings in diagnostics. Still Pro
+(aiDenoise > 0). No Store code changed.
