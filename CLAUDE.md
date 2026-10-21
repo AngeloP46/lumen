@@ -71,6 +71,28 @@
   `LibraryStore.cleanWithAIDenoise` with a progress banner, Cancel, pause/continue, queue kept in UserDefaults;
   editor's Paste some: an AI Denoise toggle). Library paste keepOwn keeps flips/perspective (`take(.crop)`) and Heal's
   on/off. `RowShrinker<P: ShrinkPixel>` serves UInt16 and Float16 rows.
+- **Heavy-work coordinator (21 Oct, `Sources/HeavyWork.swift`)**: the 100 % copy, AI masks, heal, Remove people,
+  the original copy, AI Denoise (long) and exports (editor and library batch) run through `HeavyWork.shared.run`.
+  Each states ~MB needed for the photo's size (`needMB`: 50 MB/MP for the RAW engine's full decode plus a base);
+  it starts at once when nothing heavy runs, beside others only with 700 MB to spare, else it waits (logged
+  "waiting for ..."); one long job at a time; short of room when alone, `HeavyWork.release` clears GPU caches and
+  mask models first; optional jobs (100 % copy, original copy) are skipped instead ("skipped, N MB free").
+  Light work (preview, thumbnails, histogram, preset previews) doesn't go through it.
+- **History (21 Oct, owner: like Lightroom, don't overdo it)**: ⋯ → History (`menu-history`, `HistorySheet`) lists
+  the steps of the photo's undo history newest first, named by `EditSettings.historyLabel(from:)` (Mirror diff:
+  one slider = "Highlights +34", masks/heals "Mask added"/"Heal", many at once "Preset or pasted edits" or "Reset");
+  tap = `goBack(n)` (redo comes forward). UI test `testHistoryGoesBack`. The plain ⋯ → Paste edits keeps the photo's
+  own AI Denoise (Paste some edits can include it). Ratings and flags already exist in ⋯ → Rating and flags.
+- **Paste masks (21 Oct, owner's yes)**: library Paste edits has "Paste the look and masks (keep each photo's crop)"
+  (`apply(..., masks: true)`); pasted masks go through `[Mask].forAnotherPhoto` (AI parts are worked out again on
+  each photo, a tapped subject point becomes that photo's detected subject; brushes and gradients stay put), the
+  photo's own Lens Blur focus mask is kept; editor Paste some does the same. Thumbnails work out only Lens Blur's
+  AI masks (all of them loaded the phone and the CI simulator; other AI masks show after the photo is opened).
+- **Design pass (21 Oct, from the full suite's screenshots)**: every tool's actions are `PillButton`s with the
+  page-wide reset on the right. Changed: Lens Blur's "Refine with brush" / "Reset" text links -> pills (its focus,
+  depth bar and Near/Far stay its own: owner); Heal's Remove people / Delete this fix / Clear all (N) -> pills, Clear
+  all on the right; Curve gets a visible Reset pill (`curve-reset`) beside its presets menu. Already consistent:
+  Light, Color, Colour mix, Detail, Crop, Transform, Masks, Presets.
 - Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
   peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
   iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.
