@@ -7,6 +7,14 @@ struct LumenApp: App {
     init() {
         Diagnostics.shared.start()
         EditSession.stepNote = { Diagnostics.shared.note($0) }
+        HeavyWork.note = { Diagnostics.shared.note($0) }
+        HeavyWork.availableMB = { Diagnostics.availableMB }
+        // short of room for a heavy job with nothing else heavy running: what can be made again goes (models in use
+        // are kept alive by the job holding them)
+        HeavyWork.release = { kind in
+            LumenGPU.context.clearCaches()
+            if kind != .aiMasks { EditSession.releaseMaskModels() }
+        }
     }
 
     var body: some Scene {

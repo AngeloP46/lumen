@@ -224,7 +224,10 @@ extension EditSession {
         // small renders are kept in a buffer (a few MB): the AI masks Lens Blur needs are worked out on it without
         // re-running the RAW engine for each step (21 Oct review)
         guard let src = makeSource(maxEdge: maxEdge, materialize: maxEdge <= 1024) else { return nil }
-        if s.effective.lensBlur.amount > 0 { prepareAutoMasks(s, source: src) }
+        // AI masks (pasted ones too) and Lens Blur show in thumbnails: worked out on the small source
+        if s.effective.lensBlur.amount > 0 || s.effective.masks.contains(where: { $0.components.contains { $0.kind.needsAnalysis } }) {
+            prepareAutoMasks(s, source: src)
+        }
         return renderCGImage(s, source: src)
     }
 

@@ -259,3 +259,8 @@ without AI Denoise; paste/presets keep own AI Denoise; export masks on big photo
 diagnostics heartbeat; AI Denoise keeps the noise (one clean for HDR on and off), pauses and resumes (also after a
 swipe-away), opt-in batch paste (max 5) with progress; paste keeps flips/perspective/Heal on-off. AI Denoise stays Pro
 (aiDenoise > 0). No Store code changed.
+
+## 21 Oct 2026: heavy-work coordinator, History, paste masks, design pass (from main #77)
+Memory-heavy jobs start only with room for the photo's size (HeavyWork.swift); ⋯ → History lists edit steps (tap to
+go back; free); library "Paste the look and masks" (AI masks worked out again per photo; masks stay Pro at export);
+Lens Blur, Heal and Curve actions as pill rows. No Store code changed.

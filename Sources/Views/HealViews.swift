@@ -226,26 +226,21 @@ struct HealPanel: View {
             LabeledSlider(title: "Size", value: Binding(get: { (vm.healSize * 400).rounded() },
                                                         set: { vm.healSize = max($0, 1) / 400 }),
                           range: 1...100, neutral: 12)
-            HStack(spacing: 8) {
-                Button { vm.findPeople() } label: {
-                    Label("Remove people", systemImage: "person.2.slash").font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.bordered)
-                .disabled(vm.healBusy)
-                .accessibilityIdentifier("heal-people")
-                Spacer()
+            // the same pill row as every tool's actions, page-wide reset on the right (design pass, 21 Oct)
+            HStack(spacing: 6) {
+                PillButton(title: "Remove people", system: "person.2.slash") { vm.findPeople() }
+                    .disabled(vm.healBusy)
+                    .opacity(vm.healBusy ? 0.45 : 1)
+                    .accessibilityIdentifier("heal-people")
                 if let id = vm.selectedHealID {
-                    Button(role: .destructive) { vm.deleteHeal(id) } label: {
-                        Label("Delete this fix", systemImage: "trash").font(.system(size: 12, weight: .semibold))
+                    PillButton(title: "Delete this fix", system: "trash") { vm.deleteHeal(id) }
+                        .accessibilityIdentifier("heal-delete")
+                }
+                Spacer(minLength: 6)
+                if !vm.settings.heals.isEmpty {
+                    PillButton(title: "Clear all (\(vm.settings.heals.count))", system: "arrow.counterclockwise") {
+                        vm.settings.reset(.heal); vm.selectedHealID = nil
                     }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("heal-delete")
-                } else if !vm.settings.heals.isEmpty {
-                    Button { vm.settings.reset(.heal); vm.selectedHealID = nil } label: {
-                        Label("Clear all (\(vm.settings.heals.count))", systemImage: "arrow.counterclockwise")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .buttonStyle(.bordered)
                     .accessibilityIdentifier("heal-clear")
                 }
             }
