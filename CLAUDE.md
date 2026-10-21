@@ -86,7 +86,8 @@
 - **Paste masks (21 Oct, owner's yes)**: library Paste edits has "Paste the look and masks (keep each photo's crop)"
   (`apply(..., masks: true)`); pasted masks go through `[Mask].forAnotherPhoto` (AI parts are worked out again on
   each photo, a tapped subject point becomes that photo's detected subject; brushes and gradients stay put), the
-  photo's own Lens Blur focus mask is kept; editor Paste some does the same. Thumbnails work out AI masks too.
+  photo's own Lens Blur focus mask is kept; editor Paste some does the same. Thumbnails work out only Lens Blur's
+  AI masks (all of them loaded the phone and the CI simulator; other AI masks show after the photo is opened).
 - **Design pass (21 Oct, from the full suite's screenshots)**: every tool's actions are `PillButton`s with the
   page-wide reset on the right. Changed: Lens Blur's "Refine with brush" / "Reset" text links -> pills (its focus,
   depth bar and Near/Far stay its own: owner); Heal's Remove people / Delete this fix / Clear all (N) -> pills, Clear
