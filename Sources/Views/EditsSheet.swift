@@ -140,3 +140,33 @@ struct PasteSomeSheet: View {
         .presentationDetents([.medium, .large])
     }
 }
+
+
+/// ⋯ → History: every edit step since the photo's undo history began; tap one to go back to it (redo comes forward).
+struct HistorySheet: View {
+    @ObservedObject var vm: EditorViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(vm.historySteps) { step in
+                Button {
+                    vm.goBack(step.back)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(step.label)
+                        Spacer()
+                        if step.back == 0 { Text("Now").font(.caption).foregroundStyle(Theme.accent) }
+                    }
+                }
+                .foregroundStyle(.primary)
+                .accessibilityIdentifier("history-step")
+            }
+            .navigationTitle("History")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}

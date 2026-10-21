@@ -52,7 +52,7 @@ struct LibraryView: View {
     @State private var showDiagnostics = false
     @State private var notice: String?
     /// Pasting edits that include AI Denoise asks first (it needs a clean of each photo).
-    @State private var denoisePaste: (list: [LibraryItem], keepOwn: Bool)?
+    @State private var denoisePaste: (list: [LibraryItem], keepOwn: Bool, masks: Bool)?
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
 
@@ -167,12 +167,12 @@ struct LibraryView: View {
                 if let d = denoisePaste, let clip = store.clipboard {
                     let n = min(d.list.count, LibraryStore.denoiseBatchCap)
                     Button("Paste and clean \(n == 1 ? "it" : "\(n) photos") (\(denoiseMinutes(n)))") {
-                        store.apply(clip, to: d.list, keepOwn: d.keepOwn)
+                        store.apply(clip, to: d.list, keepOwn: d.keepOwn, masks: d.masks)
                         store.cleanWithAIDenoise(d.list, strength: clip.aiDenoise)
                         denoisePaste = nil
                     }
                     Button("Paste without AI Denoise") {
-                        store.apply(clip, to: d.list, keepOwn: d.keepOwn)
+                        store.apply(clip, to: d.list, keepOwn: d.keepOwn, masks: d.masks)
                         show("Edits pasted onto \(d.list.count) photo\(d.list.count == 1 ? "" : "s"), without AI Denoise.")
                         denoisePaste = nil
                     }
@@ -378,6 +378,10 @@ struct LibraryView: View {
                     Button { paste(keepOwn: true) } label: {
                         Label("Paste the look (keep each photo's crop and masks)", systemImage: "wand.and.stars")
                     }
+                    Button { paste(keepOwn: true, masks: true) } label: {
+                        Label("Paste the look and masks (keep each photo's crop)", systemImage: "circle.dashed.inset.filled")
+                    }
+                    .disabled(store.clipboard?.masks.isEmpty ?? true)
                     Button { paste(keepOwn: false) } label: {
                         Label("Paste all edits, crop and masks too", systemImage: "doc.on.clipboard")
                     }
@@ -407,14 +411,14 @@ struct LibraryView: View {
         Button(action: action) { barLabel(title, system) }.accessibilityIdentifier(id)
     }
 
-    private func paste(keepOwn: Bool) {
+    private func paste(keepOwn: Bool, masks: Bool = false) {
         guard let clip = store.clipboard else { return }
-        paste(clip, to: selectedItems, keepOwn: keepOwn)
+        paste(clip, to: selectedItems, keepOwn: keepOwn, masks: masks)
     }
 
-    private func paste(_ clip: EditSettings, to list: [LibraryItem], keepOwn: Bool) {
-        if clip.aiDenoise > 0, EditSession.hasDenoiseModel { denoisePaste = (list, keepOwn); return }
-        store.apply(clip, to: list, keepOwn: keepOwn)
+    private func paste(_ clip: EditSettings, to list: [LibraryItem], keepOwn: Bool, masks: Bool = false) {
+        if clip.aiDenoise > 0, EditSession.hasDenoiseModel { denoisePaste = (list, keepOwn, masks); return }
+        store.apply(clip, to: list, keepOwn: keepOwn, masks: masks)
         show("Edits pasted onto \(list.count) photo\(list.count == 1 ? "" : "s").")
     }
 

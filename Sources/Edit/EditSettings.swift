@@ -619,3 +619,76 @@ enum ExportFormat: String, CaseIterable, Identifiable {
     var ext: String { self == .jpeg ? "jpg" : rawValue }
     var label: String { rawValue.uppercased() }
 }
+
+
+// MARK: - History names
+
+extension EditSettings {
+    /// Friendly names for the settings the History list can name (anything else is named from its property).
+    private static let historyNames: [String: String] = [
+        "aiDenoise": "AI Denoise", "hsl": "Colour mix", "grading": "Colour grading", "curve": "Curve", "curves": "Curve",
+        "lensBlur": "Lens Blur", "hdr": "HDR", "hdrStops": "HDR", "blackAndWhite": "B&W", "noiseReduction": "Noise",
+        "colorNoise": "Colour noise", "sharpness": "Sharpen", "sharpenMasking": "Masking", "temperature": "Temp",
+        "disabled": "Tools on / off", "quarterTurns": "Rotate", "straighten": "Straighten", "flipH": "Flip", "flipV": "Flip",
+        "cropL": "Crop", "cropT": "Crop", "cropR": "Crop", "cropB": "Crop", "cropAspect": "Crop",
+        "tVertical": "Transform", "tHorizontal": "Transform", "tAspect": "Transform", "tScale": "Transform",
+        "tOffX": "Transform", "tOffY": "Transform", "tFill": "Transform",
+    ]
+
+    private static func historyName(_ property: String) -> String {
+        if let n = historyNames[property] { return n }
+        // camelCase -> "Camel case"
+        var out = ""
+        for ch in property {
+            if ch.isUppercase, !out.isEmpty { out += " " + ch.lowercased() } else { out.append(ch) }
+        }
+        return out.prefix(1).uppercased() + out.dropFirst()
+    }
+
+    /// The settings as (property, value) pairs, wrappers opened (`@Defaulted` values show as what they hold).
+    private var historyFields: [(String, Any)] {
+        Mirror(reflecting: self).children.compactMap { child in
+            guard var name = child.label else { return nil }
+            var value = child.value
+            if name.hasPrefix("_") {
+                name.removeFirst()
+                if let inner = Mirror(reflecting: value).children.first(where: { $0.label == "wrappedValue" }) { value = inner.value }
+            }
+            return (name, value)
+        }
+    }
+
+    /// What changed from `old` to these settings, in a few words (the History list, owner's 21 Oct request: like
+    /// Lightroom's). One slider shows its new value; several changes at once are a preset, a paste or a reset.
+    func historyLabel(from old: EditSettings) -> String {
+        let new = historyFields, before = Dictionary(old.historyFields, uniquingKeysWith: { a, _ in a })
+        var changed: [(String, Any)] = []
+        for (name, value) in new where String(describing: value) != String(describing: before[name] ?? "") {
+            changed.append((name, value))
+        }
+        let names = Array(NSOrderedSet(array: changed.map { Self.historyName($0.0) })) as? [String] ?? []
+        guard !names.isEmpty else { return "No change" }
+        if masks.count != old.masks.count { return masks.count > old.masks.count ? "Mask added" : "Mask removed" }
+        if heals.count != old.heals.count { return heals.count > old.heals.count ? "Heal" : "Heal removed" }
+        if names.count == 1, changed.count == 1, let v = changed[0].1 as? Double {
+            let text = abs(v) < 10 && v.rounded() != v ? String(format: "%+.2f", v) : String(format: "%+.0f", v)
+            return "\(names[0]) \(text)"
+        }
+        if names.count <= 2 { return names.joined(separator: ", ") }
+        return self == EditSettings() ? "Reset" : "Preset or pasted edits"
+    }
+}
+
+
+extension Array where Element == Mask {
+    /// These masks put on a different photo: AI parts (subject, sky, people, landscape, depth) are worked out again
+    /// there by themselves; a subject picked by a tap becomes that photo's detected subject (the tap was on the other
+    /// photo). Brushes and gradients stay where they are, as in Lightroom.
+    var forAnotherPhoto: [Mask] {
+        map { m in
+            var m = m
+            for i in m.components.indices where m.components[i].kind == .subject { m.components[i].subjectPoint = nil }
+            return m
+        }
+    }
+}
