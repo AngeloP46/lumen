@@ -224,10 +224,10 @@ extension EditSession {
         // small renders are kept in a buffer (a few MB): the AI masks Lens Blur needs are worked out on it without
         // re-running the RAW engine for each step (21 Oct review)
         guard let src = makeSource(maxEdge: maxEdge, materialize: maxEdge <= 1024) else { return nil }
-        // AI masks (pasted ones too) and Lens Blur show in thumbnails: worked out on the small source
-        if s.effective.lensBlur.amount > 0 || s.effective.masks.contains(where: { $0.components.contains { $0.kind.needsAnalysis } }) {
-            prepareAutoMasks(s, source: src)
-        }
+        // Lens Blur's masks are worked out for thumbnails (on the small source); other AI masks show once the photo
+        // has been opened (21 Oct: working them all out for every thumbnail loaded the phone, and the CI simulator
+        // enough to cut a UI test's drag short)
+        if s.effective.lensBlur.amount > 0 { prepareAutoMasks(s, source: src) }
         return renderCGImage(s, source: src)
     }
 
