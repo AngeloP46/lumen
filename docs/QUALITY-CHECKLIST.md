@@ -40,6 +40,10 @@ submission is authorized. Rows below retain their original findings; this sectio
   an in-flight load without waiting for it, and failed loads can retry. Foundation-only regression holds a
   loader blocked while measuring release latency, checks late-result eviction, failure recovery and cache reuse.
   Compile/runtime verification pending. Other batch 2 items remain open.
+- 22 Oct (PC assistant, continuing from Codex): uncommitted batch 2 work (A9 LoadedModel.swift, Engine.swift,
+  logic regression, both CI workflow file lists, second-review save corrections, APPSTORE-PLAN doc) committed as
+  `9d0e538` and pushed; PR #98 `quality-batch2 -> batch1` opened, left unmerged. `.scratch/` added to .gitignore.
+  Verification: wait for PR #98 CI (logic, engine, UI).
 
 ## A. Confirmed bugs, ranked by user impact
 
