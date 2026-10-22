@@ -44,7 +44,7 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
             note("previous run ended while Lumen was open\(seen): closed by iOS for memory, a crash, or the phone went off")
         }
         let info = Bundle.main.infoDictionary
-        note("launch \(info?["CFBundleShortVersionString"] as? String ?? "?") on \(Self.device) iOS \(UIDevice.current.systemVersion)")
+        note("launch \(info?["CFBundleShortVersionString"] as? String ?? "?") on \(Self.device) iOS \(UIDevice.current.systemVersion), memory \(MemoryBudget.summary)")
         setState("open")
         MXMetricManager.shared.add(self)
         save(MXMetricManager.shared.pastDiagnosticPayloads)
@@ -79,7 +79,10 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
     }
 
     /// How much more Lumen may use before iOS closes it (MB).
-    static var availableMB: Int { Int(os_proc_available_memory() / 1_048_576) }
+    static var availableMB: Int {
+        if let fake = MemoryBudget.fakeMB { return max(0, fake - footprintMB) }
+        return Int(os_proc_available_memory() / 1_048_576)
+    }
 
     private static let clock: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; f.locale = Locale(identifier: "en_GB_POSIX"); return f
@@ -207,6 +210,7 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
             var out = "Lumen diagnostics\n"
             out += "Version \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))\n"
             out += "\(Self.device), iOS \(UIDevice.current.systemVersion)\n"
+            out += "Memory \(MemoryBudget.summary)\n"
             out += "Memory now: \(Self.footprintMB) MB used, \(Self.availableMB) MB left, peak this run \(peakMB) MB\n\n"
             // Only what's recent and only what matters (owner, 21 Oct: the report was mostly routine memory samples and
             // runs of identical warnings): a summary line per launch for the last three, then their log with the
