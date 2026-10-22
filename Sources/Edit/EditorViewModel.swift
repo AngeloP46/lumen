@@ -1341,6 +1341,9 @@ final class EditorViewModel: ObservableObject {
     /// Keeps a preview of the original (no heals, no AI Denoise) while the photo has either, for hold-to-compare and
     /// the split's before half (21 Oct review: with AI Denoise on they showed the cleaned photo). Built in the
     /// background, not while a clean or the AI masks are running, dropped when neither is on.
+    /// HDR mode of the original copy being made (nil = none).
+    private var unhealedBuilding: Bool?
+
     func refreshUnhealed() {
         let heals = settings.effective.heals
         let denoised = settings.effective.aiDenoise > 0 && denoiseReady
@@ -1348,9 +1351,12 @@ final class EditorViewModel: ObservableObject {
         guard denoiseProgress == nil else { return }
         // the photo without heals doesn't change when heals do, only when HDR changes how it is decoded
         if unhealedSource != nil && unhealedHDR == settings.hdr { return }
+        // one at a time: a reload while it is being made used to throw it away and start another (diagnostics
+        // 22 Oct: "original copy: making it" five times in 20 s after an AI Denoise change)
+        guard unhealedBuilding != settings.hdr else { return }
         unhealedSource = nil
         let hdr = settings.hdr
-        let generation = loadGeneration
+        unhealedBuilding = hdr
         Diagnostics.shared.note("original copy (no heals, no AI Denoise): making it")
         let mp = megapixels
         workQueue.async {
@@ -1359,8 +1365,11 @@ final class EditorViewModel: ObservableObject {
                 session.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true, heals: [], denoise: false)
             } ?? nil
             Task { @MainActor [weak self] in
-                guard let self, generation == self.loadGeneration, let src, src.size == self.source?.size else { return }
-                guard hdr == self.settings.hdr else { return }
+                guard let self else { return }
+                if self.unhealedBuilding == hdr { self.unhealedBuilding = nil }
+                // it depends only on the file and HDR, so a reload for heals or AI Denoise meanwhile doesn't matter
+                guard let src, src.size == self.source?.size else { return }
+                guard hdr == self.settings.hdr else { self.refreshUnhealed(); return }
                 self.unhealedSource = src
                 self.unhealedHDR = hdr
                 if self.showOriginal || self.splitCompare { self.requestRender() }

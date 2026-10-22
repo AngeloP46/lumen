@@ -292,10 +292,12 @@ extension EditSession {
         // (Decoding into a buffer first was tried on 19 Oct: same peak, ~1.8 GB more kept afterwards.)
         guard let src = makeSource(maxEdge: nil, materialize: false) else { return .failed(.decode) }
         Self.healProbe?("export: full-size source ready")
-        // a big photo's AI masks are worked out on a 2560 px copy and scaled up (at full size, 48 MP, the masks' filters
-        // and models each re-ran the RAW engine at 8064 px: 21 Oct review); what is still missing is done at full size
-        let megapixels = nativeSize.width * nativeSize.height / 1_000_000
-        if megapixels > 30, let small = makeSource(maxEdge: 2560, materialize: true) {
+        // AI masks are worked out on a 2560 px copy and scaled up, like the editor's preview (at full size the masks'
+        // filters and models each re-ran the RAW engine: 21 Oct review for 48 MP; 22 Oct diagnostics showed every 24 MP
+        // batch export doing it too); what is still missing is done at full size
+        let needsAI = s.effective.lensBlur.amount > 0 || s.masks.contains { m in
+            m.components.contains { [.subject, .background, .sky, .people, .depth, .landscape].contains($0.kind) } }
+        if needsAI, max(nativeSize.width, nativeSize.height) > 2700, let small = makeSource(maxEdge: 2560, materialize: true) {
             prepareAutoMasks(s, source: small)
             let (masks, tried) = small.snapshotMasks()
             src.storeDepth(small.depthField)
