@@ -84,6 +84,8 @@ enum EditsFile {
             if decodes(trial) != nil { merged = trial } else { report.droppedSettings.append(k) }
         }
         guard var s = decodes(merged) else { return (EditSettings(), report) }
+        // A malformed container is not an empty mask list. Preserve the original and tell the caller.
+        if let masks = old["masks"], !(masks is [Any]) { report.droppedMasks += 1 }
         // masks one by one, and inside a mask its parts one by one
         for raw in (old["masks"] as? [Any]) ?? [] {
             guard var m = raw as? [String: Any] else { report.droppedMasks += 1; continue }

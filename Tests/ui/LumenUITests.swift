@@ -1097,6 +1097,18 @@ final class LumenUITests: XCTestCase {
 
     // MARK: Batch 1: your work is safe (docs/QUALITY-CHECKLIST.md)
 
+    func testFailedSavesRecoverWithoutLosingPendingEdits() {
+        launchLibrary(extra: ["-lumenDemoPersistenceChecks", "1", "-lumenDemoRawHDR", "1"])
+        for _ in 0..<20 {
+            if events().contains(where: { $0.contains("save recovery DONE") }) { break }
+            sleep(1)
+        }
+        let log = events().filter { $0.contains("save recovery") }.joined(separator: "\n")
+        XCTAssertTrue(log.contains("save recovery DONE"), log)
+        XCTAssertFalse(log.contains("save recovery FAIL"), log)
+        XCTAssertEqual(log.components(separatedBy: "save recovery PASS").count - 1, 7, log)
+    }
+
     /// A3: long-press → Remove from Lumen asks first; Cancel keeps the photo.
     func testRemoveOnePhotoAsksFirst() {
         launchLibrary()
@@ -1128,6 +1140,9 @@ final class LumenUITests: XCTestCase {
         sleep(3)
         let saves = events().filter { $0.contains("saved edits") }
         XCTAssertTrue(saves.isEmpty, "opening a photo must not save it: \(saves)")
+        el("btn-back").tap()
+        sleep(1)
+        XCTAssertFalse(events().contains { $0.contains("saved edits") }, "closing an untouched photo must not rewrite its edits")
     }
 
     /// A5: an edit made just before Lumen leaves the screen is kept (the 0.5 s save delay used to lose it).

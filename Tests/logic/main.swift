@@ -214,5 +214,13 @@ do {
     check(Clipboard(settings: src, selection: oneMask, sourceName: "A").summary == "Sky mask", "copy: one mask reads by name")
 }
 
+for brokenMasks in [["unexpected": "object"], "invalid", NSNull()] as [Any] {
+    var damaged = encoded(rich)
+    damaged["masks"] = brokenMasks
+    let loaded = EditsFile.load(data(damaged))
+    check(loaded.report.lostSomething && loaded.report.droppedMasks > 0, "malformed mask container must request backup and notice")
+    check(loaded.settings.exposure == rich.exposure, "malformed masks must not discard readable exposure")
+}
+
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)

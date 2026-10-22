@@ -57,6 +57,9 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var saveProblem: String?
     /// Saves that failed, newest per photo, written again by `retryFailedSaves`.
     private var failedSaves: [UUID: (settings: EditSettings, history: EditHistory?)] = [:]
+    private var pendingBackups: [UUID: Data] = [:]
+    private var indexSaveFailed = false
+    private var presetsSaveFailed = false
     private var retryTimer: Timer?
     /// What reading a photo's edits couldn't (from a newer Lumen, or damaged), for the editor to say once (A1).
     private var loadNotices: [UUID: String] = [:]
@@ -162,6 +165,62 @@ final class LibraryStore: ObservableObject {
         }
         // after the presets are read: they count as references too
         if testRoot == nil { sweepHealPatches() }
+        if testRoot == nil, DemoMode.isOn, DemoMode.value("-lumenDemoPersistenceChecks") == "1" {
+            Task { @MainActor in await self.checkPersistenceRecovery() }
+        }
+    }
+
+    /// Simulator regression: real failing writes (a directory occupies the file path), then storage recovers.
+    private func checkPersistenceRecovery() async {
+        let item = LibraryItem(id: UUID(), displayName: "Save recovery test", fileName: "recovery.dng", added: Date())
+        items.append(item)
+        let edits = editURL(item), history = historyURL(item)
+        func check(_ ok: Bool, _ text: String) { DemoMode.log("save recovery \(ok ? "PASS" : "FAIL") \(text)") }
+        func drain() async {
+            await withCheckedContinuation { continuation in
+                historyQueue.async { Self.writePendingHistory(); continuation.resume() }
+            }
+        }
+        defer {
+            items.removeAll { $0.id == item.id }
+            failedSaves[item.id] = nil
+            try? fm.removeItem(at: edits)
+            try? fm.removeItem(at: history)
+            saveIndex()
+        }
+        do {
+            try fm.createDirectory(at: edits, withIntermediateDirectories: true)
+            var first = EditSettings(); first.exposure = 1.25; first.hdr = false
+            save(first, for: item, history: EditHistory(current: first, undo: [EditSettings()], redo: []))
+            await drain()
+            check(settings(for: item) == first && editorSettings(for: item) == first, "reopen uses pending edits")
+            check(self.history(for: item, current: first).undo == [EditSettings()], "pending undo survives reopen")
+            var second = settings(for: item); second.contrast = 15
+            save(second, for: item)
+            await drain()
+            check(self.history(for: item, current: second).undo.last == first, "editing again preserves pending history")
+            try fm.removeItem(at: edits)
+            retryFailedSaves()
+            await drain()
+            check(EditsFile.decodeSettings(try Data(contentsOf: edits)) == second, "recovered storage saves newest edits")
+            try fm.removeItem(at: history)
+            try fm.createDirectory(at: history, withIntermediateDirectories: true)
+            var third = second; third.exposure = 2
+            save(third, for: item, history: EditHistory(current: third, undo: [first, second], redo: []))
+            await drain()
+            // Let the main-actor failure notification start the retry timer.
+            try await Task.sleep(nanoseconds: 300_000_000)
+            check(saveProblem != nil, "history-only failure remains visible")
+            try fm.removeItem(at: history)
+            for _ in 0..<70 {
+                if fm.fileExists(atPath: history.path), saveProblem == nil { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            let restored = EditsFile.readHistory(file: history, legacy: nil)
+            check(restored?.current == third && restored?.undo == [first, second], "history-only failure retries automatically")
+            check(saveProblem == nil, "warning clears after all writes recover")
+        } catch { check(false, error.localizedDescription) }
+        DemoMode.log("save recovery DONE")
     }
 
 
@@ -316,12 +375,22 @@ final class LibraryStore: ObservableObject {
     // MARK: Edits
 
     func settings(for item: LibraryItem) -> EditSettings {
+        if let pending = failedSaves[item.id] { return pending.settings }
         guard let data = try? Data(contentsOf: editURL(item)) else { return EditSettings() }
         let (s, report) = EditsFile.load(data)
         // anything this version couldn't read: the original file is kept before anything can be saved over it
         if report.lostSomething {
-            keepCopy(of: data, for: item)
-            if let m = report.message, loadNotices[item.id] == nil {
+            var backedUp = false
+            do {
+                try keepCopy(of: data, for: item)
+                pendingBackups[item.id] = nil
+                backedUp = true
+            } catch {
+                pendingBackups[item.id] = data
+                reportSaveFailure(error)
+            }
+            let notice = backedUp ? report.message : "Some saved edits couldn't be read. Lumen couldn't keep a backup yet, so it will preserve the original file until a backup can be saved."
+            if let m = notice, loadNotices[item.id] == nil {
                 loadNotices[item.id] = m
                 Diagnostics.shared.note("edits of \(item.displayName): \(m)")
             }
@@ -330,13 +399,12 @@ final class LibraryStore: ObservableObject {
     }
 
     /// `<id>.kept-<date>.json` beside the edits, once per distinct content.
-    private func keepCopy(of data: Data, for item: LibraryItem) {
+    private func keepCopy(of data: Data, for item: LibraryItem) throws {
         let existing = (try? fm.contentsOfDirectory(atPath: editsDir.path)) ?? []
         for name in existing where name.hasPrefix("\(item.id.uuidString).kept-") || name == "\(item.id.uuidString).damaged.json" {
             if (try? Data(contentsOf: editsDir.appendingPathComponent(name))) == data { return }
         }
-        let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"; f.locale = Locale(identifier: "en_US_POSIX")
-        try? data.write(to: editsDir.appendingPathComponent("\(item.id.uuidString).kept-\(f.string(from: Date())).json"))
+        try data.write(to: editsDir.appendingPathComponent("\(item.id.uuidString).kept-\(UUID().uuidString).json"), options: .atomic)
     }
 
     /// What the editor opens a photo with: its saved edits, or for a photo never edited, today's defaults, with HDR on
@@ -345,7 +413,7 @@ final class LibraryStore: ObservableObject {
         var s = settings(for: item)
         // CI keeps the old start (the UI tests switch HDR themselves) unless a test asks for this
         let demoOff = DemoMode.isOn && DemoMode.value("-lumenDemoRawHDR") == nil
-        if !demoOff, !FileManager.default.fileExists(atPath: editURL(item).path),
+        if !demoOff, failedSaves[item.id] == nil, !FileManager.default.fileExists(atPath: editURL(item).path),
            UTType(filenameExtension: (item.fileName as NSString).pathExtension.lowercased())?.conforms(to: .rawImage) == true {
             s.hdr = true
         }
@@ -402,18 +470,21 @@ final class LibraryStore: ObservableObject {
         let url = editURL(item), file = historyURL(item)
         // the old sidecar is read before it is overwritten: it may still hold a pre-move `_undoHistory`
         let oldData = supplied == nil ? try? Data(contentsOf: url) : nil
-        let previous = supplied == nil ? oldData.map(Self.decodeSettings) ?? EditSettings() : nil
+        let previous = supplied == nil ? failedSaves[item.id]?.settings ?? oldData.map(Self.decodeSettings) ?? EditSettings() : nil
         // small, fast and synchronous: what the photo looks like is never lost; a failed write is said and retried
         do {
+            if let original = pendingBackups[item.id] {
+                try keepCopy(of: original, for: item)
+                pendingBackups[item.id] = nil
+            }
             if DemoMode.value("-lumenDemoFailSaves") != nil { throw CocoaError(.fileWriteOutOfSpace) }   // CI
             try JSONEncoder().encode(s).write(to: url, options: .atomic)
             if DemoMode.isOn { DemoMode.log("saved edits \(item.fileName)") }
             failedSaves[item.id] = nil
-            if failedSaves.isEmpty, saveProblem != nil { saveProblem = nil; Diagnostics.shared.note("saving works again") }
         } catch {
             failedSaves[item.id] = (s, supplied)
             reportSaveFailure(error)
-            return
+            // Keep history in memory too, so reopening a photo with a pending save keeps its undo steps.
         }
         historyQueue.async {
             var history: EditHistory
@@ -426,11 +497,8 @@ final class LibraryStore: ObservableObject {
             history.current = s
             history.undo = Array(history.undo.suffix(100))
             history.redo = Array(history.redo.suffix(100))
-            let scheduled = pendingHistory[file] != nil
             pendingHistory[file] = history
-            if !scheduled {
-                historyQueue.asyncAfter(deadline: .now() + 0.2) { Self.writePendingHistory(file) }
-            }
+            historyQueue.asyncAfter(deadline: .now() + 0.2) { Self.writePendingHistory(file) }
         }
     }
 
@@ -473,7 +541,24 @@ final class LibraryStore: ObservableObject {
             guard let item = item(id) else { failedSaves[id] = nil; continue }
             save(pending.settings, for: item, history: pending.history)
         }
-        if failedSaves.isEmpty { retryTimer?.invalidate(); retryTimer = nil }
+        for (id, original) in pendingBackups {
+            guard let item = item(id) else { pendingBackups[id] = nil; continue }
+            do { try keepCopy(of: original, for: item); pendingBackups[id] = nil }
+            catch { reportSaveFailure(error) }
+        }
+        if indexSaveFailed { saveIndex() }
+        if presetsSaveFailed { savePresets() }
+        historyQueue.async { [weak self] in
+            Self.writePendingHistory()
+            let historySaved = pendingHistory.isEmpty
+            Task { @MainActor [weak self] in
+                guard let self, historySaved, self.failedSaves.isEmpty, self.pendingBackups.isEmpty,
+                      !self.indexSaveFailed, !self.presetsSaveFailed else { return }
+                self.retryTimer?.invalidate(); self.retryTimer = nil
+                if self.saveProblem != nil { Diagnostics.shared.note("saving works again") }
+                self.saveProblem = nil
+            }
+        }
     }
 
     /// The editor is closing: write its history now instead of in up to 2 s.
@@ -845,8 +930,14 @@ final class LibraryStore: ObservableObject {
     }
 
     private func savePresets() {
-        do { try JSONEncoder().encode(userPresets).write(to: root.appendingPathComponent("presets.json"), options: .atomic) }
-        catch { lastError = "Your presets couldn't be saved (\(error.localizedDescription))."; Diagnostics.shared.note("presets not saved: \(error.localizedDescription)") }
+        do {
+            try JSONEncoder().encode(userPresets).write(to: root.appendingPathComponent("presets.json"), options: .atomic)
+            presetsSaveFailed = false
+        } catch {
+            presetsSaveFailed = true
+            reportSaveFailure(error)
+            Diagnostics.shared.note("presets not saved: \(error.localizedDescription)")
+        }
     }
 
     // MARK: Import
@@ -978,8 +1069,12 @@ final class LibraryStore: ObservableObject {
     }
 
     private func saveIndex() {
-        do { try JSONEncoder().encode(items).write(to: indexURL, options: .atomic) }
+        do {
+            try JSONEncoder().encode(items).write(to: indexURL, options: .atomic)
+            indexSaveFailed = false
+        }
         catch {
+            indexSaveFailed = true
             // the photos and their edits are safe on disk; the next launch finds unlisted photos again (loadIndex)
             reportSaveFailure(error)
             Diagnostics.shared.note("photo list not saved: \(error.localizedDescription)")

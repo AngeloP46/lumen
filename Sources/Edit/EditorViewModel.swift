@@ -92,6 +92,12 @@ final class EditorViewModel: ObservableObject {
     private var histHDRImage: CIImage?
     private var histStops: (Double, Double) = (2, 0)
     private var saveWork: DispatchWorkItem?
+    // Captured by the pending save: late heal results must survive the editor itself being released.
+    private final class SaveState {
+        var revision = 0
+        var saved = 0
+    }
+    private let saveState = SaveState()
 
     // Undo / redo
     private var undoStack: [EditSettings] = []
@@ -595,13 +601,19 @@ final class EditorViewModel: ObservableObject {
     }
 
     private func scheduleSave() {
+        saveState.revision += 1
+        let revision = saveState.revision, state = saveState
         saveWork?.cancel()
         let s = settings, item = item
         // before the saved history has arrived, let the store add this step to the file's own history (writing ours
         // would drop the older steps)
         let history: LibraryStore.EditHistory? = historyLoaded ? LibraryStore.EditHistory(current: s, undo: undoStack, redo: redoStack) : nil
         let work = DispatchWorkItem { [weak store] in
-            Task { @MainActor in store?.save(s, for: item, history: history) }
+            Task { @MainActor in
+                guard let store, state.revision == revision, state.saved < revision else { return }
+                store.save(s, for: item, history: history)
+                state.saved = revision // the store owns retries after a failed write
+            }
         }
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
@@ -610,7 +622,10 @@ final class EditorViewModel: ObservableObject {
     func flushSave() {
         saveWork?.cancel()
         saveWork = nil
-        store?.save(settings, for: item, history: historyLoaded ? LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack) : nil)
+        if saveState.saved < saveState.revision {
+            store?.save(settings, for: item, history: historyLoaded ? LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack) : nil)
+            saveState.saved = saveState.revision
+        }
         store?.flushHistory()
     }
 

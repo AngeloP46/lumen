@@ -13,6 +13,30 @@ not yet reproduced.
 **Requirements** (Angelo, 22 Oct): R1 work is safe · R2 responsive, no build-up · R3 features work together ·
 R4 failures handled · R5 output correct · R6 performance measured.
 
+## Continuation evidence — 22 October, Codex
+
+Scope remains all approved batches 0–6, plus the agreed Copy/Paste. No SideStore publication or App Store
+submission is authorized. Rows below retain their original findings; this section records the current evidence.
+
+- Batch 0 #95 and Copy/Paste #96 are included in batch 1 #97 (`5deccec`). Build IPA and release readiness
+  passed (39849200959); Linux logic passed (39849201068); engine passed (39849201010). Full UI run
+  39849201011 was still running at the last inspection. These results predate the review corrections below.
+- Independent static review of `origin/main...5deccec` completed. Five defects found: pending edits ignored on
+  reopen; history-only failures never retried; unchanged photos saved on close; malformed mask containers
+  silently discarded; failed backup writes reported as successful. No actionable Copy/Paste defect found.
+- Review corrections: pending edits are authoritative on reopen (including fresh RAW HDR defaults); pending
+  history is retained even when the sidecar fails; history/index/preset writes retry; the save warning remains
+  until recovery; saves on close use dirty revisions; malformed masks request backup; a failed backup blocks
+  overwriting the original until the backup succeeds. Verification pending on the corrected commit.
+- Added actual filesystem-failure simulator coverage: pending edits/history on reopen, a further edit before
+  storage recovery, newest edits written after recovery, history-only retry and warning recovery. Extended the
+  no-save-on-open test through closing the editor. Logic coverage includes malformed mask containers.
+- CI Mac baseline, 12 MP iPhone ProRAW, run 39849201010: open 0.7 s / peak 792 MB; 100% source 0.9 s /
+  1989 MB; subject 0.8 s / 2003 MB; Heal 9.4 s / sampled step peak 2609 MB (internal model probe 3881 MB);
+  export 2.1 s / 4864 MB. Memory suite passed 19 checks. These are simulator/Mac measurements, not phone
+  performance; the separate ProRAW memory run intentionally skips AI Denoise.
+- Later batches and sandbox ports remain outstanding. Phone checks in section G remain unverified.
+
 ## A. Confirmed bugs, ranked by user impact
 
 ### Work safety (R1)
