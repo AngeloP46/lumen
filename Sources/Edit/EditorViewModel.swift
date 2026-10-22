@@ -129,7 +129,33 @@ final class EditorViewModel: ObservableObject {
     // MARK: Loading
 
     nonisolated(unsafe) private var memoryWarning: NSObjectProtocol?
-    deinit { if let o = memoryWarning { NotificationCenter.default.removeObserver(o) } }
+    deinit {
+        if let o = memoryWarning { NotificationCenter.default.removeObserver(o) }
+        // tells "the closed editor's copies are still held" apart from other memory that stays (checklist A8)
+        Diagnostics.shared.note("editor freed")
+    }
+    /// When the photo was asked for (open → first frame, for diagnostics).
+    private var openedAt: Date?
+
+    /// The editor is closing: what this session's frames cost, and memory at that moment (checklist F, A8).
+    func reportSession() {
+        let f = canvas.frameStats()
+        if f.count > 0 {
+            let r = renderStats()
+            Diagnostics.shared.note(String(format: "editor closed: %d frames, median %.0f ms, 95%% %.0f ms, slowest %.0f ms; building the picture median %.1f ms, 95%% %.1f ms",
+                                           f.count, f.median, f.p95, f.max, r.median, r.p95))
+        } else {
+            Diagnostics.shared.note("editor closed")
+        }
+    }
+
+    /// Time spent on the main thread building the picture in `requestRender` (milliseconds).
+    private var renderTimes: [Double] = []
+    private func renderStats() -> (median: Double, p95: Double) {
+        let s = renderTimes.sorted()
+        guard !s.isEmpty else { return (0, 0) }
+        return (s[s.count / 2], s[min(s.count - 1, s.count * 95 / 100)])
+    }
 
     func start(store: LibraryStore) {
         guard !started else { return }
@@ -184,6 +210,7 @@ final class EditorViewModel: ObservableObject {
         let heals = settings.effective.heals
         let denoise = settings.effective.aiDenoise / 100
         let asked = Date()
+        openedAt = asked
         workQueue.async {
             let began = Date()
             let s = EditSession(url: url, expandHDR: wantsHDR)
@@ -216,7 +243,9 @@ final class EditorViewModel: ObservableObject {
                 self.unhealedSource = nil   // belonged to the previous photo
                 // what runs next is logged step by step (owner's phone, 21 Oct: a 48 MP ProRAW closed Lumen 2-4 s after
                 // opening, with nothing in the log to say which step)
-                Diagnostics.shared.note("photo ready (\(heals.count) heals, AI Denoise \(Int(denoise * 100)), Lens Blur \(Int(self.settings.effective.lensBlur.amount)), \(self.settings.masks.count) masks, HDR \(wantsHDR))")
+                Diagnostics.shared.note(String(format: "photo ready in %.1f s (waited %.1f s, decoded %.1f s; ", Date().timeIntervalSince(asked),
+                                                       began.timeIntervalSince(asked), Date().timeIntervalSince(began))
+                                        + "\(Int((s?.nativeSize.width ?? 0) * (s?.nativeSize.height ?? 0) / 1_000_000)) MP, \(heals.count) heals, AI Denoise \(Int(denoise * 100)), Lens Blur \(Int(self.settings.effective.lensBlur.amount)), \(self.settings.masks.count) masks, HDR \(wantsHDR))")
                 self.isLoading = false
                 self.loadFailed = (src == nil)
                 if let src { self.imageSize = src.size; self.sourceSize = src.size }
@@ -565,6 +594,12 @@ final class EditorViewModel: ObservableObject {
     /// Rebuilds the (lazy) graph and hands it to the Metal view. Cheap enough to call on every slider tick.
     func requestRender() {
         guard let session, let source else { return }
+        let buildStart = CACurrentMediaTime()
+        defer { if renderTimes.count < 5000 { renderTimes.append((CACurrentMediaTime() - buildStart) * 1000) } }
+        if let opened = openedAt {
+            openedAt = nil
+            canvas.onFirstFrame = { Diagnostics.shared.note(String(format: "first frame drawn %.1f s after opening", Date().timeIntervalSince(opened))) }
+        }
         let s = showOriginal ? EditSettings() : settings
         // Masks show the photo cropped and turned like every other tool; the mask overlay and handles map through
         // `SourceGeometry` (before 2026-10-10 the Masks tool showed the uncropped, unturned photo instead)
@@ -1688,9 +1723,12 @@ final class EditorViewModel: ObservableObject {
         workQueue.async {
             defer { patches.close() }
             Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
+            let exportStart = Date()
             let data = HeavyWork.shared.run(.export, megapixels: mp) {
                 session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
             } ?? nil
+            Diagnostics.shared.note(String(format: "export %@ in %.1f s (%@)", data == nil ? "failed" : "done",
+                                           Date().timeIntervalSince(exportStart), data.map { "\($0.count / 1_048_576) MB" } ?? "no file"))
             var url: URL?
             if let data {
                 let u = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-lumen.\(o.format.ext)")

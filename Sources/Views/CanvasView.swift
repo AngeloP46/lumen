@@ -56,6 +56,20 @@ final class CanvasModel {
     /// Called on the main thread with the screen's (current, potential) EDR headroom when either changes by more than
     /// 5% (HDR mode only).
     var onHeadroom: ((CGFloat, CGFloat) -> Void)?
+    /// Called once, after the next frame has been drawn (diagnostics: open → first frame).
+    var onFirstFrame: (() -> Void)?
+
+    /// How long each frame took from asking the GPU to drawn (milliseconds), for diagnostics (checklist F).
+    private var frameTimes: [Double] = []
+    func recordFrame(_ ms: Double) {
+        if frameTimes.count < 5000 { frameTimes.append(ms) }
+        if let f = onFirstFrame { onFirstFrame = nil; f() }
+    }
+    func frameStats() -> (count: Int, median: Double, p95: Double, max: Double) {
+        let s = frameTimes.sorted()
+        guard !s.isEmpty else { return (0, 0, 0, 0) }
+        return (s.count, s[s.count / 2], s[min(s.count - 1, s.count * 95 / 100)], s.last ?? 0)
+    }
 
     func update(_ img: CIImage?) {
         image = img
@@ -156,12 +170,16 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
             }
             out = placed.composited(over: out)
         }
+        let started = CACurrentMediaTime()
         LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)
         cb.present(drawable)
         inFlight += 1
+        let photoShown = model.image != nil
         cb.addCompletedHandler { [weak self, weak view] _ in
+            let ms = (CACurrentMediaTime() - started) * 1000
             DispatchQueue.main.async {
                 guard let self else { return }
+                if photoShown { self.model.recordFrame(ms) }
                 self.inFlight -= 1
                 if self.redrawWaiting { self.redrawWaiting = false; view?.setNeedsDisplay() }
             }

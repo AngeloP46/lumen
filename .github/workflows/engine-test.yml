@@ -42,6 +42,10 @@ jobs:
           bash .github/ci/get.sh people/bus.jpg "https://raw.githubusercontent.com/ultralytics/ultralytics/main/ultralytics/assets/bus.jpg" 50000
           # a tree against a pale sky beside a white building (sky seen through trees)
           bash .github/ci/get.sh people/building.jpg "https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/building.jpg" 50000
+          # iPhone 12 Pro ProRAW (12 MP DNG, raw.pixls.us): memory and timing baseline for ProRAW (quality checklist F)
+          mkdir -p proraw
+          bash .github/ci/get.sh proraw/iphone12pro.DNG "https://raw.pixls.us/data/Apple/iPhone%2012%20Pro/IMG_1361.DNG" 20000000
+          echo "e91e77a4533ed7cce551d83330676ea5c47dd5e55fb38adda7819366afdbdfc2  proraw/iphone12pro.DNG" | shasum -a 256 -c -
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 pinned
         with:
           path: Models/.verified-packages
@@ -58,7 +62,7 @@ jobs:
           xcrun -sdk macosx metal -fcikernel -c Sources/Edit/Kernels.metal -o out/k.air
           xcrun -sdk macosx metallib -cikernel out/k.air -o out/k.metallib
           swiftc -Onone -g -o out/engine-test \
-            Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift \
+            Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift Sources/Library/EditsFile.swift \
             Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift Sources/Edit/Denoise.swift \
             Sources/Edit/Histogram.swift Sources/Edit/PhotoInformation.swift Sources/Edit/Auto.swift \
             Tests/engine/main.swift
@@ -97,6 +101,14 @@ jobs:
           export LUMEN_DENOISE_UNITS=cpu   # the CI Mac's virtual GPU runs out of memory at 24 MP; the phone uses its GPU
           export LUMEN_HEAL_EXPECT_SIDE=800
           ./out/engine-test out/k.metallib samples out/memory --memory
+      - name: Memory and timing, iPhone ProRAW
+        # The same steps on a 12 MP ProRAW (no AI Denoise: about 5 more minutes on the CI Mac's CPU)
+        if: ${{ always() && github.event.inputs.only != 'lens-blur' }}
+        run: |
+          export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
+          export LUMEN_HEAL_EXPECT_SIDE=800
+          export LUMEN_MEMORY_SKIP_DENOISE=1
+          ./out/engine-test out/k.metallib proraw out/memory-proraw --memory
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
         if: always()
         with:

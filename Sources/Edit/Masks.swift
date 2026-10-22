@@ -301,6 +301,14 @@ extension EditSession {
     @discardableResult
     func prepareAutoMasks(_ s: EditSettings, source: ImageSource) -> Bool {
         Self.stepNote?("AI masks on a \(Int(source.extent.width))x\(Int(source.extent.height)) copy")
+        // how long each model took, for ⋯ → Send diagnostics (quality checklist F: performance baselines)
+        var timings: [String] = []
+        var stepStart = Date(), stepName = ""
+        func step(_ name: String) {
+            if !stepName.isEmpty { timings.append(String(format: "%@ %.1f s", stepName, Date().timeIntervalSince(stepStart))) }
+            stepName = name; stepStart = Date()
+            if !name.isEmpty { Self.stepNote?("AI masks: \(name)") }
+        }
         var needSubject = s.effective.lensBlur.amount > 0, needSky = false, needPeople = false
         var subjectPoints = s.masks.flatMap(\.components).filter { $0.kind == .subject }.compactMap(\.subjectPoint)
         if let p = s.lensBlur.subjectPoint { subjectPoints.append(p) }
@@ -317,12 +325,12 @@ extension EditSession {
         }
         var computed = false
         if needSubject, !source.hasTried(Self.aiSubject) {
-            Self.stepNote?("AI masks: subject")
+            step("subject")
             source.storeMask(Self.aiSubject, refined(computeSubject(source), source: source))
             computed = true
         }
         for p in Set(subjectPoints) where !source.hasTried(Self.subjectKey(p)) {
-            Self.stepNote?("AI masks: subject at a point")
+            step("subject at a point")
             source.storeMask(Self.subjectKey(p), refined(computeSubject(source, at: p), source: source))
             computed = true
         }
@@ -330,7 +338,7 @@ extension EditSession {
         // (and the Depth mask: the sky it finds is always the farthest thing)
         if (needSky || needDepth || !sceneSets.isEmpty || s.masks.contains { $0.components.contains { $0.kind == .landscape } }),
            !source.hasTried(Self.aiScene) {
-            Self.stepNote?("AI masks: scene")
+            step("scene")
             source.storeScene(computeScene(source))
             source.storeMask(Self.aiScene, nil)
             computed = true
@@ -339,7 +347,7 @@ extension EditSession {
         // through the leaves starts)
         let depthWantsSky = needDepth && !source.hasTried(Self.aiDepth) && source.sceneField?.found.contains(.sky) == true
         if needSky || !sceneSets.isEmpty || depthWantsSky, !source.hasTried(Self.aiSky) {
-            Self.stepNote?("AI masks: sky")
+            step("sky")
             if let global = source.sceneField, global.found.contains(.sky) {
                 // finer at the sky's edge (four quarters), then the sky seen through trees
                 let scene = skyScene(global, source: source) ?? global
@@ -358,12 +366,12 @@ extension EditSession {
             computed = true
         }
         if needPeople, !source.hasTried(Self.aiPeople) {
-            Self.stepNote?("AI masks: people")
+            step("people")
             source.storeMask(Self.aiPeople, refined(computePeople(source), source: source))
             computed = true
         }
         if needDepth, !source.hasTried(Self.aiDepth) {
-            Self.stepNote?("AI masks: depth")
+            step("depth")
             var field = computeDepth(source)
             // the sky is always the farthest thing: the depth AI sometimes gives patches of it nearer distances, so
             // "Far" missed bits of sky and "Near" leaked into it (owner's idea list, 2026-10-12)
@@ -371,11 +379,12 @@ extension EditSession {
                 field = Self.skyFar(f, sky: sky)
             }
             source.storeDepth(field)
-            Self.stepNote?("AI masks: depth edges")
+            step("depth edges")
             source.storeMask(Self.aiDepth, refined(field.map { Self.depthImage($0, extent: source.extent) }, source: source, depth: true))
             computed = true
         }
-        Self.stepNote?("AI masks: done")
+        step("")
+        Self.stepNote?("AI masks: done" + (timings.isEmpty ? "" : " (" + timings.joined(separator: ", ") + ")"))
         return computed
     }
 

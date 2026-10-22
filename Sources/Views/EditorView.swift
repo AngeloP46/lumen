@@ -146,7 +146,7 @@ struct EditorView: View {
             vm.setLensBlurEditing(tool == .lensBlur)
             if DemoMode.isOn { applyDemo() }
         }
-        .onDisappear { vm.flushSave(); store.refreshThumbnail(item); vm.healToolChanged(open: false, now: true); vm.detailToolChanged(open: false, now: true); EditSession.releaseMaskModels(); LumenGPU.context.clearCaches() }
+        .onDisappear { vm.reportSession(); vm.flushSave(); store.refreshThumbnail(item); vm.healToolChanged(open: false, now: true); vm.detailToolChanged(open: false, now: true); EditSession.releaseMaskModels(); LumenGPU.context.clearCaches() }
         .onChange(of: tool) { _, new in
             vm.wbPicking = false
             vm.lensBlurPicking = false

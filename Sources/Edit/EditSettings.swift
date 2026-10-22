@@ -666,7 +666,8 @@ extension EditSettings {
         for (name, value) in new where String(describing: value) != String(describing: before[name] ?? "") {
             changed.append((name, value))
         }
-        let names = Array(NSOrderedSet(array: changed.map { Self.historyName($0.0) })) as? [String] ?? []
+        var seen = Set<String>()
+        let names = changed.map { Self.historyName($0.0) }.filter { seen.insert($0).inserted }   // in order, once each
         guard !names.isEmpty else { return "No change" }
         if masks.count != old.masks.count { return masks.count > old.masks.count ? "Mask added" : "Mask removed" }
         if heals.count != old.heals.count { return heals.count > old.heals.count ? "Heal" : "Heal removed" }

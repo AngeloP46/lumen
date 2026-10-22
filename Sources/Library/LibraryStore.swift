@@ -313,51 +313,7 @@ final class LibraryStore: ObservableObject {
         return s
     }
 
-    private static func decodeSettings(_ data: Data) -> EditSettings {
-        let decoder = JSONDecoder()
-        if let s = try? decoder.decode(EditSettings.self, from: data) { return s }
-        // Older sidecar: lay its values over today's defaults, dropping anything that no longer fits.
-        // The template has one mask so masks, components and their adjustments get today's defaults too.
-        var template = EditSettings()
-        template.masks = [Mask.make(.brush)]
-        guard var old = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              var defaults = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(template))) as? [String: Any]
-        else { return EditSettings() }
-        old = old.filter { defaults[$0.key] != nil }
-        // Lens Blur reads the absence of these to recognise an old save (old amount scale; a saved choice): the
-        // template must not fill them in
-        if var lens = defaults["lensBlur"] as? [String: Any] {
-            lens["scaleVersion"] = nil; lens["activated"] = nil
-            defaults["lensBlur"] = lens
-        }
-        let maskTemplate = defaults["masks"] ?? [Any]()
-        defaults["masks"] = [Any]()
-        for dropping in [[], ["masks"]] as [[String]] {
-            var merged = defaults
-            for (k, v) in old where !dropping.contains(k) {
-                merged[k] = Self.overlay(v, on: k == "masks" ? maskTemplate : defaults[k] ?? v)
-            }
-            if let d = try? JSONSerialization.data(withJSONObject: merged),
-               let s = try? decoder.decode(EditSettings.self, from: d) { return s }
-        }
-        return EditSettings()
-    }
-
-    /// Lays old JSON values over a template: objects are merged key by key (keys the template lacks are dropped),
-    /// array elements are each merged over the template's first element.
-    private static func overlay(_ value: Any, on template: Any) -> Any {
-        if let v = value as? [String: Any], let t = template as? [String: Any] {
-            var out = t
-            // keys the template lacks are kept: they are the optional ones (left out of the template because they are
-            // nil there), e.g. Lens Blur's linked mask and focus point, which migration used to drop (code review, 19 Oct)
-            for (k, x) in v { out[k] = t[k].map { overlay(x, on: $0) } ?? x }
-            return out
-        }
-        if let v = value as? [Any], let t = (template as? [Any])?.first, t is [String: Any] {
-            return v.map { overlay($0, on: t) }
-        }
-        return value
-    }
+    private static func decodeSettings(_ data: Data) -> EditSettings { EditsFile.decodeSettings(data) }
 
     /// CI only: as if the photo had never been opened.
     func forgetEdits(_ item: LibraryItem) {
@@ -365,11 +321,7 @@ final class LibraryStore: ObservableObject {
         for u in [editURL(item), historyURL(item)] { try? FileManager.default.removeItem(at: u) }
     }
 
-    struct EditHistory: Codable {
-        var current: EditSettings
-        var undo: [EditSettings]
-        var redo: [EditSettings]
-    }
+    typealias EditHistory = EditsFile.History
 
     /// Undo/redo lives in its own file next to the edits (`<id>.history.json`), written on `historyQueue`.
     /// The edits sidecar stays small, so the save that runs twice a second while editing is cheap and never
@@ -378,12 +330,7 @@ final class LibraryStore: ObservableObject {
     private func historyURL(_ item: LibraryItem) -> URL { editsDir.appendingPathComponent("\(item.id.uuidString).history.json") }
 
     nonisolated private static func readHistory(file: URL, legacy: Data?) -> EditHistory? {
-        if let data = try? Data(contentsOf: file), let h = try? JSONDecoder().decode(EditHistory.self, from: data) { return h }
-        guard let data = legacy,
-              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let value = json["_undoHistory"],
-              let encoded = try? JSONSerialization.data(withJSONObject: value) else { return nil }
-        return try? JSONDecoder().decode(EditHistory.self, from: encoded)
+        EditsFile.readHistory(file: file, legacy: legacy)
     }
 
     func history(for item: LibraryItem, current: EditSettings) -> EditHistory {
@@ -661,9 +608,13 @@ final class LibraryStore: ObservableObject {
                 autoreleasepool {
                     guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr && o.hdr) else { return }
                     let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
-                    guard let data = HeavyWork.shared.run(.export, megapixels: mp, {
+                    let started = Date()
+                    let made = HeavyWork.shared.run(.export, megapixels: mp, {
                         session.renderData(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
-                    }) ?? nil else { return }
+                    }) ?? nil
+                    Diagnostics.shared.note(String(format: "batch export %d of %d %@ in %.1f s (%.0f MP)", n + 1, jobs.count,
+                                                   made == nil ? "failed" : "done", Date().timeIntervalSince(started), mp))
+                    guard let data = made else { return }
                     var name = job.name + "-lumen", k = 2
                     // the file system ignores case: IMG_1 and img_1 would overwrite each other
                     while used.contains(name.lowercased()) { name = "\(job.name)-lumen-\(k)"; k += 1 }

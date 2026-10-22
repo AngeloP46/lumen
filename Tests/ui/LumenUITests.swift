@@ -101,7 +101,10 @@ final class LumenUITests: XCTestCase {
         amount.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
             .press(forDuration: 0.1, thenDragTo: amount.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
         XCTAssertTrue(events().contains { $0.contains("lens preview true") })
-        XCTAssertTrue(events().last(where: { $0.contains("lens preview ") })?.contains("false") == true,
+        // the app writes "lens preview false" when the finger lifts; under a loaded simulator that can land a moment
+        // after the drag call returns (21 Oct full suite: read too early). Wait up to 3 s: if it never comes, the red
+        // preview really stayed on (quality checklist H)
+        XCTAssertTrue(waitForEvent(timeout: 3) { $0.last(where: { $0.contains("lens preview ") })?.contains("false") == true },
                       "Selection preview must clear on slider release")
         el("lens-blur-preview").tap()
         let before = events().filter { $0.contains("lens preview true") }.count
@@ -184,6 +187,16 @@ final class LumenUITests: XCTestCase {
             usleep(400_000)
         }
         b.tap()
+    }
+
+    /// Polls the app's event log until `ok` holds (the app writes it a moment after a gesture ends).
+    func waitForEvent(timeout: TimeInterval, _ ok: ([String]) -> Bool) -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        repeat {
+            if ok(events()) { return true }
+            usleep(100_000)
+        } while Date() < end
+        return ok(events())
     }
 
     func waitGone(_ e: XCUIElement, timeout: TimeInterval) -> Bool {
