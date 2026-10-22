@@ -490,6 +490,7 @@ struct EditorView: View {
                         .frame(maxHeight: .infinity, alignment: .top).padding(.top, 156)   // below the histogram
                 }
                 if vm.loadFailed { Text("This file couldn't be opened.").foregroundStyle(.secondary) }
+                SaveProblemBanner().frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 8)
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()

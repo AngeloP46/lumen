@@ -219,3 +219,24 @@ struct HistorySheet: View {
         .presentationDetents([.medium, .large])
     }
 }
+
+/// A save that failed (storage full, a write error): stays on screen until saving works again (checklist A2). Lumen
+/// keeps the edits and tries again every few seconds.
+struct SaveProblemBanner: View {
+    @EnvironmentObject var store: LibraryStore
+
+    var body: some View {
+        if let text = store.saveProblem {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text(text).font(.footnote).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(Color.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 12))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 12)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("save-problem")
+        }
+    }
+}

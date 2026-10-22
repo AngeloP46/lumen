@@ -80,8 +80,10 @@ do {
     comps[0]["kind"] = "futureKind"
     masks[0]["components"] = comps
     old["masks"] = masks
-    let s = EditsFile.decodeSettings(data(old))
-    known(s.masks.isEmpty, "A1", "a mask with an unknown kind drops every mask of the photo (masks: \(s.masks.count))")
+    let (s, report) = EditsFile.load(data(old))
+    // fixed in batch 1: only the part that can't be read goes; the rest of the mask and every other mask stay
+    check(s.masks.count == 1 && s.masks[0].components.count == 2, "A1: an unknown mask part must drop only itself (masks \(s.masks.count), parts \(s.masks.first?.components.count ?? 0))")
+    check(report.droppedMasks == 1 && report.lostSomething && report.message != nil, "A1: the loss must be reported (\(report))")
     check(s.exposure == 0.7, "edits file: an unknown mask kind must not lose the global edits")
 }
 
@@ -113,7 +115,28 @@ do {
     obj["undo"] = undo
     let oldURL = tmp.appendingPathComponent("old.history.json")
     try? data(obj).write(to: oldURL)
-    known(EditsFile.readHistory(file: oldURL, legacy: nil) == nil, "A1", "a history step from before a key existed throws the whole undo history away")
+    let read = EditsFile.readHistory(file: oldURL, legacy: nil)
+    check(read?.undo.count == 1 && read?.undo.first?.aiDenoise == 0 && read?.undo.first?.masks.first?.components.first?.amount == 100,
+          "A1: a history step from before a key existed must still load (got \(read?.undo.count ?? -1) steps)")
+}
+
+// ---- What loading reports (A1): nothing lost / older file / newer version / damaged
+do {
+    let today = EditsFile.load((try? JSONEncoder().encode(rich)) ?? Data())
+    check(!today.report.lostSomething && today.report.message == nil, "load report: today's file must report nothing lost")
+    var older = encoded(rich); older["aiDenoise"] = nil; older["formatVersion"] = nil
+    let o = EditsFile.load(data(older))
+    check(!o.report.lostSomething, "load report: an older file with fewer keys loses nothing (\(o.report))")
+    var newer = encoded(rich); newer["formatVersion"] = EditSettings.currentFormat + 1; newer["someFutureSetting"] = 3
+    let n = EditsFile.load(data(newer))
+    check(n.report.newerVersion && n.report.lostSomething && n.settings.exposure == 0.7, "load report: a newer file must be flagged and still read (\(n.report))")
+    let bad = EditsFile.load(json("{ not json"))
+    check(bad.report.unreadable && bad.report.message != nil, "load report: a damaged file must be flagged")
+    var wrongType = encoded(rich); wrongType["exposure"] = "bright"
+    let w = EditsFile.load(data(wrongType))
+    check(w.report.droppedSettings == ["exposure"] && w.settings.highlights == -40 && w.settings.masks.count == 1,
+          "load report: one unreadable setting must drop only itself (\(w.report))")
+    check(EditSettings().formatVersion == EditSettings.currentFormat, "edits file: new edits are written in today's format")
 }
 
 // ---- History names and pasting masks

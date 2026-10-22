@@ -129,8 +129,14 @@ final class EditorViewModel: ObservableObject {
     // MARK: Loading
 
     nonisolated(unsafe) private var memoryWarning: NSObjectProtocol?
+    nonisolated(unsafe) private var lifecycleObservers: [NSObjectProtocol] = []
+    /// True while the saved edits are being put on screen: that is not a change, so it isn't saved again (before
+    /// 22 Oct opening a photo saved it 0.5 s later, writing back whatever this version could read: checklist A1).
+    private var loadingSettings = false
     deinit {
         if let o = memoryWarning { NotificationCenter.default.removeObserver(o) }
+        // every observer goes with the editor (two were left behind per photo opened: checklist A11)
+        for o in denoiseObservers + lifecycleObservers { NotificationCenter.default.removeObserver(o) }
         // tells "the closed editor's copies are still held" apart from other memory that stays (checklist A8)
         Diagnostics.shared.note("editor freed")
     }
@@ -203,8 +209,19 @@ final class EditorViewModel: ObservableObject {
                 }
             }
         }
+        loadingSettings = true
         settings = loaded
+        loadingSettings = false
         applyingHistory = false
+        if let notice = store.takeLoadNotice(item) { message = notice }
+        // Lumen leaving the screen may be the last chance to write: the edit waiting its 0.5 s goes now (checklist A5)
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
+                                                                         object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.saveWork != nil else { return }
+                self.flushSave()
+            }
+        })
         // undo history arrives a moment later (read in the background, not while the photo is opening); edits made
         // meanwhile go on top of it
         let opened = loaded
@@ -314,7 +331,7 @@ final class EditorViewModel: ObservableObject {
     nonisolated(unsafe) private var denoisePausing = false
     /// The strength AI Denoise is set to when the clean it waits for finishes (pasted edits ask for theirs).
     private var denoiseTarget: Double?
-    private var denoiseObservers: [NSObjectProtocol] = []
+    nonisolated(unsafe) private var denoiseObservers: [NSObjectProtocol] = []
 
     /// The slider moved: the first time the photo is cleaned (tens of seconds, with progress); after that only the mix
     /// changes, so the photo is decoded again once the slider rests.
@@ -569,7 +586,7 @@ final class EditorViewModel: ObservableObject {
             redoStack.removeAll()
             lastChange = Date()
         }
-        scheduleSave()
+        if !loadingSettings { scheduleSave() }
         requestRender()
         if settings.masks != old.masks || settings.lensBlur != old.lensBlur { prepareAutoMasksIfNeeded() }
         // HDR changes how the file is decoded; heals are painted in while decoding
@@ -592,6 +609,7 @@ final class EditorViewModel: ObservableObject {
 
     func flushSave() {
         saveWork?.cancel()
+        saveWork = nil
         store?.save(settings, for: item, history: historyLoaded ? LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack) : nil)
         store?.flushHistory()
     }
@@ -1246,16 +1264,17 @@ final class EditorViewModel: ObservableObject {
         freeMemoryForHeal()   // it decodes the photo at 3072 px: the copies that can be made again go first
         healBusy = true
         healBusyText = EditSession.healModelReady ? "Removing…" : "Preparing Heal…"
-        freeMemoryForHeal()
         Diagnostics.shared.note("heal start (model ready \(EditSession.healModelReady))")
         let mp = megapixels
-        workQueue.async {
+        let item = self.item
+        workQueue.async { [weak store = self.store] in
             let spot = HeavyWork.shared.run(.heal, megapixels: mp) { session.makeHeal(strokes: [stroke], earlier: earlier) } ?? nil
             LumenGPU.context.clearCaches()
             Diagnostics.shared.note(spot == nil ? "heal failed" : "heal done")
             let why = EditSession.healFailure ?? .failed
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                // the editor closed meanwhile: the fix still goes on the photo (checklist A4)
+                guard let self else { if let spot { store?.addHeals([spot], to: item) }; return }
                 guard let spot else {
                     self.healBusy = false
                     self.healStroke = []
@@ -1395,7 +1414,8 @@ final class EditorViewModel: ObservableObject {
         healBusyText = chosen.count == 1 ? "Removing…" : "Removing 1 of \(chosen.count)…"
         freeMemoryForHeal()
         let mp = megapixels
-        workQueue.async {
+        let item = self.item
+        workQueue.async { [weak store = self.store] in
             var made: [HealSpot] = []
             var failures: [HealFailure] = []
             for (i, person) in chosen.enumerated() {
@@ -1414,7 +1434,7 @@ final class EditorViewModel: ObservableObject {
             }
             let done = made, failed = failures
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self else { store?.addHeals(done, to: item); return }
                 self.peopleFound = nil
                 self.peopleChosen = []
                 if let first = failed.first {

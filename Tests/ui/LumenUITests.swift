@@ -1095,6 +1095,60 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(valueOf("reset-Shadows"), edited, "the pasted Shadows edit should be on the second photo")
     }
 
+    // MARK: Batch 1: your work is safe (docs/QUALITY-CHECKLIST.md)
+
+    /// A3: long-press → Remove from Lumen asks first; Cancel keeps the photo.
+    func testRemoveOnePhotoAsksFirst() {
+        launchLibrary()
+        let before = items().count
+        items().element(boundBy: 0).press(forDuration: 1.2)
+        XCTAssertTrue(app.buttons["Remove from Lumen"].waitForExistence(timeout: 5))
+        app.buttons["Remove from Lumen"].tap()
+        XCTAssertTrue(el("confirm-remove").waitForExistence(timeout: 5), "removing a photo should ask first")
+        shot("remove-asks")
+        app.buttons["Cancel"].firstMatch.tap()
+        sleep(1)
+        XCTAssertEqual(items().count, before, "Cancel must keep the photo")
+    }
+
+    /// A2: when edits can't be written, the editor says so (and keeps trying).
+    func testFailedSaveIsShown() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoFailSaves", "1", "-lumenDemoSlider", "list"])
+        let s = el("slider-Shadows")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+        XCTAssertTrue(el("save-problem").waitForExistence(timeout: 5), "a failed save must be shown")
+        shot("save-problem")
+    }
+
+    /// A1: opening a photo writes nothing (it used to save 0.5 s after opening, writing back whatever this version
+    /// could read). A RAW never opened before (no edits file), left alone for 3 s.
+    func testOpeningAPhotoDoesNotSaveIt() {
+        launch(open: 2, tool: "Light", extra: ["-lumenDemoRawHDR", "1"])
+        sleep(3)
+        let saves = events().filter { $0.contains("saved edits") }
+        XCTAssertTrue(saves.isEmpty, "opening a photo must not save it: \(saves)")
+    }
+
+    /// A5: an edit made just before Lumen leaves the screen is kept (the 0.5 s save delay used to lose it).
+    func testEditKeptWhenLeavingStraightAway() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "list"])
+        let s = el("slider-Shadows")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)))
+        let edited = valueOf("reset-Shadows")
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+        app.terminate()
+        // the same photo again, without starting from fresh edits
+        if let i = app.launchArguments.firstIndex(of: "-lumenDemoFresh") { app.launchArguments.removeSubrange(i...i + 1) }
+        app.launch()
+        XCTAssertTrue(el("photo").waitForExistence(timeout: 60))
+        sleep(3)
+        if !el("reset-Shadows").exists { tapTool("Light"); sleep(1) }
+        XCTAssertEqual(valueOf("reset-Shadows"), edited, "the edit made just before leaving should be saved")
+    }
+
     /// ⋯ → Copy edits…: the Copy sheet opens; `choose` picks what to copy; Copy closes it.
     func copyEdits(_ choose: () -> Void) {
         el("btn-menu").tap()

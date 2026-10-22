@@ -52,6 +52,15 @@ final class LibraryStore: ObservableObject {
     /// Copied edits and what was chosen from them (Copy edits…); Paste applies exactly that.
     @Published var clipboard: Clipboard?
     @Published var lastError: String?
+    /// A save that failed (storage full, a write error): shown until a save works again; the edits stay in memory
+    /// and are written again every few seconds (checklist A2).
+    @Published private(set) var saveProblem: String?
+    /// Saves that failed, newest per photo, written again by `retryFailedSaves`.
+    private var failedSaves: [UUID: (settings: EditSettings, history: EditHistory?)] = [:]
+    private var retryTimer: Timer?
+    /// What reading a photo's edits couldn't (from a newer Lumen, or damaged), for the editor to say once (A1).
+    private var loadNotices: [UUID: String] = [:]
+    func takeLoadNotice(_ item: LibraryItem) -> String? { loadNotices.removeValue(forKey: item.id) }
     @Published var importing = false
     @Published var importTotal = 0
     @Published var importDone = 0
@@ -126,6 +135,7 @@ final class LibraryStore: ObservableObject {
             DenoiseStore.directory = oldDenoise
         }
         DispatchQueue.global(qos: .utility).async { DenoiseStore.sweep() }
+        Self.historyFailed = { [weak self] error in self?.reportSaveFailure(error) }
         Task { @MainActor [weak self] in self?.restoreDenoiseWork() }
         try? fm.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         // Smart fill (beta, 0.1.154) was taken out again: free the ~950 MB it may have downloaded
@@ -150,6 +160,8 @@ final class LibraryStore: ObservableObject {
                 return UserPreset(id: id, name: name, settings: Self.decodeSettings(d))
             }
         }
+        // after the presets are read: they count as references too
+        if testRoot == nil { sweepHealPatches() }
     }
 
 
@@ -236,6 +248,17 @@ final class LibraryStore: ObservableObject {
             // keep the last good list, in case this one is ever damaged
             try? fm.removeItem(at: backupURL)
             try? fm.copyItem(at: indexURL, to: backupURL)
+            // photos copied in but never listed (the app closed mid-import, or the list couldn't be written): back
+            // in the library instead of invisible for ever (checklist A2)
+            let files = (try? fm.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: [.creationDateKey])) ?? []
+            let known = Set(list.map(\.fileName))
+            let orphans = Self.rebuild(from: files.filter { !known.contains($0.lastPathComponent) })
+            if !orphans.isEmpty {
+                items = (items + orphans).sorted { $0.added > $1.added }
+                saveIndex()
+                lastError = "\(orphans.count) photo\(orphans.count == 1 ? " was" : "s were") missing from Lumen's list and \(orphans.count == 1 ? "is" : "are") back (edits kept)."
+                Diagnostics.shared.note("library: \(orphans.count) unlisted photo file(s) adopted")
+            }
             return
         }
         let files = (try? fm.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: [.creationDateKey])) ?? []
@@ -294,12 +317,26 @@ final class LibraryStore: ObservableObject {
 
     func settings(for item: LibraryItem) -> EditSettings {
         guard let data = try? Data(contentsOf: editURL(item)) else { return EditSettings() }
-        // a damaged file would be replaced by defaults on the next save: keep a copy first
-        if (try? JSONSerialization.jsonObject(with: data)) == nil {
-            let copy = editsDir.appendingPathComponent("\(item.id.uuidString).damaged.json")
-            if !fm.fileExists(atPath: copy.path) { try? data.write(to: copy) }
+        let (s, report) = EditsFile.load(data)
+        // anything this version couldn't read: the original file is kept before anything can be saved over it
+        if report.lostSomething {
+            keepCopy(of: data, for: item)
+            if let m = report.message, loadNotices[item.id] == nil {
+                loadNotices[item.id] = m
+                Diagnostics.shared.note("edits of \(item.displayName): \(m)")
+            }
         }
-        return Self.decodeSettings(data)
+        return s
+    }
+
+    /// `<id>.kept-<date>.json` beside the edits, once per distinct content.
+    private func keepCopy(of data: Data, for item: LibraryItem) {
+        let existing = (try? fm.contentsOfDirectory(atPath: editsDir.path)) ?? []
+        for name in existing where name.hasPrefix("\(item.id.uuidString).kept-") || name == "\(item.id.uuidString).damaged.json" {
+            if (try? Data(contentsOf: editsDir.appendingPathComponent(name))) == data { return }
+        }
+        let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"; f.locale = Locale(identifier: "en_US_POSIX")
+        try? data.write(to: editsDir.appendingPathComponent("\(item.id.uuidString).kept-\(f.string(from: Date())).json"))
     }
 
     /// What the editor opens a photo with: its saved edits, or for a photo never edited, today's defaults, with HDR on
@@ -366,8 +403,18 @@ final class LibraryStore: ObservableObject {
         // the old sidecar is read before it is overwritten: it may still hold a pre-move `_undoHistory`
         let oldData = supplied == nil ? try? Data(contentsOf: url) : nil
         let previous = supplied == nil ? oldData.map(Self.decodeSettings) ?? EditSettings() : nil
-        // small, fast and synchronous: what the photo looks like is never lost
-        if let data = try? JSONEncoder().encode(s) { try? data.write(to: url, options: .atomic) }
+        // small, fast and synchronous: what the photo looks like is never lost; a failed write is said and retried
+        do {
+            if DemoMode.value("-lumenDemoFailSaves") != nil { throw CocoaError(.fileWriteOutOfSpace) }   // CI
+            try JSONEncoder().encode(s).write(to: url, options: .atomic)
+            if DemoMode.isOn { DemoMode.log("saved edits \(item.fileName)") }
+            failedSaves[item.id] = nil
+            if failedSaves.isEmpty, saveProblem != nil { saveProblem = nil; Diagnostics.shared.note("saving works again") }
+        } catch {
+            failedSaves[item.id] = (s, supplied)
+            reportSaveFailure(error)
+            return
+        }
         historyQueue.async {
             var history: EditHistory
             if let supplied { history = supplied } else {
@@ -387,13 +434,46 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    /// Writes waiting history now (one file, or all). On `historyQueue` only.
+    /// Writes waiting history now (one file, or all). On `historyQueue` only. A failed write keeps it waiting and
+    /// is reported like a failed save (it is tried again with the next save).
     nonisolated private static func writePendingHistory(_ only: URL? = nil) {
         let files = only.map { [$0] } ?? Array(pendingHistory.keys)
         for file in files {
             guard let history = pendingHistory.removeValue(forKey: file) else { continue }
-            if let data = try? JSONEncoder().encode(history) { try? data.write(to: file, options: .atomic) }
+            do {
+                try JSONEncoder().encode(history).write(to: file, options: .atomic)
+            } catch {
+                if pendingHistory[file] == nil { pendingHistory[file] = history }
+                Diagnostics.shared.note("undo history not saved: \(error.localizedDescription)")
+                Task { @MainActor in historyFailed?(error) }
+            }
         }
+    }
+    /// Set by the store: a history write failed.
+    nonisolated(unsafe) private static var historyFailed: ((Error) -> Void)?
+
+    /// Shown in the library and the editor until a save works again.
+    private func reportSaveFailure(_ error: Error) {
+        let full = (error as NSError).code == NSFileWriteOutOfSpaceError || (error as NSError).domain == NSPOSIXErrorDomain && (error as NSError).code == 28
+        let text = full ? "Your edits can't be saved: the iPhone is out of storage. Free some space; Lumen keeps trying."
+                        : "Your edits couldn't be saved (\(error.localizedDescription)). Lumen keeps trying."
+        if saveProblem != text {
+            saveProblem = text
+            Diagnostics.shared.note("save failed: \(error.localizedDescription)")
+        }
+        guard retryTimer == nil else { return }
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.retryFailedSaves() }
+        }
+    }
+
+    /// Writes again every save that failed (also when the editor closes or Lumen leaves the screen).
+    func retryFailedSaves() {
+        for (id, pending) in failedSaves {
+            guard let item = item(id) else { failedSaves[id] = nil; continue }
+            save(pending.settings, for: item, history: pending.history)
+        }
+        if failedSaves.isEmpty { retryTimer?.invalidate(); retryTimer = nil }
     }
 
     /// The editor is closing: write its history now instead of in up to 2 s.
@@ -416,6 +496,49 @@ final class LibraryStore: ObservableObject {
             guard s != own else { continue }
             save(s, for: item)
             refreshThumbnail(item)
+        }
+    }
+
+    /// Heals made for a photo whose editor has closed meanwhile (a heal or Remove people finishing after Back): added
+    /// to the saved edits instead of being lost (checklist A4).
+    func addHeals(_ spots: [HealSpot], to item: LibraryItem) {
+        guard !spots.isEmpty, items.contains(where: { $0.id == item.id }) else { HealStore.remove(Set(spots.map(\.id))); return }
+        var s = settings(for: item)
+        s.heals.append(contentsOf: spots)
+        s.setOn(.heal, true)
+        save(s, for: item)
+        refreshThumbnail(item)
+        Diagnostics.shared.note("heal finished after the editor closed: kept (\(spots.count))")
+    }
+
+    /// At launch: Heal patches nothing refers to any more (a heal whose undo step fell off the 100-step history, a heal
+    /// thrown away before 22 Oct when its editor had closed) are removed. Only patches older than a day, and only when
+    /// every edits and history file could be read (otherwise nothing is removed: never delete pixels still needed).
+    private func sweepHealPatches() {
+        let editsDir = self.editsDir, presets = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
+        let healDir = HealStore.directory
+        thumbQueue.async {
+            let fm = FileManager.default
+            var used = presets
+            for url in (try? fm.contentsOfDirectory(at: editsDir, includingPropertiesForKeys: nil)) ?? [] where url.pathExtension == "json" {
+                guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) else {
+                    if url.lastPathComponent.contains(".kept-") || url.lastPathComponent.hasSuffix(".damaged.json") { continue }
+                    return
+                }
+                used.formUnion(HealStore.references(in: json))
+            }
+            let dayAgo = Date().addingTimeInterval(-86_400)
+            var unused = Set<UUID>()
+            for url in (try? fm.contentsOfDirectory(at: healDir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            where url.pathExtension == "png" && !url.lastPathComponent.hasSuffix("-mask.png") {
+                guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), !used.contains(id),
+                      let changed = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                      changed < dayAgo else { continue }
+                unused.insert(id)
+            }
+            guard !unused.isEmpty else { return }
+            HealStore.remove(unused)
+            Diagnostics.shared.note("heal patches nothing uses any more: \(unused.count) removed")
         }
     }
 
@@ -722,9 +845,8 @@ final class LibraryStore: ObservableObject {
     }
 
     private func savePresets() {
-        if let data = try? JSONEncoder().encode(userPresets) {
-            try? data.write(to: root.appendingPathComponent("presets.json"), options: .atomic)
-        }
+        do { try JSONEncoder().encode(userPresets).write(to: root.appendingPathComponent("presets.json"), options: .atomic) }
+        catch { lastError = "Your presets couldn't be saved (\(error.localizedDescription))."; Diagnostics.shared.note("presets not saved: \(error.localizedDescription)") }
     }
 
     // MARK: Import
@@ -856,8 +978,11 @@ final class LibraryStore: ObservableObject {
     }
 
     private func saveIndex() {
-        if let data = try? JSONEncoder().encode(items) {
-            try? data.write(to: indexURL, options: .atomic)
+        do { try JSONEncoder().encode(items).write(to: indexURL, options: .atomic) }
+        catch {
+            // the photos and their edits are safe on disk; the next launch finds unlisted photos again (loadIndex)
+            reportSaveFailure(error)
+            Diagnostics.shared.note("photo list not saved: \(error.localizedDescription)")
         }
     }
 

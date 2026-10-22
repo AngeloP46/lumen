@@ -43,6 +43,8 @@ struct LibraryView: View {
     @State private var selecting = false
     @State private var selection: Set<UUID> = []
     @State private var confirmDelete = false
+    /// Long-press → Remove asks first too (it removed the photo at once before 22 Oct: checklist A3).
+    @State private var confirmRemove: LibraryItem?
     @State private var showBatchExport = false
     @State private var showDiagnostics = false
     @State private var notice: String?
@@ -204,6 +206,17 @@ struct LibraryView: View {
             } message: {
                 Text("Their edits are removed too. The originals in Photos or Files are not touched.")
             }
+            .confirmationDialog("Remove this photo from Lumen?", isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } }),
+                                titleVisibility: .visible) {
+                if let item = confirmRemove {
+                    Button("Remove photo", role: .destructive) { store.delete(item); confirmRemove = nil }
+                        .accessibilityIdentifier("confirm-remove")
+                }
+                Button("Cancel", role: .cancel) { confirmRemove = nil }
+            } message: {
+                Text("Its edits are removed too. The original in Photos or Files is not touched.")
+            }
+            .overlay(alignment: .top) { SaveProblemBanner() }
             .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
             .sheet(isPresented: $showBatchExport) {
                 let list = selectedItems
@@ -289,7 +302,7 @@ struct LibraryView: View {
                     Button { selecting = true; selection = [item.id] } label: {
                         Label("Select", systemImage: "checkmark.circle")
                     }
-                    Button(role: .destructive) { store.delete(item) } label: {
+                    Button(role: .destructive) { confirmRemove = item } label: {
                         Label("Remove from Lumen", systemImage: "trash")
                     }
                 }
