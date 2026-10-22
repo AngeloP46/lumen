@@ -1,5 +1,7 @@
 # App Store listing assets — DRAFT for review (Gate 4)
 
+**Superseded 22 Oct 2026:** final name Lumen RAW, IDs and prices are in `docs/appstore/LISTING.md`; the Lumaforge sections below are the old draft.
+
 Everything Apple asks for, drafted now so Gate 4 is a paste job, not a writing job.
 Placeholder name: **Lumaforge** (final name is Angelo's decision — every "Lumaforge" below
 is a find-and-replace). Prices: UK store, closest Apple tiers to the plan (≈£1.09/mo, ≈£7.99/yr).

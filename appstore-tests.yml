@@ -1,0 +1,30 @@
+# App Store sandbox only: project.yml plus a hosted unit-test target that buys the Pro products against a local
+# StoreKit configuration (Tests/store). project.yml itself stays as the SideStore pipeline needs it.
+include:
+  - project.yml
+targets:
+  LumenStoreTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/store/StoreTests.swift
+      - path: Tests/store/LumenRAW.storekit
+        buildPhase: resources
+    dependencies:
+      - target: Lumen
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lumenraw.app.storetests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Lumen.app/Lumen"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  LumenStore:
+    build:
+      targets:
+        Lumen: all
+        LumenStoreTests: [test]
+    test:
+      config: Debug
+      targets:
+        - LumenStoreTests

@@ -277,3 +277,11 @@ still gated at export).
 
 ## 22 Oct 2026: AI Denoise keeps the 100% copy out of memory (from main #83)
 A 100% copy that finished while a clean ran was kept beside the model (iOS closed Lumen). Now dropped; mask models released; a short job waits up to 3 s for memory. No Store code changed.
+
+## 22 Oct 2026: final IDs, lifetime purchase, StoreKit test, listing drafts
+Bundle com.lumenraw.app (CI builds and screenshots); products com.lumenraw.pro.monthly / .annual / .lifetime
+(1.49 GBP with 7-day trial / 9.99 / 29.99 non-consumable, which counts as paid Pro). Paywall shows all three and says
+"Lumen RAW Pro"; watermark text "Lumen RAW" (LumenMark). Tests/store: StoreKit configuration plus a hosted unit test
+(appstore-tests.yml = project.yml + LumenStoreTests) run by app-store-sandbox.yml: products and prices load, trial
+offered, lifetime and annual unlock Pro, monthly starts as a trial and locks again when it expires. Listing copy, app
+privacy and support pages drafted in docs/appstore/ (not published).
