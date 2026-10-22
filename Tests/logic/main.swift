@@ -214,6 +214,38 @@ do {
     check(Clipboard(settings: src, selection: oneMask, sourceName: "A").summary == "Sky mask", "copy: one mask reads by name")
 }
 
+// A9: a model load can take seconds. Releasing from the UI must not wait for it or cache its late result.
+do {
+    let entered = DispatchSemaphore(value: 0), finishLoad = DispatchSemaphore(value: 0)
+    let done = DispatchSemaphore(value: 0)
+    let model = LoadedModel<Int> {
+        entered.signal()
+        _ = finishLoad.wait(timeout: .now() + 3)
+        return 42
+    }
+    DispatchQueue.global().async { _ = model.model; done.signal() }
+    check(entered.wait(timeout: .now() + 2) == .success, "model load started")
+    // The old lock-around-load implementation blocks release until this watchdog unblocks the loader.
+    DispatchQueue.global().asyncAfter(deadline: .now() + 1) { finishLoad.signal() }
+    let start = Date()
+    model.release()
+    check(Date().timeIntervalSince(start) < 0.25, "release must not wait for an in-flight model load")
+    finishLoad.signal()
+    check(done.wait(timeout: .now() + 2) == .success, "active model request completes after release")
+    finishLoad.signal()
+    _ = model.model
+    check(entered.wait(timeout: .now() + 0.2) == .success, "model released while loading must not be cached afterwards")
+}
+do {
+    var loads = 0
+    let model = LoadedModel<Int> { loads += 1; return loads == 1 ? nil : 7 }
+    check(model.model == nil, "failed model load returns nil")
+    check(model.model == 7, "a later model request retries a transient load failure")
+    check(model.model == 7 && loads == 2, "successful model load is cached")
+    model.release()
+    check(model.model == 7 && loads == 3, "released model loads again on demand")
+}
+
 for brokenMasks in [["unexpected": "object"], "invalid", NSNull()] as [Any] {
     var damaged = encoded(rich)
     damaged["masks"] = brokenMasks

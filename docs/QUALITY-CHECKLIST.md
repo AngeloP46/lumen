@@ -36,6 +36,10 @@ submission is authorized. Rows below retain their original findings; this sectio
   export 2.1 s / 4864 MB. Memory suite passed 19 checks. These are simulator/Mac measurements, not phone
   performance; the separate ProRAW memory run intentionally skips AI Denoise.
 - Later batches and sandbox ports remain outstanding. Phone checks in section G remain unverified.
+- Batch 2 started on `quality-batch2`: A9 model loading now runs outside the cache lock; release invalidates
+  an in-flight load without waiting for it, and failed loads can retry. Foundation-only regression holds a
+  loader blocked while measuring release latency, checks late-result eviction, failure recovery and cache reuse.
+  Compile/runtime verification pending. Other batch 2 items remain open.
 
 ## A. Confirmed bugs, ranked by user impact
 
