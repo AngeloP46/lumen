@@ -194,6 +194,19 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
         queue.sync { Summary(usedMB: Self.footprintMB, leftMB: Self.availableMB, peakMB: peakMB, reports: savedReports().count) }
     }
 
+    /// The Findings of the last three launches, one line each (shown on the Diagnostics screen).
+    var findingLines: [String] {
+        queue.sync {
+            guard let log = try? String(contentsOf: logURL, encoding: .utf8) else { return [] }
+            let lines = log.split(separator: "
+", omittingEmptySubsequences: true)
+            let launches = lines.indices.filter { lines[$0].contains("  launch ") }
+            let from = launches.count >= 3 ? launches[launches.count - 3] : lines.startIndex
+            return Self.findings(Array(lines[from...])).split(separator: "
+").filter { $0.hasPrefix("• ") }.map { String($0.dropFirst(2)) }
+        }
+    }
+
     /// Closures by iOS (or crashes) in the log, newest last: (the run's lines, what it was doing last).
     var crashCount: Int {
         queue.sync {
@@ -450,6 +463,7 @@ struct DiagnosticsSheet: View {
     @State private var crashReport: URL?
     @State private var crashes = 0
     @State private var summary: Diagnostics.Summary?
+    @State private var findings: [String]?
 
     var body: some View {
         NavigationStack {
@@ -461,6 +475,17 @@ struct DiagnosticsSheet: View {
                     Text("Highest this time: \(s.peakMB) MB")
                     Text(s.reports == 0 ? "No crash reports from iOS yet" : "\(s.reports) crash/hang report\(s.reports == 1 ? "" : "s") saved")
                         .accessibilityIdentifier("diagnostics-reports")
+                }
+                if let findings {
+                    // what the report's Findings say, readable without sharing anything
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(findings.isEmpty ? "No problems spotted" : "Findings").font(.headline)
+                        ForEach(Array(findings.prefix(5).enumerated()), id: \.offset) { _, f in
+                            Text("• " + f).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("diagnostics-findings")
                 }
                 if let report {
                     // after a crash the short crash report comes first: what Lumen was doing when iOS closed it
@@ -493,13 +518,13 @@ struct DiagnosticsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .task {
-            let (s, r, c, n) = await Task.detached {
+            let (s, r, c, n, f) = await Task.detached {
                 (Diagnostics.shared.summary, Diagnostics.shared.makeReport(), Diagnostics.shared.makeReport(crashOnly: true),
-                 Diagnostics.shared.crashCount)
+                 Diagnostics.shared.crashCount, Diagnostics.shared.findingLines)
             }.value
-            summary = s; report = r; crashReport = c; crashes = n
+            summary = s; report = r; crashReport = c; crashes = n; findings = f
         }
     }
 }
