@@ -891,13 +891,13 @@ final class LibraryStore: ObservableObject {
             if patches.isEmpty {
                 retained = []
             } else {
-                var ids = presetHeals.union(clipHeals)
-                for oid in otherIDs where oid != item.id {
+                var ids: Set<UUID>? = presetHeals.union(clipHeals)
+                for oid in otherIDs where oid != item.id, ids != nil {
                     for url in [editsDir.appendingPathComponent("\(oid.uuidString).json"),
                                 editsDir.appendingPathComponent("\(oid.uuidString).history.json")] {
                         guard fm.fileExists(atPath: url.path) else { continue }
                         guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) else { ids = nil; break }
-                        ids.formUnion(HealStore.references(in: json))
+                        ids?.formUnion(HealStore.references(in: json))
                     }
                 }
                 retained = ids
