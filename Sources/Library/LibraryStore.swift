@@ -636,9 +636,15 @@ final class LibraryStore: ObservableObject {
 #endif
         guard batchProgress == nil, !list.isEmpty else { return }
         batchProgress = (0, list.count)
-        // App Store build: saved settings only (HDR is Pro, and the export gate checks the saved settings);
-        // main exports a never-opened RAW with HDR on, as the editor shows it
+        // In the App Store build, untouched RAW photos export with neutral saved settings.
+        // editorSettings(for:) injects HDR for an unopened RAW, which is a Pro feature;
+        // applying that default during a free batch export would silently bypass the gate.
+#if APP_STORE
         let jobs = list.map { (url: fileURL($0), edits: settings(for: $0), name: $0.displayName) }
+#else
+        // Personal SideStore/tester builds preserve main's default RAW HDR behavior.
+        let jobs = list.map { (url: fileURL($0), edits: editorSettings(for: $0), name: $0.displayName) }
+#endif
         UIApplication.shared.isIdleTimerDisabled = true   // a long batch must not stop when the screen locks
         let patches = HealStore.retain(Set(jobs.flatMap { $0.edits.heals.map(\.id) }))
         let dir = fm.temporaryDirectory.appendingPathComponent("lumen-export-\(UUID().uuidString)", isDirectory: true)

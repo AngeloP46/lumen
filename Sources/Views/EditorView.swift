@@ -1011,7 +1011,7 @@ struct EditorView: View {
                 guard twoFinger == nil, Date().timeIntervalSince(lastPinchEnd) > 0.3 else { return }
                 if pinchBase == nil {
                     pinchBase = (zoom, pan)
-                    if tool == .masks || (tool == .lensBlur && vm.lensBlurRefining) { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
+                    if tool == .masks || vm.lensBlurRefining { vm.cancelRecentStroke() }   // the first finger of a pinch must not leave a brush dab
                     if tool == .heal { vm.healCancel() }
                 }
                 if let b = pinchBase { setZoom(b.zoom * v.magnification, anchor: v.startLocation, from: b, xf) }

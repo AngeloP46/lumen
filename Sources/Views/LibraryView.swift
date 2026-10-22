@@ -223,7 +223,12 @@ struct LibraryView: View {
             .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
             .sheet(isPresented: $showBatchExport) {
                 let list = selectedItems
-                ExportOptionsSheet(count: list.count, hdrAvailable: list.contains { store.settings(for: $0).hdr }) { o in
+#if APP_STORE
+                let hdrAvailable = list.contains { store.settings(for: $0).hdr }
+#else
+                let hdrAvailable = list.contains { store.editorSettings(for: $0).hdr }
+#endif
+                ExportOptionsSheet(count: list.count, hdrAvailable: hdrAvailable) { o in
 #if APP_STORE
                     Task {
                         await proStore.refreshStatus()

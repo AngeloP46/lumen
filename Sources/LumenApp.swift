@@ -19,7 +19,9 @@ struct LumenApp: App {
 
     var body: some Scene {
         WindowGroup {
-            LibraryView()
+            Group {
+                if TesterExpiry.isExpired { TesterExpiredView() } else { LibraryView() }
+            }
                 .environmentObject(store)
                 .preferredColorScheme(.dark)
         }

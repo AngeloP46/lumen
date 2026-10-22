@@ -144,6 +144,17 @@ final class LumenUITests: XCTestCase {
         sleep(3)   // let the photo load
     }
 
+    /// Tester builds: once the expiry date has passed, the app shows the "test version has ended" screen, not the library.
+    func testTesterExpiredScreen() {
+        app = XCUIApplication()
+        let dir = ProcessInfo.processInfo.environment["DEMO_DIR"] ?? "/tmp/demo"
+        app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoExpired", "1"]
+        app.launch()
+        XCTAssertTrue(el("tester-expired").waitForExistence(timeout: 30), "an expired tester build should say so")
+        XCTAssertFalse(el("library-item").exists, "an expired tester build should not show the library")
+        shot("tester-expired")
+    }
+
     /// Opens the app on the library (no photo open). The demo library always holds exactly the sample photos.
     func launchLibrary(extra: [String] = []) {
         app = XCUIApplication()
@@ -165,7 +176,8 @@ final class LumenUITests: XCTestCase {
     func tapTool(_ name: String) {
         let b = el("tool-\(name)")
         _ = b.waitForExistence(timeout: 10)
-        for _ in 0..<6 where !b.isHittable || b.frame.maxX > app.frame.maxX || b.frame.minX < app.frame.minX {
+        // position only: asking isHittable of a button off screen throws ("activation point invalid")
+        for _ in 0..<6 where b.frame.maxX > app.frame.maxX - 2 || b.frame.minX < app.frame.minX + 2 {
             let left = b.frame.midX > app.frame.midX
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: b.frame.midY))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: left ? -160 : 160, dy: 0)))
