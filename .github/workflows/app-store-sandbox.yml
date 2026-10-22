@@ -96,7 +96,7 @@ jobs:
           # appstore-tests.yml = project.yml + a hosted unit-test target with Tests/store/LumenRAW.storekit
           xcodegen generate --spec appstore-tests.yml
           code=0
-          xcodebuild test -project Lumen.xcodeproj -scheme LumenStore -configuration Debug             -destination 'platform=iOS Simulator,name=iPhone 16 Pro Max' -derivedDataPath build-store             CODE_SIGNING_ALLOWED=NO SWIFT_ACTIVE_COMPILATION_CONDITIONS="APP_STORE DEBUG" > store-test.log 2>&1 || code=$?
+          xcodebuild test -project Lumen.xcodeproj -scheme LumenStore -configuration Debug             -destination 'platform=iOS Simulator,name=iPhone 16 Pro Max' -derivedDataPath build-store             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 CODE_SIGNING_ALLOWED=NO SWIFT_ACTIVE_COMPILATION_CONDITIONS="APP_STORE DEBUG" > store-test.log 2>&1 || code=$?
           grep -E "error:|Test Case .*(passed|failed)|Executed" store-test.log | head -40
           [ $code -eq 0 ] || { tail -40 store-test.log; grep -E "error:" store-test.log | head -20 | while IFS= read -r l; do echo "::error::${l:0:900}"; done; }
           exit $code

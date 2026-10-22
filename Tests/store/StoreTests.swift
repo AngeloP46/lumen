@@ -35,14 +35,26 @@ final class StoreTests: XCTestCase {
         return store
     }
 
-    /// Buys through the app's own purchase code (what the paywall does), then waits for StoreKit to report it.
-    private func buy(_ product: Product?, in store: LumenStore) async throws {
-        let product = try XCTUnwrap(product)
-        await store.purchase(product)
-        XCTAssertNil(store.errorMessage, "purchase of \(product.id) said: \(store.errorMessage ?? "")")
+    /// Buys with the test session (the app's purchase() waits for a confirmation sheet a unit test can't tap), then
+    /// waits for LumenStore to see it. On failure, says what StoreKit reports.
+    private func buy(_ id: String, in store: LumenStore) async throws {
+        _ = try await session.buyProduct(identifier: id)
         for _ in 0..<20 where !store.isPro {
-            try await Task.sleep(nanoseconds: 250_000_000)
             await store.refreshStatus()
+            if store.isPro { break }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        if !store.isPro {
+            var seen: [String] = []
+            for await r in Transaction.currentEntitlements {
+                if case .verified(let t) = r {
+                    seen.append("entitled \(t.productID) exp \(String(describing: t.expirationDate)) offer \(String(describing: t.offer?.paymentMode)) upgraded \(t.isUpgraded)")
+                } else { seen.append("unverified entitlement") }
+            }
+            for await r in Transaction.all {
+                if case .verified(let t) = r { seen.append("all \(t.productID) exp \(String(describing: t.expirationDate)) revoked \(String(describing: t.revocationDate))") }
+            }
+            XCTFail("\(id) bought but not Pro. StoreKit reports: \(seen.isEmpty ? "nothing" : seen.joined(separator: "; "))")
         }
     }
 
@@ -59,20 +71,20 @@ final class StoreTests: XCTestCase {
 
     func testLifetimeUnlocksProForGood() async throws {
         let store = try await loadedStore()
-        try await buy(store.lifetime, in: store)
+        try await buy(LumenStore.lifetimeID, in: store)
         XCTAssertEqual(store.status, .pro)
         XCTAssertTrue(store.isPro)
     }
 
     func testAnnualUnlocksPro() async throws {
         let store = try await loadedStore()
-        try await buy(store.annual, in: store)
+        try await buy(LumenStore.annualID, in: store)
         XCTAssertEqual(store.status, .pro)
     }
 
     func testMonthlyTrialThenEnds() async throws {
         let store = try await loadedStore()
-        try await buy(store.monthly, in: store)
+        try await buy(LumenStore.monthlyID, in: store)
         XCTAssertEqual(store.status, .trialing, "the first month starts with the free trial")
         XCTAssertTrue(store.isPro)
         try session.expireSubscription(productIdentifier: LumenStore.monthlyID)
