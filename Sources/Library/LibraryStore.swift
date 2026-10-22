@@ -892,7 +892,7 @@ final class LibraryStore: ObservableObject {
                 retained = []
             } else {
                 var ids: Set<UUID>? = presetHeals.union(clipHeals)
-                for oid in otherIDs where oid != item.id, ids != nil {
+                for oid in otherIDs where oid != item.id && ids != nil {
                     for url in [editsDir.appendingPathComponent("\(oid.uuidString).json"),
                                 editsDir.appendingPathComponent("\(oid.uuidString).history.json")] {
                         guard fm.fileExists(atPath: url.path) else { continue }
