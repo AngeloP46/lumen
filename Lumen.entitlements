@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- More memory on iPhones that allow it (about 6 GB instead of 3.4 GB on 12 GB iPhones). Build IPA signs the
+	     app ad hoc with this file so SideStore asks for it; sidestore/make_source.py lists it in the feed. -->
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
+</dict>
+</plist>

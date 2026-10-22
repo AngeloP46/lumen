@@ -6,6 +6,10 @@ on:
         description: 'Run only this test method, for example testPinchZoomsAndDoubleTapToggles (empty = all)'
         required: false
         default: ''
+      device:
+        description: 'Simulator, e.g. "iPhone SE (3rd generation)" or "iPhone 16e" (small screens; empty = iPhone 16 Pro Max)'
+        required: false
+        default: ''
   # every work branch (the repo is public, so the macOS runners are free); main is only merged into after this passed
   push:
     branches-ignore: [main]
@@ -44,6 +48,7 @@ jobs:
           TEST_RUNNER_DEMO_DIR: ${{ github.workspace }}/demo
           TEST_RUNNER_OUT_DIR: ${{ github.workspace }}/uiout
           ONLY_TEST: ${{ github.event.inputs.only }}
+          SIM_DEVICE: ${{ inputs.device }}
         # xcodebuild's own exit status is the job's status. The log goes to a file first and is filtered afterwards,
         # so a pipe closing early (head) can never turn a passing run into a failure or hide a failing one.
         run: |
@@ -51,7 +56,10 @@ jobs:
           # the AI models are only fetched for real builds; empty stand-ins keep the project building (no Depth/Landscape)
           mkdir -p Models/DepthAnythingV2SmallF16.mlmodelc Models/DETRResnet50SemanticSegmentationF16.mlmodelc Models/LaMa.mlmodelc Models/Denoise.mlmodelc
           xcodegen generate
-          UDID=$(xcrun simctl list devices available | grep -E "iPhone 16 Pro Max" | head -1 | grep -oE '[0-9A-F-]{36}')
+          DEVICE="${SIM_DEVICE:-iPhone 16 Pro Max}"
+          UDID=$(xcrun simctl list devices available | grep -F "$DEVICE (" | head -1 | grep -oE '[0-9A-F-]{36}')
+          if [ -z "$UDID" ]; then echo "::error::No simulator named $DEVICE"; xcrun simctl list devices available; exit 1; fi
+          echo "Simulator: $DEVICE"
           xcrun simctl boot $UDID
           xcrun simctl bootstatus $UDID -b
           set +e

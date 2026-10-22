@@ -173,3 +173,14 @@ Before/after split, preset folders, AI sky model via CoreML, lens-free vignette 
 
 ## History
 - 2026-10-08/09: three unattended Claude loops (bugs / tests / HDR) worked overnight on separate git worktrees, with a Python "CI courier" pushing their branches and feeding GitHub CI results back. Their work was merged and verified on 2026-10-09; the worktrees, branches and scripts were removed in the housekeeping that day. Notes, decision log and scripts: `app development\Lumen-archive\overnight-2026-10-08\` (read `PROGRESS-master.md` before ever doing it again). The private repo ran out of free macOS minutes (they bill x10), which is why it is public now.
+
+## Memory budget by device (22 Oct 2026)
+- `Sources/MemoryBudget.swift`: the app's memory limit measured at launch (footprint + os_proc_available_memory),
+  tiers low (< 2.6 GB, 4 GB iPhones), standard (~3.4 GB, the 17 Pro Max default), high (>= 4.5 GB, the Increased
+  Memory Limit, ~6 GB on 12 GB iPhones per developer reports). Low: 2048 px preview, AI Denoise refused with a message.
+  High: 100 % copy up to 6000 px. The launch line and the diagnostics header show it. CI: `-lumenDemoMemoryMB <n>`
+  fakes the limit (`testLowMemoryPhoneZooms`). Memory warnings now drop the 100 % copy even while zoomed in.
+- **SideStore experiment:** `Lumen.entitlements` (increased-memory-limit) is put on the IPA by an ad-hoc `codesign` in
+  Build IPA and listed in the feed by `make_source.py`. If SideStore refuses to install or update Lumen, revert the
+  codesign line and the feed entry. Whether it worked: the diagnostics launch line says `limit … (high)`.
+- `uitest.yml` takes `-f device="iPhone SE (3rd generation)"` for small-screen runs.
