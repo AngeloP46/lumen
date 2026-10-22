@@ -5,6 +5,11 @@ import UniformTypeIdentifiers
 
 private let histQueue = DispatchQueue(label: "lumen.hist", qos: .utility)
 private let workQueue = DispatchQueue(label: "lumen.work", qos: .userInitiated)
+// AI masks get their own queue: they are seconds of work, and while the previous photo's masks were being
+// worked out the next photo's decode waited behind them on the serial work queue (phone 0.1.465: 5 s to
+// "photo ready"; checklist A7). Memory coordination stays with HeavyWork, so the queue only changes time,
+// never how much runs at once.
+private let aiMaskQueue = DispatchQueue(label: "lumen.aimask", qos: .userInitiated)
 
 struct ExportResult: Identifiable {
     let id = UUID()
@@ -1023,7 +1028,7 @@ final class EditorViewModel: ObservableObject {
         Diagnostics.shared.note("AI masks: working them out")
         let slow = DemoMode.value("-lumenDemoSlowAI") != nil   // CI: time to see the busy notice
         let mp = megapixels
-        workQueue.async {
+        aiMaskQueue.async {
             if slow { Thread.sleep(forTimeInterval: 4) }
             _ = HeavyWork.shared.run(.aiMasks, megapixels: mp) { session.prepareAutoMasks(analysisSettings, source: source) }
             let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople, EditSession.aiDepth, EditSession.aiScene].filter { source.hasTried($0) && source.cachedMask($0) == nil })

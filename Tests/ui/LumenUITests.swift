@@ -853,6 +853,32 @@ final class LumenUITests: XCTestCase {
         shot("after-swipe")
     }
 
+    /// The next photo's decode does not wait behind the previous photo's AI masks (checklist A7; phone 0.1.465:
+    /// 5 s to "photo ready"). CI slows the AI down by 4 s; while the serial work queue held both, the swiped-to
+    /// photo's "queued" time in the demo log was ~4 s. The masks now run on their own queue, so the decode goes
+    /// straight ahead.
+    func testNextPhotoDoesNotWaitForAIMasks() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoSlowAI", "1"])
+        if !el("kind-subject").waitForExistence(timeout: 10) { el("mask-add").tap() }
+        el("kind-subject").tap()
+        XCTAssertTrue(el("mask-busy").waitForExistence(timeout: 2), "the slow AI mask job should be running")
+        let first = el("photo").label
+        el("photo").swipeLeft()
+        XCTAssertTrue(waitForEvent(timeout: 45) { evs in
+            guard el("photo").label != first else { return false }
+            return Self.queuedSeconds(evs).map { $0 < 2.0 } ?? false
+        }, "the swiped-to photo waited behind the AI masks (its 'queued' time): \(events().suffix(4))")
+        shot("next-photo-after-aimask")
+    }
+
+    /// The last "loaded … queued X s" line of the demo log (the editor's notePhotoReady), as seconds.
+    static func queuedSeconds(_ evs: [String]) -> Double? {
+        guard let last = evs.last(where: { $0.contains("queued") }) else { return nil }
+        let parts = last.split(separator: " ")
+        guard let i = parts.firstIndex(of: "queued"), i + 1 < parts.count else { return nil }
+        return Double(parts[i + 1].replacingOccurrences(of: "s", with: ""))
+    }
+
     func testSwipeAwayAndBackKeepsEachPhotosOwnEdit() {
         launch(open: 1, tool: "Light", extra: ["-lumenDemoSlider", "list"])
         let first = el("photo").label
