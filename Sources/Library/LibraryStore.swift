@@ -784,7 +784,10 @@ final class LibraryStore: ObservableObject {
             var used = Set<String>()
             for (n, job) in jobs.enumerated() {
                 autoreleasepool {
-                    guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr && o.hdr) else { return }
+                    // Decode the way the editor would (checklist A14): "Include HDR" only controls the gain map,
+                    // not the decode. Decoding SDR for an HDR-edited photo changed the pixels, so the same SDR
+                    // export from the editor and from the library came out differently.
+                    guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr) else { return }
                     let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
                     let started = Date()
                     let made = HeavyWork.shared.run(.export, megapixels: mp, {
