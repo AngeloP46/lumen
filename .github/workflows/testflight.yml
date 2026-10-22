@@ -7,6 +7,10 @@ name: TestFlight upload (App Store build)
 #   APPLE_TEAM_ID               developer.apple.com → Account → Membership details → Team ID
 on:
   workflow_dispatch:
+  # GitHub only offers "Run workflow" for a workflow it has seen run; this push run is skipped at once
+  push:
+    branches: [sandbox]
+    paths: ['.github/workflows/testflight.yml']
 
 permissions:
   contents: read
@@ -17,7 +21,7 @@ concurrency:
 
 jobs:
   upload:
-    if: github.ref == 'refs/heads/sandbox'
+    if: github.ref == 'refs/heads/sandbox' && github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 60
     env:
