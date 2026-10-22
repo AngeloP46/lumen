@@ -37,7 +37,13 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var thumbVersion = 0
     /// Decoded thumbnails, by photo and version: every finished thumbnail redraws the grid, and each cell used to read
     /// and decode its JPEG from disk again on the main thread (code review, 19 Oct).
-    private let thumbCache = NSCache<NSString, UIImage>()
+    private let thumbCache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        // A bound the cache can actually shed under memory pressure (checklist A8: it was unlimited; decoded 640 px
+        // thumbnails are a few MB apiece once rendered). Count limit only: the cost limit can't see the pixels.
+        c.countLimit = 200
+        return c
+    }()
     private var thumbVersions: [UUID: Int] = [:]
 
     /// The photo's thumbnail, decoded once per version.

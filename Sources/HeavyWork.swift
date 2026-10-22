@@ -33,7 +33,11 @@ final class HeavyWork: @unchecked Sendable {
         case .findPeople: return Int(20 * mp) + 700
         case .denoise: return 1400            // the model and one strip; it reads the photo whole only with room to spare
         case .export: return Int(60 * mp) + 800
-        case .original: return 450
+        // The preview is small, but the RAW engine's full-size decode still costs ~50 MB per source megapixel (the
+        // same as the 100 % copy, without its buffer). A flat 450 MB underestimated a 48 MP photo ~5x, so the
+        // original copy started when it really couldn't fit (checklist A8; phone 0.1.465: 892-1001 MB between
+        // photos after a clean).
+        case .original: return Int(50 * mp) + 100
         }
     }
 

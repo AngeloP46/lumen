@@ -1334,8 +1334,10 @@ final class EditorViewModel: ObservableObject {
         let hdr = settings.hdr
         let generation = loadGeneration
         Diagnostics.shared.note("original copy (no heals, no AI Denoise): making it")
+        let mp = megapixels
         workQueue.async {
-            let src = HeavyWork.shared.run(.original, megapixels: 0, optional: true) {
+            // the estimate is the photo's size (checklist A8): megapixels 0 declared 450 MB for every photo
+            let src = HeavyWork.shared.run(.original, megapixels: mp, optional: true) {
                 session.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true, heals: [], denoise: false)
             } ?? nil
             Task { @MainActor [weak self] in
