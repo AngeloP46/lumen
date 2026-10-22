@@ -145,7 +145,8 @@ final class EditorViewModel: ObservableObject {
                 guard let self else { return }
                 if self.denoiseProgress == nil { self.denoiseQueue.async { EditSession.releaseDenoiseModel() } }
                 if !self.healBusy && !self.healPreparing { EditSession.releaseHealModel() }
-                if self.zoomLevel <= 1.4 { self.detailSource = nil }
+                // the 100 % copy goes even while zoomed in: a softer view is better than iOS closing Lumen
+                if self.detailSource != nil { self.detailSource = nil; Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
                 if !self.showOriginal { self.unhealedSource = nil }
                 self.requestRender()
             }
@@ -187,7 +188,7 @@ final class EditorViewModel: ObservableObject {
             let s = EditSession(url: url, expandHDR: wantsHDR)
             s?.heals = heals
             s?.denoiseAmount = denoise
-            let src = s?.makeSource(maxEdge: 2560, materialize: true)
+            let src = s?.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true)
             // Simulator interaction fixture only; real builds always use estimated camera-photo depth.
             if DemoMode.isOn, DemoMode.value("-lumenDemoLensDepth") != nil, let src {
                 let values = (0..<4096).map { Float($0 % 64) / 63 }
@@ -315,6 +316,12 @@ final class EditorViewModel: ObservableObject {
         refreshDenoiseReady()
         guard denoiseProgress == nil, start || denoiseRequested, let session, !session.hasDenoised,
               EditSession.hasDenoiseModel, UIApplication.shared.applicationState != .background else { return }
+        guard MemoryBudget.denoiseFits else {
+            denoiseRequested = false
+            message = "AI Denoise needs more memory than this iPhone gives an app (iPhones with 6 GB or more). Noise reduction in Detail still works."
+            Diagnostics.shared.note("denoise not started: \(MemoryBudget.summary)")
+            return
+        }
         // the AI masks, the 100 % copy and the original copy are made one at a time with a clean, not together
         // (each is hundreds of MB on a 48 MP photo): a clean asked for while the masks are being worked out waits
         if autoMaskBusy { denoiseRequested = true; return }
@@ -420,7 +427,7 @@ final class EditorViewModel: ObservableObject {
 
     private func warmDenoiseIfNeeded() {
         refreshDenoiseReady()
-        guard detailOpen, !denoiseReady, !denoiseWarming, denoiseProgress == nil, store?.denoiseBatch == nil, EditSession.hasDenoiseModel,
+        guard MemoryBudget.denoiseFits, detailOpen, !denoiseReady, !denoiseWarming, denoiseProgress == nil, store?.denoiseBatch == nil, EditSession.hasDenoiseModel,
               Diagnostics.availableMB > 1500, UIApplication.shared.applicationState != .background else { return }
         denoiseWarming = true
         denoiseQueue.async {
@@ -460,7 +467,7 @@ final class EditorViewModel: ObservableObject {
             let s = EditSession(url: url, expandHDR: wantsHDR)
             s?.heals = heals
             s?.denoiseAmount = denoise
-            let src = s?.makeSource(maxEdge: 2560, materialize: true)
+            let src = s?.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true)
             Task { @MainActor [weak self] in
                 guard let self, generation == self.loadGeneration else { return }
                 guard let s, let src else {
@@ -659,6 +666,8 @@ final class EditorViewModel: ObservableObject {
         let megapixels = session.nativeSize.width * session.nativeSize.height / 1_000_000
         let f = max(1, Double(megapixels) / 24)
         var edge = Double(left) > 2000 * f ? min(native, 4096) : Double(left) > 1300 * f ? min(native, 3072) : 0
+        // the increased memory limit (about 6 GB): the full-size photo, up to 6000 px, when there is plenty left
+        if MemoryBudget.tier == .high, Double(left) > 3500 * f { edge = min(native, 6000) }
         // past 30 MP the RAW engine's decode itself takes ~50 MB per megapixel whatever the copy's size (21 Oct review)
         if megapixels > 30 && Double(left) < 50 * Double(megapixels) + 700 { edge = 0 }
         guard edge > source.longEdge * 1.15 else {
@@ -1228,7 +1237,7 @@ final class EditorViewModel: ObservableObject {
         Diagnostics.shared.note("original copy (no heals, no AI Denoise): making it")
         workQueue.async {
             let src = HeavyWork.shared.run(.original, megapixels: 0, optional: true) {
-                session.makeSource(maxEdge: 2560, materialize: true, heals: [], denoise: false)
+                session.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true, heals: [], denoise: false)
             } ?? nil
             Task { @MainActor [weak self] in
                 guard let self, generation == self.loadGeneration, let src, src.size == self.source?.size else { return }

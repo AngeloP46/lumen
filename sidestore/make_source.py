@@ -28,6 +28,8 @@ with zipfile.ZipFile(ipa) as z:
     info = plistlib.loads(z.read(plist_name))
 
 data = open(ipa, "rb").read()
+ent_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Lumen.entitlements")
+entitlements = sorted(plistlib.load(open(ent_file, "rb")).keys()) if os.path.exists(ent_file) else []
 privacy = {k: v for k, v in info.items() if k.startswith("NS") and k.endswith("UsageDescription")}
 notes = (os.environ.get("COMMIT_MSG") or "").strip().splitlines()
 
@@ -60,8 +62,8 @@ source = {
         "tintColor": TINT,
         "category": "photo-video",
         "versions": [version],
-        # The build is unsigned, so it carries no entitlements of its own.
-        "appPermissions": {"entitlements": [], "privacy": privacy},
+        # Build IPA signs the app ad hoc with Lumen.entitlements; SideStore checks the feed lists the same ones.
+        "appPermissions": {"entitlements": entitlements, "privacy": privacy},
     }],
     "news": [],
 }
