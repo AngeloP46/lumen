@@ -46,6 +46,8 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
         let info = Bundle.main.infoDictionary
         note("launch \(info?["CFBundleShortVersionString"] as? String ?? "?") on \(Self.device) iOS \(UIDevice.current.systemVersion), memory \(MemoryBudget.summary)")
         setState("open")
+        // CI: what the simulator reports, so tests know which memory tier they ran in (checklist B1)
+        if DemoMode.isOn { DemoMode.log("memory budget \(MemoryBudget.summary), os available \(Int(os_proc_available_memory() / 1_048_576)) MB") }
         MXMetricManager.shared.add(self)
         save(MXMetricManager.shared.pastDiagnosticPayloads)
 

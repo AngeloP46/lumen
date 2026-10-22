@@ -1087,6 +1087,14 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(valueOf("reset-Shadows"), edited, "the pasted Shadows edit should be on the second photo")
     }
 
+    /// Which memory tier the app thinks the simulator is (checklist B1): printed for the CI log.
+    func testReportsMemoryBudget() {
+        launchLibrary()
+        let line = events().first { $0.contains("memory budget") }
+        print("MEMORY BUDGET IN SIMULATOR: \(line ?? "not logged")")
+        XCTAssertNotNil(line, "the app should log its memory budget at launch in demo mode")
+    }
+
     /// ⋯ → Send diagnostics shows the Findings (or "No problems spotted") and a share button.
     func testDiagnosticsShowsFindings() {
         launchLibrary()
