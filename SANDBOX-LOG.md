@@ -264,3 +264,6 @@ swipe-away), opt-in batch paste (max 5) with progress; paste keeps flips/perspec
 Memory-heavy jobs start only with room for the photo's size (HeavyWork.swift); ⋯ → History lists edit steps (tap to
 go back; free); library "Paste the look and masks" (AI masks worked out again per photo; masks stay Pro at export);
 Lens Blur, Heal and Curve actions as pill rows. No Store code changed.
+
+## 22 Oct 2026: ChatGPT integration candidate, reviewed (branch integration-candidate-review)
+Taken: tester expiry screen (TesterExpiry.swift, LumenApp), the batch-export HDR rule by build type (App Store: saved settings; SideStore/tester: as the editor shows), main's Lens Blur pinch line, UI test updates (tester-expired, tapTool), UI-PRINCIPLES.md, PRODUCT-BRIEF.md. Not taken: tester-build.yml (main only: a tester IPA built from sandbox would be unlocked). Added a CI check that the App Store build has no LumenTesterExpires key. Store files unchanged.

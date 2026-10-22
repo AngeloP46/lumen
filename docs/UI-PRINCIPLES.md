@@ -13,7 +13,7 @@ If a requested change breaks one of these, say so to the owner and suggest the v
 - Lightroom's 2023 redesign cut on-screen tool options from 15 to 5 because scrolling through many was overwhelming.
 - Opening a tool should show sliders straight away, ready to drag (no "tap a tile, then a slider appears").
 - Tool bar order follows the editing flow, left to right: start tools left, finishing/advanced tools right (Presets last).
-- Keep 8 or fewer tools visible. Anything new goes inside an existing tool or the ⋯ menu, not a 9th button.
+- Keep 8 or fewer tools visible. Angelo explicitly chose a horizontal scrolling row with readable fixed-width names on 14 October 2026; Lens Blur is a standalone tool beside Detail. Additional tools scroll into view instead of shrinking every button.
 
 ## 3. One-handed, thumb reach
 - Everything used while editing lives in the bottom third. Top buttons are for occasional actions (back, undo, export, menu).
