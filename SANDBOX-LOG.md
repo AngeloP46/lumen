@@ -292,3 +292,9 @@ asks for the Increased Memory Limit (enable it on the App ID in the developer ac
 CODE_SIGN_ENTITLEMENTS=Lumen.entitlements). App Store build: TARGETED_DEVICE_FAMILY=1, checked in CI (no iPad
 screenshots or iPad review for 1.0). StoreKit test: all four checks pass (purchases need a moment before
 currentEntitlements shows them; the app refreshes on Transaction.updates, so users are not affected).
+
+## 22 Oct 2026: TestFlight upload workflow, release checklist, feature freeze
+`testflight.yml` (manual, sandbox only): archives the App Store build (APP_STORE, com.lumenraw.app, iPhone only, Lumen RAW,
+version 1.0 build = run number, Increased Memory Limit entitlement), signs it in Apple's cloud with an App Store Connect
+API key and uploads to TestFlight. Needs secrets ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, APPLE_TEAM_ID (Angelo adds them).
+`docs/appstore/RELEASE-CHECKLIST.md`: the submit bar, the 10-minute phone run-through, Angelo's steps. Feature freeze until 1.0.
