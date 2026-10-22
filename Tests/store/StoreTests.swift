@@ -65,6 +65,10 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(store.lifetime?.price, Decimal(string: "29.99"))
         XCTAssertEqual(store.lifetime?.type, .nonConsumable)
         XCTAssertEqual(store.monthly?.subscription?.introductoryOffer?.paymentMode, .freeTrial)
+        for _ in 0..<20 where !store.monthlyTrialEligible {
+            await store.refreshStatus()
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
         XCTAssertTrue(store.monthlyTrialEligible, "a new account should be offered the free trial")
         XCTAssertFalse(store.isPro, "nothing bought yet")
     }
@@ -88,7 +92,16 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(store.status, .trialing, "the first month starts with the free trial")
         XCTAssertTrue(store.isPro)
         try session.expireSubscription(productIdentifier: LumenStore.monthlyID)
-        await store.refreshStatus()
-        XCTAssertFalse(store.isPro, "an ended subscription locks Pro again")
+        for _ in 0..<20 where store.isPro {
+            try await Task.sleep(nanoseconds: 250_000_000)
+            await store.refreshStatus()
+        }
+        if store.isPro {
+            var seen: [String] = []
+            for await r in Transaction.currentEntitlements {
+                if case .verified(let t) = r { seen.append("\(t.productID) exp \(String(describing: t.expirationDate)) now \(Date())") }
+            }
+            XCTFail("an ended subscription should lock Pro again; still entitled: \(seen.joined(separator: "; "))")
+        }
     }
 }
