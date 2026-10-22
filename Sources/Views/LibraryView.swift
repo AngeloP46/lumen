@@ -53,6 +53,8 @@ struct LibraryView: View {
     @State private var notice: String?
     /// Pasting edits that include AI Denoise asks first (it needs a clean of each photo).
     @State private var denoisePaste: (list: [LibraryItem], keepOwn: Bool, masks: Bool)?
+    /// Photos "Choose…" pastes onto (shows the Paste some edits sheet).
+    @State private var choosePaste: [LibraryItem]?
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
 
@@ -162,6 +164,15 @@ struct LibraryView: View {
             .overlay { progressOverlay }
             .overlay(alignment: .bottom) { denoiseBanner }
             .onAppear { store.refreshPausedCleans() }
+            .sheet(isPresented: Binding(get: { choosePaste != nil }, set: { if !$0 { choosePaste = nil } })) {
+                if let list = choosePaste, let clip = store.clipboard {
+                    PasteSomeSheet(clip: clip, photos: list.count) { sections, denoise in
+                        store.apply(sections, from: clip, to: list)
+                        if denoise { store.cleanWithAIDenoise(list, strength: clip.aiDenoise) }
+                        show("Edits pasted onto \(list.count) photo\(list.count == 1 ? "" : "s").")
+                    }
+                }
+            }
             .confirmationDialog("Paste AI Denoise too?", isPresented: Binding(get: { denoisePaste != nil }, set: { if !$0 { denoisePaste = nil } }),
                                 titleVisibility: .visible) {
                 if let d = denoisePaste, let clip = store.clipboard {
@@ -321,7 +332,10 @@ struct LibraryView: View {
                     }
                     if let clip = store.clipboard {
                         Button { paste(clip, to: [item], keepOwn: true) } label: {
-                            Label("Paste edits", systemImage: "doc.on.clipboard")
+                            Label("Paste the look", systemImage: "doc.on.clipboard")
+                        }
+                        Button { choosePaste = [item] } label: {
+                            Label("Choose edits to paste…", systemImage: "checklist")
                         }
                     }
                     Button { selecting = true; selection = [item.id] } label: {
@@ -381,15 +395,22 @@ struct LibraryView: View {
                 }
                 Menu {
                     Button { paste(keepOwn: true) } label: {
-                        Label("Paste the look (keep each photo's crop and masks)", systemImage: "wand.and.stars")
+                        Label { Text("Look only"); Text("Keeps each photo's crop and masks") } icon: { Image(systemName: "wand.and.stars") }
                     }
+                    .accessibilityIdentifier("paste-look")
                     Button { paste(keepOwn: true, masks: true) } label: {
-                        Label("Paste the look and masks (keep each photo's crop)", systemImage: "circle.dashed.inset.filled")
+                        Label { Text("Look and masks"); Text("Keeps each photo's crop") } icon: { Image(systemName: "circle.dashed.inset.filled") }
                     }
+                    .accessibilityIdentifier("paste-look-masks")
                     .disabled(store.clipboard?.masks.isEmpty ?? true)
                     Button { paste(keepOwn: false) } label: {
-                        Label("Paste all edits, crop and masks too", systemImage: "doc.on.clipboard")
+                        Label { Text("Everything"); Text("Crop and masks too") } icon: { Image(systemName: "doc.on.clipboard") }
                     }
+                    .accessibilityIdentifier("paste-all")
+                    Button { choosePaste = selectedItems } label: {
+                        Label { Text("Choose…"); Text("Pick which tools") } icon: { Image(systemName: "checklist") }
+                    }
+                    .accessibilityIdentifier("paste-choose")
                 } label: { barLabel("Paste edits", "doc.on.clipboard") }
                 .disabled(store.clipboard == nil || selection.isEmpty)
                 .accessibilityIdentifier("lib-paste")

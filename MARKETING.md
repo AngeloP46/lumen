@@ -62,3 +62,6 @@ Angelo set these on 18 October 2026. They replace older pricing notes elsewhere,
 
 ## Not wanted (product)
 - Lens corrections, AI denoise, cloud sync, Smart fill.
+
+## App name (22 Oct 2026)
+The App Store name is **Lumen RAW** (Angelo). The SideStore build keeps "Lumen". "Lumaforge" in code (watermark, product IDs, bundle ID) is a placeholder still to change.

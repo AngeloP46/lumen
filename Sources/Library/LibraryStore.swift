@@ -308,7 +308,13 @@ final class LibraryStore: ObservableObject {
         let demoOff = DemoMode.isOn && DemoMode.value("-lumenDemoRawHDR") == nil
         if !demoOff, !FileManager.default.fileExists(atPath: editURL(item).path),
            UTType(filenameExtension: (item.fileName as NSString).pathExtension.lowercased())?.conforms(to: .rawImage) == true {
+            #if APP_STORE
+            // HDR is a Pro feature: starting a free user's RAW in HDR would watermark it and ask them to pay
+            // before they had touched anything
+            if LumenStore.shared.isPro { s.hdr = true }
+            #else
             s.hdr = true
+            #endif
         }
         return s
     }
@@ -486,6 +492,23 @@ final class LibraryStore: ObservableObject {
                 // the Transform sliders used to be pasted over)
                 s.take(.crop, from: own)
             }
+            save(s, for: item)
+            refreshThumbnail(item)
+        }
+    }
+
+    /// "Choose…": pastes only the ticked tools of `edits` onto every photo in `list`; everything else stays each
+    /// photo's own (heals, Lens Blur and its focus mask, AI Denoise's clean), like the editor's Paste some edits.
+    func apply(_ sections: Set<EditSection>, from edits: EditSettings, to list: [LibraryItem]) {
+        for item in list {
+            let own = settings(for: item)
+            var s = own
+            for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: edits) }
+            if sections.contains(.masks) {
+                let focus = own.lensBlur.maskID.flatMap { id in own.masks.first { $0.id == id } }
+                s.masks = edits.masks.filter { $0.id != edits.lensBlur.maskID }.forAnotherPhoto + (focus.map { [$0] } ?? [])
+            }
+            s.aiDenoise = own.aiDenoise
             save(s, for: item)
             refreshThumbnail(item)
         }

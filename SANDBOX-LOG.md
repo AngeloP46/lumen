@@ -267,3 +267,10 @@ Lens Blur, Heal and Curve actions as pill rows. No Store code changed.
 
 ## 22 Oct 2026: ChatGPT integration candidate, reviewed (branch integration-candidate-review)
 Taken: tester expiry screen (TesterExpiry.swift, LumenApp), the batch-export HDR rule by build type (App Store: saved settings; SideStore/tester: as the editor shows), main's Lens Blur pinch line, UI test updates (tester-expired, tapTool), UI-PRINCIPLES.md, PRODUCT-BRIEF.md. Not taken: tester-build.yml (main only: a tester IPA built from sandbox would be unlocked). Added a CI check that the App Store build has no LumenTesterExpires key. Store files unchanged.
+
+## 22 Oct 2026: App Store name, HDR start only for Pro, library paste (from main #81)
+App Store display name is "Lumen RAW" (Angelo): set on the generated Info.plist in the App Store build step and
+checked after it; project.yml and the SideStore app keep "Lumen". Bundle ID and product IDs are still placeholders.
+A never-edited RAW opens in HDR only for Pro users in the App Store build (it used to make every free user's RAW Pro:
+watermark plus paywall). Library paste: Look only / Look and masks / Everything / Choose… (pick tools; Pro tools are
+still gated at export).

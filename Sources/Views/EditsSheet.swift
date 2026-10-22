@@ -81,7 +81,9 @@ struct EditsSheet: View {
 /// except Crop (a crop rarely fits another photo; Lightroom leaves it out by default too).
 struct PasteSomeSheet: View {
     let clip: EditSettings
-    /// The sections, and whether AI Denoise goes too (it needs a clean of this photo).
+    /// How many photos it pastes onto (the library's "Choose…" can pick several).
+    var photos = 1
+    /// The sections, and whether AI Denoise goes too (it needs a clean of each photo).
     let paste: (Set<EditSection>, Bool) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var chosen: Set<EditSection> = []
@@ -107,7 +109,8 @@ struct PasteSomeSheet: View {
                         .accessibilityIdentifier("paste-toggle-\(sec.rawValue)")
                     }
                 } footer: {
-                    Text("Only the ticked tools are pasted. Everything else on this photo stays as it is.")
+                    Text(photos == 1 ? "Only the ticked tools are pasted. The rest of this photo stays as it is."
+                         : "Only the ticked tools are pasted onto the \(photos) photos. The rest of each stays as it is.")
                 }
                 if clip.aiDenoise > 0, EditSession.hasDenoiseModel {
                     Section {
@@ -116,7 +119,8 @@ struct PasteSomeSheet: View {
                                 Image(systemName: "wand.and.sparkles").frame(width: 26)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("AI Denoise \(Int(clip.aiDenoise))")
-                                    Text("Cleans this photo: about a minute (2 for 48 MP ProRAW)")
+                                    Text(photos == 1 ? "Cleans this photo: about a minute (2 for 48 MP ProRAW)"
+                                         : "Cleans up to \(min(photos, LibraryStore.denoiseBatchCap)) photos, one after another: about a minute each")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                             }
@@ -125,7 +129,7 @@ struct PasteSomeSheet: View {
                     }
                 }
             }
-            .navigationTitle("Paste some edits")
+            .navigationTitle(photos == 1 ? "Paste some edits" : "Paste onto \(photos) photos")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
