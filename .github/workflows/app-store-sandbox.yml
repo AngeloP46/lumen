@@ -90,8 +90,7 @@ jobs:
           name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$PLIST")
           [ "$name" = "Lumen RAW" ] || { echo "::error::App Store display name is '$name', not 'Lumen RAW'"; exit 1; }
           echo "Display name: $name"
-          fam=$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily' "$PLIST" | tr -d ' 
-')
+          fam=$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily' "$PLIST" | tr -d '[:space:]')
           [ "$fam" = "Array{1}" ] || { echo "::error::App Store build must be iPhone only (UIDeviceFamily $fam)"; exit 1; }
           echo "iPhone only"
 
