@@ -1765,9 +1765,16 @@ final class EditorViewModel: ObservableObject {
             defer { patches.close() }
             Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
             let exportStart = Date()
-            let data = HeavyWork.shared.run(.export, megapixels: mp) {
-                session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
-            } ?? nil
+            let outcome = HeavyWork.shared.run(.export, megapixels: mp) {
+                session.renderDataOutcome(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+            }
+            var data: Data?
+            var failMessage: String?
+            switch outcome {
+            case .data(let d): data = d
+            case .failed(let f): failMessage = f.message
+            case nil: failMessage = "There isn't enough free memory to export this photo right now. Close other apps and try again."
+            }
             Diagnostics.shared.note(String(format: "export %@ in %.1f s (%@)", data == nil ? "failed" : "done",
                                            Date().timeIntervalSince(exportStart), data.map { "\($0.count / 1_048_576) MB" } ?? "no file"))
             var url: URL?
@@ -1779,7 +1786,7 @@ final class EditorViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.isExporting = false
                 self?.refreshUnhealed()
-                if let url { self?.exported = ExportResult(url: url) } else { self?.message = "Export failed." }
+                if let url { self?.exported = ExportResult(url: url) } else { self?.message = failMessage ?? "Export failed." }
             }
         }
     }

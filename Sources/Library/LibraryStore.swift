@@ -782,6 +782,7 @@ final class LibraryStore: ObservableObject {
             defer { patches.close() }
             var urls: [URL] = []
             var used = Set<String>()
+            var failures: [String] = []   // A17: what went wrong, not just how many
             for (n, job) in jobs.enumerated() {
                 autoreleasepool {
                     // Decode the way the editor would (checklist A14): "Include HDR" only controls the gain map,
@@ -790,12 +791,18 @@ final class LibraryStore: ObservableObject {
                     guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr) else { return }
                     let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
                     let started = Date()
-                    let made = HeavyWork.shared.run(.export, megapixels: mp, {
-                        session.renderData(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
-                    }) ?? nil
+                    let outcome: EditSession.ExportOutcome? = HeavyWork.shared.run(.export, megapixels: mp) {
+                        session.renderDataOutcome(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+                    }
                     Diagnostics.shared.note(String(format: "batch export %d of %d %@ in %.1f s (%.0f MP)", n + 1, jobs.count,
-                                                   made == nil ? "failed" : "done", Date().timeIntervalSince(started), mp))
-                    guard let data = made else { return }
+                                                   outcome == nil ? "out of memory" : (outcome?.data != nil ? "done" : "failed"), Date().timeIntervalSince(started), mp))
+                    var data: Data?
+                    switch outcome {
+                    case .data(let d): data = d
+                    case .failed(let f): failures.append(f.message)
+                    case nil: failures.append("There isn't enough free memory to export this photo right now.")
+                    }
+                    guard let data = data else { return }
                     var name = job.name + "-lumen", k = 2
                     // the file system ignores case: IMG_1 and img_1 would overwrite each other
                     while used.contains(name.lowercased()) { name = "\(job.name)-lumen-\(k)"; k += 1 }
@@ -813,7 +820,10 @@ final class LibraryStore: ObservableObject {
                 guard let self else { return }
                 self.batchProgress = nil
                 if DemoMode.isOn { DemoMode.log("batch exported \(done.count) of \(jobs.count)") }
-                if done.count < jobs.count { self.lastError = "\(jobs.count - done.count) of \(jobs.count) photos could not be exported." }
+                if done.count < jobs.count {
+                    let why = Array(Set(failures)).sorted()
+                    self.lastError = "\(jobs.count - done.count) of \(jobs.count) photos could not be exported.\(why.isEmpty ? "" : "\n" + why.joined(separator: "\n"))"
+                }
                 if !done.isEmpty { self.batchResult = BatchResult(urls: done) }
             }
         }
