@@ -241,13 +241,20 @@ struct CanvasView: UIViewRepresentable {
         // thrown away along the way could leave the model with no view (it is weak), so edits rendered into nothing
         // until something else redrew the screen (owner's bug report 2026-10-11).
         model.view = v
+        // B7: ask for a redraw only when the layout actually changed (zoom / pan / size / HDR). Unrelated SwiftUI
+        // updates (a slider elsewhere, a label, the progress ring) used to redraw the whole photo on the GPU here
+        // on every pass, competing with AI Denoise for the frame. Image changes and view resizes already trigger
+        // their own redraws (CanvasModel.update, drawableSizeWillChange), so skipping this one is safe.
+        let layoutChanged = context.coordinator.xform != xform
         context.coordinator.xform = xform
         if context.coordinator.hdrOn != hdr {
             context.coordinator.hdrOn = hdr
             CanvasView.configure(v, renderer: context.coordinator, hdr: hdr)
             context.coordinator.trackHeadroom(hdr, view: v)
+            v.setNeedsDisplay()
+        } else if layoutChanged {
+            v.setNeedsDisplay()
         }
         model.view = v
-        v.setNeedsDisplay()
     }
 }
