@@ -194,6 +194,19 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
         queue.sync { Summary(usedMB: Self.footprintMB, leftMB: Self.availableMB, peakMB: peakMB, reports: savedReports().count) }
     }
 
+    /// The Findings of the last three launches, one line each (shown on the Diagnostics screen).
+    var findingLines: [String] {
+        queue.sync {
+            guard let log = try? String(contentsOf: logURL, encoding: .utf8) else { return [] }
+            let lines = log.split(separator: "
+", omittingEmptySubsequences: true)
+            let launches = lines.indices.filter { lines[$0].contains("  launch ") }
+            let from = launches.count >= 3 ? launches[launches.count - 3] : lines.startIndex
+            return Self.findings(Array(lines[from...])).split(separator: "
+").filter { $0.hasPrefix("• ") }.map { String($0.dropFirst(2)) }
+        }
+    }
+
     /// Closures by iOS (or crashes) in the log, newest last: (the run's lines, what it was doing last).
     var crashCount: Int {
         queue.sync {
@@ -223,6 +236,8 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
                 } else {
                     let launches = lines.indices.filter { lines[$0].contains("  launch ") }
                     let from = launches.count >= 3 ? launches[launches.count - 3] : lines.startIndex
+                    out += Self.findings(Array(lines[from...])) + "
+"
                     out += Self.compact(Array(lines[from...]))
                 }
             }
@@ -307,6 +322,69 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
         return out
     }
 
+    /// Problems spotted in the log, worst first, so the top of a report says what to look at (22 Oct: undo / redo of a
+    /// heal re-ran every AI mask eight times in 12 s and nobody noticed until the log was read line by line).
+    static func findings(_ lines: [Substring]) -> String {
+        func event(_ l: Substring) -> Substring { l.count > 21 ? l.dropFirst(21) : l }
+        func time(_ l: Substring) -> Substring { l.prefix(19).dropFirst(11) }
+        func seconds(_ l: Substring) -> Double? { stamp.date(from: String(l.prefix(19)))?.timeIntervalSince1970 }
+        func number(before marker: String, in l: Substring) -> Int? {
+            guard let r = l.range(of: marker) else { return nil }
+            return Int(String(l[..<r.lowerBound].reversed().prefix { $0.isNumber }.reversed()))
+        }
+        var found: [String] = []
+        let all = runs(lines)
+        for run in all {
+            let version = run.first.flatMap { event($0).split(separator: " ").dropFirst().first } ?? "?"
+            // closed by iOS: the step it was on
+            if endedBadly(run), let step = run.dropLast().last(where: { !event($0).hasPrefix("memory ") && !event($0).hasPrefix("iOS memory warning") }) {
+                found.append("iOS closed Lumen (\(version)) after \"\(event(step).split(separator: "·").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? "")\" at \(time(step))")
+            }
+            // the same heavy work over and over in a short time
+            for (marker, name, window, most) in [("AI masks: working them out", "AI masks worked out", 30.0, 3),
+                                                 ("original copy", "original copy made", 60.0, 2),
+                                                 ("100% view: building", "100% copy built", 60.0, 3),
+                                                 ("heal model loading", "Heal model loaded", 120.0, 3)] {
+                let times = run.filter { event($0).hasPrefix(marker) }.compactMap { l in seconds(l).map { ($0, l) } }
+                var i = 0, worst = 0, worstAt: Substring = ""
+                for j in times.indices {
+                    while times[j].0 - times[i].0 > window { i += 1 }
+                    if j - i + 1 > worst { worst = j - i + 1; worstAt = times[i].1 }
+                }
+                if worst > most { found.append("\(name) \(worst) times within \(Int(window)) s from \(time(worstAt)) (\(version))") }
+            }
+            // close to the limit
+            if let low = run.compactMap({ number(before: " MB left", in: $0) }).min(), low < 800,
+               let at = run.first(where: { number(before: " MB left", in: $0) == low }) {
+                let before = run.prefix { $0 != at }.last { !event($0).hasPrefix("memory ") && !event($0).hasPrefix("iOS memory warning") }
+                found.append("memory got to \(low) MB from the limit at \(time(at))" + (before.map { " during \"\(event($0).split(separator: "·").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? "")\"" } ?? "") + " (\(version))")
+            }
+            let warnings = run.filter { event($0).hasPrefix("iOS memory warning") }.count
+            if warnings > 0 { found.append("\(warnings) iOS memory warning\(warnings == 1 ? "" : "s") (\(version))") }
+            // jobs that started short of memory, failures, slow or wrong AI Denoise tiles
+            var short: [String: Int] = [:]
+            for l in run {
+                let e = event(l)
+                if let r = e.range(of: ": starting with only ") { short[String(e[..<r.lowerBound]), default: 0] += 1 }
+                for bad in ["reload failed", "denoise failed", "couldn't keep a", "heal failed", "export failed"] where e.hasPrefix(bad) {
+                    found.append("\(e.split(separator: "·").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? "") at \(time(l)) (\(version))")
+                }
+                if e.hasPrefix("denoise done in "), let r = e.range(of: "median "), let v = Double(e[r.upperBound...].prefix { $0.isNumber || $0 == "." }), v > 0.6 {
+                    found.append("AI Denoise slow: \(v) s per tile (usual ~0.42) at \(time(l)) (\(version))")
+                }
+                if e.contains("redone on the CPU"), e.hasPrefix("denoise: tile") { found.append("AI Denoise: a tile looked wrong from the GPU at \(time(l)) (\(version))") }
+            }
+            for (job, n) in short.sorted(by: { $0.value > $1.value }) { found.append("\(job) started short of memory \(n) time\(n == 1 ? "" : "s") (\(version))") }
+        }
+        guard !found.isEmpty else { return "== Findings ==
+No problems spotted in the last launches.
+" }
+        return "== Findings (\(found.count)) ==
+" + found.prefix(15).map { "• " + $0 }.joined(separator: "
+") + "
+"
+    }
+
     /// The log of a few launches, shortened for sharing (see makeReport).
     static func compact(_ lines: [Substring]) -> String {
         func number(before marker: String, in l: Substring) -> Int? {
@@ -385,6 +463,7 @@ struct DiagnosticsSheet: View {
     @State private var crashReport: URL?
     @State private var crashes = 0
     @State private var summary: Diagnostics.Summary?
+    @State private var findings: [String]?
 
     var body: some View {
         NavigationStack {
@@ -396,6 +475,17 @@ struct DiagnosticsSheet: View {
                     Text("Highest this time: \(s.peakMB) MB")
                     Text(s.reports == 0 ? "No crash reports from iOS yet" : "\(s.reports) crash/hang report\(s.reports == 1 ? "" : "s") saved")
                         .accessibilityIdentifier("diagnostics-reports")
+                }
+                if let findings {
+                    // what the report's Findings say, readable without sharing anything
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(findings.isEmpty ? "No problems spotted" : "Findings").font(.headline)
+                        ForEach(Array(findings.prefix(5).enumerated()), id: \.offset) { _, f in
+                            Text("• " + f).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("diagnostics-findings")
                 }
                 if let report {
                     // after a crash the short crash report comes first: what Lumen was doing when iOS closed it
@@ -428,13 +518,13 @@ struct DiagnosticsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .task {
-            let (s, r, c, n) = await Task.detached {
+            let (s, r, c, n, f) = await Task.detached {
                 (Diagnostics.shared.summary, Diagnostics.shared.makeReport(), Diagnostics.shared.makeReport(crashOnly: true),
-                 Diagnostics.shared.crashCount)
+                 Diagnostics.shared.crashCount, Diagnostics.shared.findingLines)
             }.value
-            summary = s; report = r; crashReport = c; crashes = n
+            summary = s; report = r; crashReport = c; crashes = n; findings = f
         }
     }
 }

@@ -1087,6 +1087,18 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(valueOf("reset-Shadows"), edited, "the pasted Shadows edit should be on the second photo")
     }
 
+    /// ⋯ → Send diagnostics shows the Findings (or "No problems spotted") and a share button.
+    func testDiagnosticsShowsFindings() {
+        launchLibrary()
+        el("btn-library-filter").tap()
+        let send = app.buttons["Send diagnostics…"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        send.tap()
+        XCTAssertTrue(el("diagnostics-findings").waitForExistence(timeout: 20), "the Diagnostics screen should show its findings")
+        XCTAssertTrue(el("diagnostics-share").waitForExistence(timeout: 20), "the report should be ready to share")
+        shot("diagnostics")
+    }
+
     func testBatchExportOfSelectedPhotos() {
         launchLibrary()
         el("btn-select").tap()
