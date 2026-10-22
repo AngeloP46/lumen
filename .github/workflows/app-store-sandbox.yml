@@ -72,7 +72,7 @@ jobs:
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO ARCHS=arm64 \
             SWIFT_ACTIVE_COMPILATION_CONDITIONS=APP_STORE \
-            PRODUCT_BUNDLE_IDENTIFIER=com.lumenraw.app > build.log 2>&1 || code=$?
+            TARGETED_DEVICE_FAMILY=1             PRODUCT_BUNDLE_IDENTIFIER=com.lumenraw.app > build.log 2>&1 || code=$?
           # Show the actual compiler errors (and a tail of the log for context) so failures
           # are fixable from the run log without downloading anything.
           grep -E "error:|error while|fatal error" build.log | head -40
@@ -90,6 +90,10 @@ jobs:
           name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$PLIST")
           [ "$name" = "Lumen RAW" ] || { echo "::error::App Store display name is '$name', not 'Lumen RAW'"; exit 1; }
           echo "Display name: $name"
+          fam=$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily' "$PLIST" | tr -d ' 
+')
+          [ "$fam" = "Array{1}" ] || { echo "::error::App Store build must be iPhone only (UIDeviceFamily $fam)"; exit 1; }
+          echo "iPhone only"
 
       - name: StoreKit purchase test (monthly trial, annual, lifetime; App Store build)
         run: |
@@ -170,7 +174,8 @@ jobs:
 
       # --- Gate 4 (real pipeline, not this one) will do this instead, with real secrets: ---
       # xcodebuild archive ... (same flags) -destination 'generic/platform=iOS'
-      #   PRODUCT_BUNDLE_IDENTIFIER=com.lumenraw.app  (final, Angelo 22 Oct)
+      #   PRODUCT_BUNDLE_IDENTIFIER=com.lumenraw.app  (final, Angelo 22 Oct) TARGETED_DEVICE_FAMILY=1 (iPhone only for 1.0)
+      #   CODE_SIGN_ENTITLEMENTS=Lumen.entitlements (Increased Memory Limit: enable the capability on the App ID first)
       #   DEVELOPMENT_TEAM=<team> CODE_SIGN_IDENTITY="Apple Distribution"
       #   PROVISIONING_PROFILE_SPECIFIER="Lumen App Store"
       # then: export IPA (method: app-store) -> upload to App Store Connect (altool/Transporter)

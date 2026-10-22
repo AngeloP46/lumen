@@ -285,3 +285,10 @@ Bundle com.lumenraw.app (CI builds and screenshots); products com.lumenraw.pro.m
 (appstore-tests.yml = project.yml + LumenStoreTests) run by app-store-sandbox.yml: products and prices load, trial
 offered, lifetime and annual unlock Pro, monthly starts as a trial and locks again when it expires. Listing copy, app
 privacy and support pages drafted in docs/appstore/ (not published).
+
+## 22 Oct 2026: memory budget by device (from main #85); App Store build is iPhone only
+MemoryBudget sizes the preview, 100 % copy and AI Denoise from the app's measured memory limit; Lumen.entitlements
+asks for the Increased Memory Limit (enable it on the App ID in the developer account; archive with
+CODE_SIGN_ENTITLEMENTS=Lumen.entitlements). App Store build: TARGETED_DEVICE_FAMILY=1, checked in CI (no iPad
+screenshots or iPad review for 1.0). StoreKit test: all four checks pass (purchases need a moment before
+currentEntitlements shows them; the app refreshes on Transaction.updates, so users are not affected).
