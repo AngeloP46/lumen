@@ -1,5 +1,12 @@
 # Lumen – project notes for Claude
 
+## Quality work before the App Store (from 22 Oct 2026)
+- `docs/QUALITY-CHECKLIST.md` is the durable record: findings (two independent reviews), fix batches, test results,
+  baselines, phone tests. Update it with every batch. Angelo's rules for this work: fix batches only after he approves
+  the plan; reproduce first, add regression coverage, run the checks, get an independent review of each batch; apply
+  shared fixes to both versions; **no merges that publish to SideStore and no App Store submission without his
+  instruction** (main PRs are left ready, not merged).
+
 ## Two builds: every change goes to both (Angelo, 15 October)
 - **main** = Angelo's personal app on SideStore: everything free, no paywall, no watermark, no StoreKit.
 - **sandbox** branch (PC folder `Lumen-Sandbox`) = the same app developed as a real **App Store product**: paid Pro features, paywall, trial, watermark on free exports, StoreKit, privacy policy. Read its `SANDBOX-BRIEF.md`, `HANDOFF.md` and `SANDBOX-LOG.md` before touching it.
