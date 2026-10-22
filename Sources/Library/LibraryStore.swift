@@ -497,6 +497,23 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    /// "Choose…": pastes only the ticked tools of `edits` onto every photo in `list`; everything else stays each
+    /// photo's own (heals, Lens Blur and its focus mask, AI Denoise's clean), like the editor's Paste some edits.
+    func apply(_ sections: Set<EditSection>, from edits: EditSettings, to list: [LibraryItem]) {
+        for item in list {
+            let own = settings(for: item)
+            var s = own
+            for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: edits) }
+            if sections.contains(.masks) {
+                let focus = own.lensBlur.maskID.flatMap { id in own.masks.first { $0.id == id } }
+                s.masks = edits.masks.filter { $0.id != edits.lensBlur.maskID }.forAnotherPhoto + (focus.map { [$0] } ?? [])
+            }
+            s.aiDenoise = own.aiDenoise
+            save(s, for: item)
+            refreshThumbnail(item)
+        }
+    }
+
     // MARK: AI Denoise for many photos
 
     /// Cleans the first `denoiseBatchCap` of `list` with AI Denoise, one after another, then sets it to `strength` on
