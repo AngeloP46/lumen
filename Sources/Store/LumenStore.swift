@@ -20,14 +20,18 @@ final class LumenStore: ObservableObject {
     @Published private(set) var status: ProStatus = .free
     @Published private(set) var monthly: Product?
     @Published private(set) var annual: Product?
+    @Published private(set) var lifetime: Product?
     @Published private(set) var monthlyTrialEligible = false
     @Published var isBusy = false
     @Published var errorMessage: String?
 
-    /// Product IDs — must match App Store Connect EXACTLY (created at Gate 4).
-    /// "Lumaforge" is the placeholder name; the IDs should be re-decided with the final name.
-    static let monthlyID = "lumaforge.pro.monthly"
-    static let annualID = "lumaforge.pro.annual"
+    /// Product IDs — must match App Store Connect EXACTLY. Final name Lumen RAW (Angelo, 22 Oct): app
+    /// com.lumenraw.app; £1.49 a month (7-day free trial), £9.99 a year, £29.99 once (lifetime, non-consumable).
+    /// Tests/store/LumenRAW.storekit mirrors these for the CI purchase test.
+    static let monthlyID = "com.lumenraw.pro.monthly"
+    static let annualID = "com.lumenraw.pro.annual"
+    static let lifetimeID = "com.lumenraw.pro.lifetime"
+    static let proIDs: Set<String> = [monthlyID, annualID, lifetimeID]
 
     var isPro: Bool { status != .free }
 
@@ -48,9 +52,10 @@ final class LumenStore: ObservableObject {
     func loadProducts() {
         Task {
             do {
-                let all = try await Product.products(for: [Self.monthlyID, Self.annualID])
+                let all = try await Product.products(for: Self.proIDs)
                 for p in all where p.id == Self.monthlyID { monthly = p }
                 for p in all where p.id == Self.annualID { annual = p }
+                for p in all where p.id == Self.lifetimeID { lifetime = p }
                 await refreshTrialEligibility()
             } catch {
                 // No products yet (unconfigured account, no network, sandbox build) — stay free, no crash.
@@ -94,7 +99,7 @@ final class LumenStore: ObservableObject {
         do {
             try await AppStore.sync()
             await refreshStatus()
-            if !isPro { errorMessage = "No active Pro subscription was found for this Apple Account." }
+            if !isPro { errorMessage = "No Pro purchase or subscription was found for this Apple Account." }
         } catch {
             errorMessage = "Purchases couldn't be restored. Please try again."
         }
@@ -105,6 +110,7 @@ final class LumenStore: ObservableObject {
         await t.finish()
     }
 
+    /// Lifetime is a non-consumable: once bought it stays in currentEntitlements (no expiry), so it counts as paid Pro.
     /// StoreKit includes billing-grace-period subscriptions in currentEntitlements.
     /// Do not reject those because the original transaction's expiration is in the past.
     func refreshStatus() async {
@@ -113,7 +119,7 @@ final class LumenStore: ObservableObject {
         var nextExpiry: Date?
         for await result in Transaction.currentEntitlements {
             guard case .verified(let t) = result,
-                  t.productID == Self.monthlyID || t.productID == Self.annualID,
+                  Self.proIDs.contains(t.productID),
                   t.revocationDate == nil, !t.isUpgraded else { continue }
             hasAccess = true
             if t.offer?.paymentMode != .freeTrial { hasPaidAccess = true }

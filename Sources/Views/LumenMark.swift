@@ -6,7 +6,7 @@
 import SwiftUI
 #if APP_STORE
 
-struct LumaforgeMark: View {
+struct LumenMark: View {
     var body: some View {
         Canvas { context, size in
             context.drawLayer { layer in
@@ -14,7 +14,7 @@ struct LumaforgeMark: View {
                 layer.translateBy(x: size.width / 2, y: size.height / 2)
                 layer.rotate(by: .degrees(-24))
                 let tile = layer.resolve(
-                    Text("Lumaforge")   // placeholder name (plan §11.1)
+                    Text("Lumen RAW")
                         .font(.system(size: 34, weight: .black))
                         .foregroundStyle(.white)
                 )
@@ -41,7 +41,7 @@ struct LumaforgeMark: View {
         }
         .opacity(0.45)   // obvious on every photo (the point: a free edit is clearly not final), photo still shows through
         .allowsHitTesting(false)   // never blocks gestures
-        .accessibilityIdentifier("lumaforge-mark")
+        .accessibilityIdentifier("watermark")
     }
 }
 #endif

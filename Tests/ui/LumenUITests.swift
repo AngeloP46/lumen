@@ -609,6 +609,18 @@ final class LumenUITests: XCTestCase {
 
     // MARK: zoom
 
+    /// A 4 GB iPhone (Lumen gets about 2 GB): zooming in still works (the 100 % copy is smaller or skipped) and the
+    /// app keeps running.
+    func testLowMemoryPhoneZooms() {
+        launch(open: 0, tool: "Detail", extra: ["-lumenDemoMemoryMB", "1900"])
+        el("photo").pinch(withScale: 3, velocity: 2)
+        sleep(3)
+        XCTAssertGreaterThan(zoomLevel(), 1.5, "pinch should zoom on a low-memory phone, got \(zoomLevel())")
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(el("photo").exists)
+        shot("low-memory-zoom")
+    }
+
     func testPinchZoomsAndDoubleTapToggles() {
         launch(open: 0, tool: "Detail")
         XCTAssertEqual(zoomLevel(), 1.0, accuracy: 0.05)

@@ -79,6 +79,10 @@ jobs:
         run: |
           mkdir Payload
           cp -R build/Build/Products/Release-iphoneos/Lumen.app Payload/
+          # ad-hoc signature carrying Lumen.entitlements (Increased Memory Limit), so SideStore asks for it when it
+          # signs the app with Angelo's Apple ID (experiment, 22 Oct)
+          codesign --force --sign - --timestamp=none --entitlements Lumen.entitlements Payload/Lumen.app
+          codesign -d --entitlements - Payload/Lumen.app
           zip -qr Lumen.ipa Payload
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
         with:

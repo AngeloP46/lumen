@@ -20,7 +20,7 @@ struct PaywallView: View {
                     Image(systemName: "sparkles")
                         .font(.system(size: 44))
                         .foregroundStyle(.orange)
-                    Text("Lumaforge Pro")
+                    Text("Lumen RAW Pro")
                         .font(.title.bold())
                     Text("This photo uses Pro features (curves, detail, masks or heal). Upgrade to export it clean and full-resolution.")
                         .font(.subheadline)
@@ -30,9 +30,10 @@ struct PaywallView: View {
                     VStack(spacing: 12) {
                         row(store.annual, primary: true)
                         row(store.monthly)
+                        row(store.lifetime)
                     }
 
-                    Text("Subscriptions renew automatically unless cancelled. Manage or cancel in your Apple Account subscription settings.")
+                    Text("Subscriptions renew automatically unless cancelled. Manage or cancel in your Apple Account subscription settings. Lifetime is one payment, no renewal.")
                         .font(.caption).foregroundStyle(.secondary)
                     if store.isBusy {
                         ProgressView()
@@ -40,7 +41,7 @@ struct PaywallView: View {
                     if let message = store.errorMessage {
                         Text(message).font(.caption).foregroundStyle(.red)
                     }
-                    Text("Your photos are edited on your device. Lumaforge never sees or stores them.")
+                    Text("Your photos are edited on your device. Lumen RAW never sees or stores them.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -101,7 +102,7 @@ struct PaywallView: View {
     }
 
     private func note(for product: Product) -> String {
-        guard let subscription = product.subscription else { return "" }
+        guard let subscription = product.subscription else { return "One payment. Pro for good, no subscription." }
         let billing = periodText(subscription.subscriptionPeriod)
         if product.id == LumenStore.monthlyID, store.monthlyTrialEligible,
            let offer = subscription.introductoryOffer, offer.paymentMode == .freeTrial {

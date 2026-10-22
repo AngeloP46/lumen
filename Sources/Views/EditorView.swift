@@ -556,7 +556,7 @@ struct EditorView: View {
                 if vm.settings.usesProFeatures && !proStore.isPro && !DemoMode.noWM {
                     let wmXform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan, bottomAlign: alignBottom)
                     let r = wmXform.rect
-                    LumaforgeMark()
+                    LumenMark()
                         .frame(width: r.width, height: r.height)
                         .offset(x: r.midX - geo.size.width / 2, y: r.midY - geo.size.height / 2)
                         .clipped()
