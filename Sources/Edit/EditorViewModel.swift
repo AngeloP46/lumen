@@ -143,6 +143,7 @@ final class EditorViewModel: ObservableObject {
             EditSession.releaseMaskModels()
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.maskMemo = [:]
                 if self.denoiseProgress == nil { self.denoiseQueue.async { EditSession.releaseDenoiseModel() } }
                 if !self.healBusy && !self.healPreparing { EditSession.releaseHealModel() }
                 // the 100 % copy goes even while zoomed in: a softer view is better than iOS closing Lumen
@@ -210,6 +211,7 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.session = s
                 self.source = src
+                self.maskMemo = [:]
                 self.sourceHeals = heals.map(\.id)
                 self.unhealedSource = nil   // belonged to the previous photo
                 // what runs next is logged step by step (owner's phone, 21 Oct: a 48 MP ProRAW closed Lumen 2-4 s after
@@ -479,11 +481,15 @@ final class EditorViewModel: ObservableObject {
                     Diagnostics.shared.note("reload failed")
                     return
                 }
-                if sameHeals, let previous, previous.size == src.size {
-                    let (masks, tried) = previous.snapshotMasks()
-                    for key in tried { src.storeMask(key, masks[key]) }
-                    src.storeDepth(previous.depthField)
-                    src.storeScene(previous.sceneField)
+                // AI masks for the heals the photo had before are kept, so undo / redo of a heal or a person removed
+                // brings its masks back instead of working them all out again (diagnostics 22 Oct: eight full
+                // subject + scene + depth runs in 12 s while undoing and redoing)
+                if let previous { self.memoMasks(of: previous, heals: self.sourceHeals) }
+                if let memo = self.maskMemo[heals.map(\.id)], memo.size == src.size {
+                    for key in memo.tried { src.storeMask(key, memo.masks[key]) }
+                    src.storeDepth(memo.depth)
+                    src.storeScene(memo.scene)
+                    if !sameHeals { Diagnostics.shared.note("AI masks: kept from before (undo/redo)") }
                 }
                 self.session = s
                 self.source = src
@@ -903,6 +909,18 @@ final class EditorViewModel: ObservableObject {
         s.lensBlur.maskID = m.id
         settings = s
         if select { selectMask(m.id); maskTab = .shape }
+    }
+
+    /// AI masks of the last few heal versions of this photo (keyed by their heal ids), for undo / redo. Only the masks
+    /// (a few MB each at preview size), never the decoded photo.
+    private struct MaskMemo { let size: CGSize; let masks: [String: CIImage]; let tried: Set<String>; let depth: DepthField?; let scene: SceneField?; let used: Date }
+    private var maskMemo: [[UUID]: MaskMemo] = [:]
+
+    private func memoMasks(of source: ImageSource, heals: [UUID]) {
+        let (masks, tried) = source.snapshotMasks()
+        guard !tried.isEmpty else { return }
+        maskMemo[heals] = MaskMemo(size: source.size, masks: masks, tried: tried, depth: source.depthField, scene: source.sceneField, used: Date())
+        while maskMemo.count > 4, let oldest = maskMemo.min(by: { $0.value.used < $1.value.used })?.key { maskMemo[oldest] = nil }
     }
 
     private func prepareAutoMasksIfNeeded() {
