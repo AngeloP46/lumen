@@ -1629,7 +1629,10 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(h.waitForExistence(timeout: 5), "the split line should show")
         h.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.1, thenDragTo: el("photo").coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
         sleep(1)
-        XCTAssertGreaterThan(Double(valueOf("split-handle")) ?? 0, 0.6, "dragging moves the split line")
+        // The line must land where the finger went (0.8 of the photo), not merely "move" (checklist A15: the handle
+        // read its own 30 pt frame, so it read ~0.53 and the test flapped).
+        let pos = Double(valueOf("split-handle")) ?? 0
+        XCTAssertTrue(pos > 0.7 && pos < 0.9, "the split line follows the finger to the drag point (got \(pos))")
         shot("before-after")
         el("split-close").tap()
         sleep(1)

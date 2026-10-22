@@ -600,7 +600,10 @@ struct EditorView: View {
             .shadow(color: .black, radius: 2)
             .position(x: x, y: max(top + 16, 16))
             .allowsHitTesting(false)
-            // the handle: drag sideways to move the line
+            // the handle: drag sideways to move the line. The drag is read in the full-canvas named space
+            // (like every other handle), not the handle's own 30 pt frame: `r` is in canvas coordinates, so a
+            // location in the handle's local space made the line barely follow the finger (checklist A15, flaky
+            // testClippingWarningAndBeforeAfterSplit).
             Circle().fill(Color.white).frame(width: 30, height: 30)
                 .overlay(Image(systemName: "arrow.left.and.right").font(.system(size: 12, weight: .bold)).foregroundStyle(.black))
                 .shadow(color: .black.opacity(0.5), radius: 2)
@@ -608,7 +611,7 @@ struct EditorView: View {
                 .accessibilityIdentifier("split-handle")
                 .accessibilityValue(String(format: "%.2f", Double(vm.splitPos)))
                 .position(x: x, y: (top + bottom) / 2)
-                .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("splitSpace")).onChanged { g in
                     guard r.width > 0 else { return }
                     vm.splitPos = min(max((g.location.x - r.minX) / r.width, 0.02), 0.98)
                 })
@@ -621,6 +624,7 @@ struct EditorView: View {
             .position(x: x, y: max(min(bottom - 22, xform.canvas.height - 22), top + 40))
         }
         .frame(width: xform.canvas.width, height: xform.canvas.height)
+        .coordinateSpace(name: "splitSpace")
     }
 
     /// Color tool, white balance picker on: a tap on the photo makes that spot neutral.
