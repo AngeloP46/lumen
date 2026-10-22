@@ -103,8 +103,8 @@ struct CopyEditsSheet: View {
                 }
                 Section("Tools") {
                     ForEach(CopySelection.tools) { t in
-                        row(icon: t.icon, title: t.copyTitle, note: settings.hasEdits(t) ? "Edited" : "No edits",
-                            edited: settings.hasEdits(t), id: "copy-\(t.rawValue)",
+                        row(icon: t.icon, title: t.copyTitle, note: settings.hasCopyableEdits(t) ? "Edited" : "No edits",
+                            edited: settings.hasCopyableEdits(t), id: "copy-\(t.rawValue)",
                             isOn: Binding(get: { sel.has(t) }, set: { sel.set(t, $0) }))
                     }
                     row(icon: "sun.max", title: "HDR", note: settings.hdr ? "On" : "Off", edited: settings.hdr, id: "copy-hdr",

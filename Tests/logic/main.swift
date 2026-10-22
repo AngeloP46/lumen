@@ -155,6 +155,7 @@ do {
     check(modified.has(.light) && modified.has(.color), "copy: Modified should tick the edited tools")
     check(!modified.has(.crop), "copy: Modified must leave Crop unticked")
     check(!modified.has(.grade) && !modified.has(.curve), "copy: Modified must leave unedited tools unticked")
+    check(!modified.has(.detail), "copy: AI Denoise alone (its own tick) must not make Modified tick Detail")
     check(modified.masks.isEmpty && !modified.aiDenoise, "copy: Modified leaves masks and AI Denoise for you to pick")
     check(src.copyableMasks.map(\.name) == ["Sky", "Subject"], "copy: Lens Blur's own mask must not be offered")
 

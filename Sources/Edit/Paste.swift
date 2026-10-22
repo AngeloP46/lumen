@@ -26,7 +26,7 @@ struct CopySelection: Codable, Equatable {
     /// Lightroom's "Modified": every tool this photo has edits in, except Crop; masks are left for you to pick.
     static func modified(_ s: EditSettings) -> CopySelection {
         var c = CopySelection()
-        for t in tools where t != .crop && s.hasEdits(t) { c.set(t, true) }
+        for t in tools where t != .crop && s.hasCopyableEdits(t) { c.set(t, true) }
         c.hdr = s.hdr
         return c
     }
@@ -85,6 +85,15 @@ struct Clipboard: Equatable {
 }
 
 extension EditSettings {
+    /// Whether Copy has anything to take from this tool. AI Denoise has its own tick (each photo needs its own
+    /// clean), so it doesn't make Detail count as edited.
+    func hasCopyableEdits(_ t: EditSection) -> Bool {
+        guard t == .detail else { return hasEdits(t) }
+        var c = self
+        c.aiDenoise = 0
+        return c.hasEdits(.detail)
+    }
+
     /// The masks Copy lists: the photo's own masks, not Lens Blur's linked focus mask (it belongs to Lens Blur).
     var copyableMasks: [Mask] { masks.filter { $0.id != lensBlur.maskID } }
 }
