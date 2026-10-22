@@ -274,3 +274,6 @@ checked after it; project.yml and the SideStore app keep "Lumen". Bundle ID and 
 A never-edited RAW opens in HDR only for Pro users in the App Store build (it used to make every free user's RAW Pro:
 watermark plus paywall). Library paste: Look only / Look and masks / Everything / Choose… (pick tools; Pro tools are
 still gated at export).
+
+## 22 Oct 2026: AI Denoise keeps the 100% copy out of memory (from main #83)
+A 100% copy that finished while a clean ran was kept beside the model (iOS closed Lumen). Now dropped; mask models released; a short job waits up to 3 s for memory. No Store code changed.
