@@ -64,6 +64,8 @@ jobs:
 
       - name: Build for simulator (APP_STORE flag ON, sandbox bundle ID)
         run: |
+          # App Store name (Angelo, 22 Oct): "Lumen RAW" on the home screen; the SideStore app stays "Lumen"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Lumen RAW' Config/Info.plist
           code=0
           xcodebuild \
             -project Lumen.xcodeproj -scheme Lumen -configuration Release -sdk iphonesimulator \
@@ -85,6 +87,9 @@ jobs:
             echo '::error::LumenTesterExpires is in the App Store build: the app would expire'; exit 1
           fi
           echo 'No tester expiry key in the App Store build'
+          name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$PLIST")
+          [ "$name" = "Lumen RAW" ] || { echo "::error::App Store display name is '$name', not 'Lumen RAW'"; exit 1; }
+          echo "Display name: $name"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
         if: always()

@@ -308,7 +308,13 @@ final class LibraryStore: ObservableObject {
         let demoOff = DemoMode.isOn && DemoMode.value("-lumenDemoRawHDR") == nil
         if !demoOff, !FileManager.default.fileExists(atPath: editURL(item).path),
            UTType(filenameExtension: (item.fileName as NSString).pathExtension.lowercased())?.conforms(to: .rawImage) == true {
+            #if APP_STORE
+            // HDR is a Pro feature: starting a free user's RAW in HDR would watermark it and ask them to pay
+            // before they had touched anything
+            if LumenStore.shared.isPro { s.hdr = true }
+            #else
             s.hdr = true
+            #endif
         }
         return s
     }
