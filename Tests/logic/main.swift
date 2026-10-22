@@ -130,5 +130,65 @@ do {
     check(moved[0].components.first { $0.kind == .brush }?.strokes == brush.strokes, "paste masks: brush strokes must stay as painted")
 }
 
+// ---- Copy and paste (Lightroom-style: chosen when copying, applied exactly by Paste; checklist A12)
+do {
+    // the photo copied from: Light + Colour + Crop edited, HDR on, a Sky mask, a tapped Subject mask, its own Lens Blur
+    var src = EditSettings()
+    src.exposure = 0.5; src.vibrance = 20; src.cropL = 0.1; src.hdr = true; src.aiDenoise = 80
+    var sky = Mask.make(.sky); sky.name = "Sky"; sky.adjust.exposure = -0.4
+    var subj = Mask.make(.subject); subj.name = "Subject"; subj.components[0].subjectPoint = Pt(x: 0.3, y: 0.3)
+    var focus = Mask.make(.depth); focus.name = "Lens Blur background"
+    src.masks = [sky, subj, focus]
+    src.lensBlur.amount = 50; src.lensBlur.maskID = focus.id; src.lensBlur.activated = true
+    src.heals = [HealSpot(strokes: [], x: 0, y: 0, w: 0.1, h: 0.1)]
+
+    // the photo pasted onto: its own Lens Blur, heal, AI Denoise, mask, crop
+    var own = EditSettings()
+    own.contrast = 30; own.cropR = 0.8; own.aiDenoise = 10
+    var ownMask = Mask.make(.brush); ownMask.name = "Brush"
+    var ownFocus = Mask.make(.depth); ownFocus.name = "Lens Blur background"
+    own.masks = [ownMask, ownFocus]
+    own.lensBlur.amount = 30; own.lensBlur.maskID = ownFocus.id; own.lensBlur.activated = true
+    own.heals = [HealSpot(strokes: [], x: 0.5, y: 0.5, w: 0.1, h: 0.1)]
+
+    let modified = CopySelection.modified(src)
+    check(modified.has(.light) && modified.has(.color), "copy: Modified should tick the edited tools")
+    check(!modified.has(.crop), "copy: Modified must leave Crop unticked")
+    check(!modified.has(.grade) && !modified.has(.curve), "copy: Modified must leave unedited tools unticked")
+    check(modified.masks.isEmpty && !modified.aiDenoise, "copy: Modified leaves masks and AI Denoise for you to pick")
+    check(src.copyableMasks.map(\.name) == ["Sky", "Subject"], "copy: Lens Blur's own mask must not be offered")
+
+    var sel = modified
+    sel.masks = [sky.id, subj.id]
+    let clip = Clipboard(settings: src, selection: sel, sourceName: "A")
+    let out = clip.pasted(onto: own)
+    check(out.exposure == 0.5 && out.vibrance == 20, "paste: ticked tools should come across")
+    check(out.contrast == 0, "paste: a ticked tool comes across whole (Light's contrast takes the copy's 0)")
+    check(out.cropR == 0.8 && out.cropL == 0, "paste: Crop (not ticked) must stay the photo's own")
+    check(out.heals == own.heals, "paste: heals always stay the photo's own")
+    check(out.lensBlur == own.lensBlur, "paste: Lens Blur always stays the photo's own")
+    check(out.masks.contains { $0.id == ownFocus.id }, "paste: the photo's own Lens Blur mask must stay")
+    check(out.masks.contains { $0.id == ownMask.id }, "paste: the photo's own masks stay (pasted masks are added)")
+    check(!out.masks.contains { $0.id == focus.id }, "paste: the other photo's Lens Blur mask must not come across")
+    check(out.masks.first { $0.id == subj.id }?.components[0].subjectPoint == nil, "paste: a tapped subject becomes this photo's subject")
+    check(out.aiDenoise == 10, "paste: AI Denoise stays the photo's own until it is cleaned")
+    check(out.hdr == true, "paste: HDR ticked (Modified, source on) comes across")
+    let twice = clip.pasted(onto: out)
+    check(twice.masks.count == out.masks.count, "paste: pasting the same masks again must not add copies")
+
+    var noHDR = sel; noHDR.hdr = false
+    check(Clipboard(settings: src, selection: noHDR, sourceName: "A").pasted(onto: own).hdr == false, "paste: HDR not ticked stays the photo's own")
+    var withCrop = sel; withCrop.set(.crop, true)
+    check(Clipboard(settings: src, selection: withCrop, sourceName: "A").pasted(onto: own).cropL == 0.1, "paste: Crop ticked comes across")
+
+    check(clip.summary == "Light, Colour, HDR, 2 masks", "copy: summary should read \"Light, Colour, HDR, 2 masks\", got \"\(clip.summary)\"")
+    var withDenoise = sel; withDenoise.aiDenoise = true
+    let dclip = Clipboard(settings: src, selection: withDenoise, sourceName: "A")
+    check(dclip.bringsDenoise && dclip.summary.hasSuffix("AI Denoise"), "copy: AI Denoise ticked shows in the summary")
+    check(Clipboard(settings: src, selection: CopySelection(), sourceName: "A").isEmpty, "copy: nothing ticked is empty")
+    var oneMask = CopySelection(); oneMask.masks = [sky.id]
+    check(Clipboard(settings: src, selection: oneMask, sourceName: "A").summary == "Sky mask", "copy: one mask reads by name")
+}
+
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)

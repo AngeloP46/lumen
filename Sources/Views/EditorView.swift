@@ -62,7 +62,7 @@ struct EditorView: View {
     @State private var showPhotoInfo = false
     @State private var showDiagnostics = false
     @State private var showHistory = false
-    @State private var showPasteSome = false
+    @State private var showCopy = false
     @State private var wbMark: CGPoint?
 
     // panel height the user chose by dragging the handle (per tool); nil = automatic
@@ -208,8 +208,8 @@ struct EditorView: View {
         .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
         .sheet(isPresented: $showHistory) { HistorySheet(vm: vm) }
         .sheet(isPresented: $showPhotoInfo) { PhotoInfoView(item: item, url: store.fileURL(item)) }
-        .sheet(isPresented: $showPasteSome) {
-            if let c = store.clipboard { PasteSomeSheet(clip: c) { vm.paste($0, from: c, denoise: $1) } }
+        .sheet(isPresented: $showCopy) {
+            CopyEditsSheet(settings: vm.settings, sourceName: item.displayName) { store.clipboard = $0 }
         }
         .onChange(of: vm.wbPicking) { _, on in if !on { wbMark = nil } }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },
@@ -501,7 +501,7 @@ struct EditorView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("canvas")
             // two fingers pinch and pan together over every tool except Crop (including the mask overlay)
-            .background(TwoFingerInstaller(enabled: !showEdits && !showPasteSome && !showExportChoices && vm.exported == nil) { phase, p, d in
+            .background(TwoFingerInstaller(enabled: !showEdits && !showCopy && !showExportChoices && vm.exported == nil) { phase, p, d in
                 twoFingers(phase, CGPoint(x: p.x - origin.x, y: p.y - origin.y), d, xform)
             })
             // fallback pinch in case the watcher above never sees the fingers
@@ -681,13 +681,14 @@ struct EditorView: View {
             FloatButton(system: "square.and.arrow.up") { showExportChoices = true }.accessibilityIdentifier("btn-export")
             Menu {
                 // Short, flat, most-used first. Nothing in here changes while the menu is open.
-                Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
-                Button { if var c = store.clipboard { c.heals = vm.settings.heals; c.aiDenoise = vm.settings.aiDenoise; vm.settings = c } } label: {
-                    Label("Paste edits", systemImage: "doc.on.clipboard")
-                }.disabled(store.clipboard == nil)
-                Button { showPasteSome = true } label: {
-                    Label("Paste some edits…", systemImage: "checklist")
-                }.disabled(store.clipboard == nil)
+                // like Lightroom's Copy Settings / Paste Settings: what goes is chosen when copying
+                Button { showCopy = true } label: { Label("Copy edits…", systemImage: "doc.on.doc") }
+                    .accessibilityIdentifier("menu-copy")
+                Button { if let c = store.clipboard { vm.paste(c) } } label: {
+                    Label { Text("Paste edits"); Text(store.clipboard?.summary ?? "Copy edits first") } icon: { Image(systemName: "doc.on.clipboard") }
+                }
+                .disabled(store.clipboard == nil)
+                .accessibilityIdentifier("menu-paste")
                 Button { showHistory = true } label: { Label("History", systemImage: "clock.arrow.circlepath") }
                     .accessibilityIdentifier("menu-history")
                 Button(role: .destructive) { vm.reset() } label: { Label("Reset all edits", systemImage: "arrow.counterclockwise") }

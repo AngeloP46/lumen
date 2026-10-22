@@ -1435,25 +1435,17 @@ final class EditorViewModel: ObservableObject {
         if selectedHealID == id { selectedHealID = nil }
     }
 
-    // MARK: Paste some edits
+    // MARK: Paste
 
-    /// Pastes only the chosen tools from the copied edits.
-    func paste(_ sections: Set<EditSection>, from c: EditSettings, denoise: Bool = false) {
+    /// Paste edits: exactly what was chosen when copying (`Clipboard.pasted`, the same rule as the library's Paste).
+    /// AI Denoise needs a clean of this photo (about a minute): it is set once the photo is cleaned.
+    func paste(_ clip: Clipboard) {
         lastChange = .distantPast
-        var s = settings
-        for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: c) }
-        if sections.contains(.masks) { s.masks = s.masks.forAnotherPhoto }
-        // AI Denoise needs a clean of this photo (about a minute): only pasted when asked for, then cleaned at once
-        s.aiDenoise = settings.aiDenoise
-        if denoise, c.aiDenoise > 0 {
-            if session?.hasDenoised == true { s.aiDenoise = c.aiDenoise }
-            else { denoiseTarget = c.aiDenoise; DispatchQueue.main.async { [weak self] in self?.startDenoise() } }
+        settings = clip.pasted(onto: settings)
+        if clip.bringsDenoise {
+            if session?.hasDenoised == true { settings.aiDenoise = clip.settings.aiDenoise }
+            else { denoiseTarget = clip.settings.aiDenoise; DispatchQueue.main.async { [weak self] in self?.startDenoise() } }
         }
-        if sections.contains(.masks), let id = settings.lensBlur.maskID,
-           let ownFocus = settings.masks.first(where: { $0.id == id }) {
-            s.masks.removeAll { $0.id == id }; s.masks.append(ownFocus)
-        }
-        settings = s
     }
 
     // MARK: Auto-level

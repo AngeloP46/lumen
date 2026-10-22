@@ -77,74 +77,119 @@ struct EditsSheet: View {
     }
 }
 
-/// Paste some edits: choose which tools to take from the copied edits. Tools the copy has edits in start ticked,
-/// except Crop (a crop rarely fits another photo; Lightroom leaves it out by default too).
-struct PasteSomeSheet: View {
-    let clip: EditSettings
-    /// How many photos it pastes onto (the library's "Choose…" can pick several).
-    var photos = 1
-    /// The sections, and whether AI Denoise goes too (it needs a clean of each photo).
-    let paste: (Set<EditSection>, Bool) -> Void
+/// Copy edits… (library and editor), like Lightroom's Copy Settings: choose what Paste will apply. Tools and each mask
+/// by name; Select: All / Modified / None. The choice is remembered for next time (masks: all or none).
+struct CopyEditsSheet: View {
+    let settings: EditSettings
+    let sourceName: String
+    let copy: (Clipboard) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var chosen: Set<EditSection> = []
-    @State private var denoise = false
+    @State private var sel = CopySelection()
+
+    private static let rememberKey = "copySelection"
+    private static let rememberMasksKey = "copySelectionAllMasks"
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(EditSection.allCases.filter(\.canPaste)) { sec in
-                        let has = clip.hasEdits(sec)
-                        Toggle(isOn: Binding(get: { chosen.contains(sec) },
-                                             set: { if $0 { chosen.insert(sec) } else { chosen.remove(sec) } })) {
-                            HStack(spacing: 12) {
-                                Image(systemName: sec.icon).frame(width: 26)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(sec.rawValue)
-                                    Text(has ? "Has edits" : "No edits (pasting resets it)")
-                                        .font(.caption).foregroundStyle(has ? Theme.accent : Color.secondary)
-                                }
-                            }
-                        }
-                        .accessibilityIdentifier("paste-toggle-\(sec.rawValue)")
+                    HStack(spacing: 8) {
+                        quick("All", id: "copy-all") { sel = .all(settings) }
+                        quick("Modified", id: "copy-modified") { sel = .modified(settings) }
+                        quick("None", id: "copy-none") { sel = CopySelection() }
                     }
-                } footer: {
-                    Text(photos == 1 ? "Only the ticked tools are pasted. The rest of this photo stays as it is."
-                         : "Only the ticked tools are pasted onto the \(photos) photos. The rest of each stays as it is.")
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                 }
-                if clip.aiDenoise > 0, EditSession.hasDenoiseModel {
-                    Section {
-                        Toggle(isOn: $denoise) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "wand.and.sparkles").frame(width: 26)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("AI Denoise \(Int(clip.aiDenoise))")
-                                    Text(photos == 1 ? "Cleans this photo: about a minute (2 for 48 MP ProRAW)"
-                                         : "Cleans up to \(min(photos, LibraryStore.denoiseBatchCap)) photos, one after another: about a minute each")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .accessibilityIdentifier("paste-toggle-denoise")
+                Section("Tools") {
+                    ForEach(CopySelection.tools) { t in
+                        row(icon: t.icon, title: t.copyTitle, note: settings.hasEdits(t) ? "Edited" : "No edits",
+                            edited: settings.hasEdits(t), id: "copy-\(t.rawValue)",
+                            isOn: Binding(get: { sel.has(t) }, set: { sel.set(t, $0) }))
                     }
+                    row(icon: "sun.max", title: "HDR", note: settings.hdr ? "On" : "Off", edited: settings.hdr, id: "copy-hdr",
+                        isOn: $sel.hdr)
+                }
+                if !settings.copyableMasks.isEmpty {
+                    Section {
+                        ForEach(settings.copyableMasks) { m in
+                            let ai = m.components.contains { $0.kind.needsAnalysis }
+                            row(icon: m.components.first?.kind.icon ?? "circle.dashed", title: m.name,
+                                note: ai ? "Found again on each photo" : "Placed as on this photo", edited: true, id: "copy-mask",
+                                isOn: Binding(get: { sel.masks.contains(m.id) },
+                                              set: { if $0 { sel.masks.insert(m.id) } else { sel.masks.remove(m.id) } }))
+                        }
+                    } header: { Text("Masks") }
+                }
+                if settings.aiDenoise > 0, EditSession.hasDenoiseModel {
+                    Section {
+                        row(icon: "wand.and.sparkles", title: "AI Denoise \(Int(settings.aiDenoise))",
+                            note: "Each photo is cleaned first, about a minute each; Paste asks", edited: true, id: "copy-denoise",
+                            isOn: $sel.aiDenoise)
+                    }
+                }
+                Section {} footer: {
+                    Text("Paste applies exactly what's ticked, to one photo or many. Heal and Lens Blur always stay with each photo.")
                 }
             }
-            .navigationTitle(photos == 1 ? "Paste some edits" : "Paste onto \(photos) photos")
+            .navigationTitle("Copy edits")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Paste") { paste(chosen, denoise); dismiss() }
-                        .disabled(chosen.isEmpty && !denoise)
-                        .accessibilityIdentifier("paste-go")
+                    Button("Copy") {
+                        remember()
+                        copy(Clipboard(settings: settings, selection: sel, sourceName: sourceName))
+                        dismiss()
+                    }
+                    .disabled(Clipboard(settings: settings, selection: sel, sourceName: sourceName).isEmpty)
+                    .accessibilityIdentifier("copy-go")
                 }
             }
-            .onAppear { chosen = Set(EditSection.allCases.filter { $0 != .crop && clip.hasEdits($0) }) }
+            .onAppear { sel = recalled() }
         }
         .presentationDetents([.medium, .large])
     }
-}
 
+    private func quick(_ title: String, id: String, _ action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity)
+            .accessibilityIdentifier(id)
+    }
+
+    private func row(icon: String, title: String, note: String, edited: Bool, id: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).frame(width: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                    Text(note).font(.caption).foregroundStyle(edited ? Theme.accent : Color.secondary)
+                }
+            }
+        }
+        .accessibilityIdentifier(id)
+    }
+
+    /// Last time's choice for the tools, HDR and AI Denoise; masks all or none. First time: Modified.
+    private func recalled() -> CopySelection {
+        let d = UserDefaults.standard
+        guard let data = d.data(forKey: Self.rememberKey), var c = try? JSONDecoder().decode(CopySelection.self, from: data) else {
+            return .modified(settings)
+        }
+        c.aiDenoise = c.aiDenoise && settings.aiDenoise > 0
+        c.masks = d.bool(forKey: Self.rememberMasksKey) ? Set(settings.copyableMasks.map(\.id)) : []
+        return c
+    }
+
+    private func remember() {
+        var c = sel
+        c.masks = []
+        if let data = try? JSONEncoder().encode(c) { UserDefaults.standard.set(data, forKey: Self.rememberKey) }
+        let all = !settings.copyableMasks.isEmpty && settings.copyableMasks.allSatisfy { sel.masks.contains($0.id) }
+        if !settings.copyableMasks.isEmpty { UserDefaults.standard.set(all, forKey: Self.rememberMasksKey) }
+    }
+}
 
 /// ⋯ → History: every edit step since the photo's undo history began; tap one to go back to it (redo comes forward).
 struct HistorySheet: View {

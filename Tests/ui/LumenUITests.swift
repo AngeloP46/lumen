@@ -1076,21 +1076,16 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         let edited = valueOf("reset-Shadows")
         XCTAssertNotEqual(edited, "0", "dragging should raise Shadows")
-        el("btn-menu").tap()
-        app.buttons["Copy edits"].tap()
-        sleep(1)
+        copyEdits { el("copy-modified").tap() }   // Modified: Light was edited, so it is ticked
         el("btn-back").tap()
         XCTAssertTrue(el("btn-select").waitForExistence(timeout: 20))
         el("btn-select").tap()
+        XCTAssertTrue(el("lib-clipboard").label.contains("Light"), "the bar says what Paste will apply (\(el("lib-clipboard").label))")
         items().element(boundBy: 1).tap()
         items().element(boundBy: 2).tap()
+        XCTAssertFalse(el("lib-copy").isEnabled, "Copy needs exactly one photo selected")
         el("lib-paste").tap()
-        let look = app.buttons["paste-look"]
-        XCTAssertTrue(look.waitForExistence(timeout: 5), "Paste edits should offer pasting the look")
-        XCTAssertTrue(app.buttons["paste-look-masks"].exists, "Paste edits should offer pasting the look and masks")
-        XCTAssertTrue(app.buttons["paste-choose"].exists, "Paste edits should offer choosing the tools")
-        look.tap()
-        XCTAssertTrue(el("library-notice").waitForExistence(timeout: 5), "pasting should confirm")
+        XCTAssertTrue(el("library-notice").waitForExistence(timeout: 5), "pasting should confirm what went where")
         el("btn-select-done").tap()
         sleep(1)
         items().element(boundBy: 1).tap()
@@ -1098,6 +1093,18 @@ final class LumenUITests: XCTestCase {
         sleep(2)
         if !el("reset-Shadows").exists, el("tool-Light").exists { tapTool("Light"); sleep(1) }
         XCTAssertEqual(valueOf("reset-Shadows"), edited, "the pasted Shadows edit should be on the second photo")
+    }
+
+    /// ⋯ → Copy edits…: the Copy sheet opens; `choose` picks what to copy; Copy closes it.
+    func copyEdits(_ choose: () -> Void) {
+        el("btn-menu").tap()
+        XCTAssertTrue(el("menu-copy").waitForExistence(timeout: 10), "the menu should offer Copy edits…")
+        el("menu-copy").tap()
+        XCTAssertTrue(el("copy-go").waitForExistence(timeout: 10), "the Copy edits sheet should open")
+        choose()
+        shot("copy-edits")
+        el("copy-go").tap()
+        sleep(1)
     }
 
     /// Which memory tier the app thinks the simulator is (checklist B1): printed for the CI log.
@@ -1138,10 +1145,10 @@ final class LumenUITests: XCTestCase {
         launch(open: 0, tool: "Light")
         XCTAssertTrue(el("btn-menu").waitForExistence(timeout: 10))
         el("btn-menu").tap()
-        XCTAssertTrue(app.buttons["Copy edits"].waitForExistence(timeout: 10), "the menu should open with Copy edits")
+        XCTAssertTrue(el("menu-copy").waitForExistence(timeout: 10), "the menu should open with Copy edits…")
         shot("more-menu")
         let screen = app.windows.firstMatch.frame
-        for name in ["Copy edits", "Paste edits", "Reset all edits", "Previous photo", "Next photo", "Rating and flags", "View"] {
+        for name in ["menu-copy", "menu-paste", "Reset all edits", "Previous photo", "Next photo", "Rating and flags", "View"] {
             let b = app.buttons[name]
             XCTAssertTrue(b.exists, "menu item \(name) is missing")
             if b.exists {
@@ -1534,21 +1541,26 @@ final class LumenUITests: XCTestCase {
         XCTAssertFalse(el("split-handle").exists, "× ends the split")
     }
 
-    func testPasteSomeEditsOnlyTakesTheChosenTools() {
-        launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])
-        el("btn-menu").tap()
-        app.buttons["Copy edits"].tap()
-        sleep(1)
+    /// Copy edits… with only Light ticked: Paste brings Light back and leaves Colour alone (Lightroom's Copy Settings).
+    func testCopyOnlyTheChosenTools() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])   // exposure 0.3 (Light), vibrance 25 (Colour)
+        copyEdits {
+            el("copy-none").tap()
+            app.switches["copy-Light"].tap()
+        }
         el("pill-Reset").tap()   // Light back to 0 on this photo
         sleep(1)
         XCTAssertEqual(valueOf("reset-Exposure"), "0.00")
-        el("btn-menu").tap()
-        XCTAssertTrue(app.buttons["Paste some edits…"].waitForExistence(timeout: 5))
-        app.buttons["Paste some edits…"].tap()
-        XCTAssertTrue(el("paste-go").waitForExistence(timeout: 5), "the Paste some sheet should open")
-        shot("paste-some")
-        el("paste-go").tap()
+        tapTool("Color"); sleep(1)
+        el("pill-Reset").tap()   // Colour back to 0 too
         sleep(1)
+        let colourReset = valueOf("reset-Vibrance")
+        el("btn-menu").tap()
+        XCTAssertTrue(el("menu-paste").waitForExistence(timeout: 5))
+        el("menu-paste").tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("reset-Vibrance"), colourReset, "Colour (not ticked) must not be pasted")
+        tapTool("Light"); sleep(1)
         XCTAssertEqual(valueOf("reset-Exposure"), "0.30", "Light (ticked) should come back from the copy")
     }
 
