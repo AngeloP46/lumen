@@ -298,3 +298,6 @@ currentEntitlements shows them; the app refreshes on Transaction.updates, so use
 version 1.0 build = run number, Increased Memory Limit entitlement), signs it in Apple's cloud with an App Store Connect
 API key and uploads to TestFlight. Needs secrets ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, APPLE_TEAM_ID (Angelo adds them).
 `docs/appstore/RELEASE-CHECKLIST.md`: the submit bar, the 10-minute phone run-through, Angelo's steps. Feature freeze until 1.0.
+
+## 22 Oct 2026: AI masks kept across heal undo/redo (from main #87)
+No Store code changed.
