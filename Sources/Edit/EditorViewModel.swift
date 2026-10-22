@@ -134,6 +134,15 @@ final class EditorViewModel: ObservableObject {
         // tells "the closed editor's copies are still held" apart from other memory that stays (checklist A8)
         Diagnostics.shared.note("editor freed")
     }
+    /// "photo ready" for diagnostics: how long it took (waiting for the work queue, then decoding) and what it holds.
+    private func notePhotoReady(asked: Date, began: Date, size: CGSize, heals: Int, denoise: Double, hdr: Bool) {
+        let total = Date().timeIntervalSince(asked), waited = began.timeIntervalSince(asked), decoded = Date().timeIntervalSince(began)
+        let times = String(format: "photo ready in %.1f s (waited %.1f s, decoded %.1f s; ", total, waited, decoded)
+        let mp = Int(size.width * size.height / 1_000_000)
+        let lens = Int(settings.effective.lensBlur.amount), masks = settings.masks.count
+        Diagnostics.shared.note(times + "\(mp) MP, \(heals) heals, AI Denoise \(Int(denoise * 100)), Lens Blur \(lens), \(masks) masks, HDR \(hdr))")
+    }
+
     /// When the photo was asked for (open → first frame, for diagnostics).
     private var openedAt: Date?
 
@@ -243,9 +252,7 @@ final class EditorViewModel: ObservableObject {
                 self.unhealedSource = nil   // belonged to the previous photo
                 // what runs next is logged step by step (owner's phone, 21 Oct: a 48 MP ProRAW closed Lumen 2-4 s after
                 // opening, with nothing in the log to say which step)
-                Diagnostics.shared.note(String(format: "photo ready in %.1f s (waited %.1f s, decoded %.1f s; ", Date().timeIntervalSince(asked),
-                                                       began.timeIntervalSince(asked), Date().timeIntervalSince(began))
-                                        + "\(Int((s?.nativeSize.width ?? 0) * (s?.nativeSize.height ?? 0) / 1_000_000)) MP, \(heals.count) heals, AI Denoise \(Int(denoise * 100)), Lens Blur \(Int(self.settings.effective.lensBlur.amount)), \(self.settings.masks.count) masks, HDR \(wantsHDR))")
+                self.notePhotoReady(asked: asked, began: began, size: s?.nativeSize ?? .zero, heals: heals.count, denoise: denoise, hdr: wantsHDR)
                 self.isLoading = false
                 self.loadFailed = (src == nil)
                 if let src { self.imageSize = src.size; self.sourceSize = src.size }
