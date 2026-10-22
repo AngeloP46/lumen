@@ -200,12 +200,10 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
     var findingLines: [String] {
         queue.sync {
             guard let log = try? String(contentsOf: logURL, encoding: .utf8) else { return [] }
-            let lines = log.split(separator: "
-", omittingEmptySubsequences: true)
+            let lines = log.split(separator: "\n", omittingEmptySubsequences: true)
             let launches = lines.indices.filter { lines[$0].contains("  launch ") }
             let from = launches.count >= 3 ? launches[launches.count - 3] : lines.startIndex
-            return Self.findings(Array(lines[from...])).split(separator: "
-").filter { $0.hasPrefix("• ") }.map { String($0.dropFirst(2)) }
+            return Self.findings(Array(lines[from...])).split(separator: "\n").filter { $0.hasPrefix("• ") }.map { String($0.dropFirst(2)) }
         }
     }
 
@@ -238,8 +236,7 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
                 } else {
                     let launches = lines.indices.filter { lines[$0].contains("  launch ") }
                     let from = launches.count >= 3 ? launches[launches.count - 3] : lines.startIndex
-                    out += Self.findings(Array(lines[from...])) + "
-"
+                    out += Self.findings(Array(lines[from...])) + "\n"
                     out += Self.compact(Array(lines[from...]))
                 }
             }
@@ -378,13 +375,8 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
             }
             for (job, n) in short.sorted(by: { $0.value > $1.value }) { found.append("\(job) started short of memory \(n) time\(n == 1 ? "" : "s") (\(version))") }
         }
-        guard !found.isEmpty else { return "== Findings ==
-No problems spotted in the last launches.
-" }
-        return "== Findings (\(found.count)) ==
-" + found.prefix(15).map { "• " + $0 }.joined(separator: "
-") + "
-"
+        guard !found.isEmpty else { return "== Findings ==\nNo problems spotted in the last launches.\n" }
+        return "== Findings (\(found.count)) ==\n" + found.prefix(15).map { "• " + $0 }.joined(separator: "\n") + "\n"
     }
 
     /// The log of a few launches, shortened for sharing (see makeReport).
