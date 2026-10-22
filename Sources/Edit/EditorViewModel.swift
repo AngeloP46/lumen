@@ -331,8 +331,10 @@ final class EditorViewModel: ObservableObject {
         denoiseUserCancelled = false
         UIApplication.shared.isIdleTimerDisabled = true   // a long clean must not stop when the screen dims
         freeMemoryForHeal()
-        detailSource = nil
-        unhealedSource = nil
+        // the mask models load again when needed (masks already worked out are kept)
+        EditSession.releaseMaskModels()
+        // draw from the preview now, so the screen lets go of the 100 % copy before the clean asks for room
+        requestRender()
         let from = DenoiseStore.pausedFraction(session.originalURL) ?? 0
         Diagnostics.shared.note(from > 0 ? String(format: "denoise continues from %.0f %%", from * 100) : "denoise start")
         let began = Date()
@@ -684,6 +686,12 @@ final class EditorViewModel: ObservableObject {
                 // the photo was decoded again meanwhile (HDR, a heal): this copy shows the old version
                 guard generation == self.loadGeneration else {
                     if self.zoomLevel > 1.4 { self.buildDetail() }
+                    return
+                }
+                // AI Denoise started while it was building: a 4096 px copy beside the model is what iOS closed Lumen
+                // for (owner's diagnostics, 22 Oct: denoise started with 1072 MB free, killed at 480 MB)
+                guard self.denoiseProgress == nil else {
+                    if src != nil { Diagnostics.shared.note("100% view: copy dropped, AI Denoise is running") }
                     return
                 }
                 self.detailSource = src
