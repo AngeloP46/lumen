@@ -164,6 +164,7 @@ final class EditorViewModel: ObservableObject {
 
     /// When the photo was asked for (open → first frame, for diagnostics).
     private var openedAt: Date?
+    private var renderAfterWarning: DispatchWorkItem?
     /// On closing the photo: the library's thumbnail from the picture already decoded here (A13). It shows the AI masks that
     /// are worked out, and the photo is not decoded again (a 48 MP RAW decode for a thumbnail was ~2 GB at its peak).
     func updateLibraryThumbnail() {
@@ -238,7 +239,10 @@ final class EditorViewModel: ObservableObject {
                 // and no new try for a while: dropped, tried again at once, dropped again was how iOS closed Lumen (23 Oct)
                 self.detailRetry.hold(for: 30)
                 if !self.showOriginal { self.unhealedSource = nil }
-                self.requestRender()
+                self.renderAfterWarning?.cancel()
+                let again = DispatchWorkItem { [weak self] in self?.requestRender() }
+                self.renderAfterWarning = again
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: again)
             }
         }
         applyingHistory = true
@@ -736,6 +740,7 @@ final class EditorViewModel: ObservableObject {
     func requestRender() {
         guard let session, let source else { return }
         BlackBox.shared.crumb("render")
+        BlackBox.shared.count("render")
         let buildStart = CACurrentMediaTime()
         defer { if renderTimes.count < 5000 { renderTimes.append((CACurrentMediaTime() - buildStart) * 1000) } }
         if let opened = openedAt {
@@ -1945,7 +1950,11 @@ final class EditorViewModel: ObservableObject {
 
     // MARK: Export
 
-    func export(_ o: ExportOptions) {
+    /// Lens Blur is on but its depth estimate could not be made, so the export could not be: the user is asked whether to
+    /// export without the blur (the saved edit keeps it). Before, every such export just failed (quality checklist A17).
+    @Published var offerExportWithoutLens: ExportOptions?
+
+    func export(_ o: ExportOptions, withoutLensBlur: Bool = false) {
         guard let session, !isExporting else { return }
         // AI Denoise is on but its cleaned copy is gone: say so now, not after a hidden minute inside the export (A16)
         if settings.effective.aiDenoise > 0, !session.hasDenoised, EditSession.hasDenoiseModel {
@@ -1953,7 +1962,8 @@ final class EditorViewModel: ObservableObject {
             return
         }
         isExporting = true
-        let s = settings
+        var s = settings
+        if withoutLensBlur { s.lensBlur.amount = 0 }
         let name = item.displayName
         let patches = HealStore.retain(Set(s.heals.map(\.id)))
         // a full-size export decodes the whole photo again: let go of the copies that can be made again first
@@ -1971,9 +1981,10 @@ final class EditorViewModel: ObservableObject {
             }
             var data: Data?
             var failMessage: String?
+            var lensDepthFailed = false
             switch outcome {
             case .data(let d): data = d
-            case .failed(let f): failMessage = f.message
+            case .failed(let f): failMessage = f.message; lensDepthFailed = (f == .depthUnavailable)
             case nil: failMessage = "There isn't enough free memory to export this photo right now. Close other apps and try again."
             }
             Diagnostics.shared.note(String(format: "export %@ in %.1f s (%@)", data == nil ? "failed" : "done",
@@ -1987,7 +1998,12 @@ final class EditorViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.isExporting = false
                 self?.refreshUnhealed()
-                if let url { self?.exported = ExportResult(url: url) } else { self?.message = failMessage ?? "Export failed." }
+                // the export decoded the whole photo through this session, which keeps that decode for as long as it lives
+                // (quality checklist A8): a new session lets it go
+                if mp > 20 { self?.reloadSource() }
+                if let url { self?.exported = ExportResult(url: url) }
+                else if lensDepthFailed && !withoutLensBlur { self?.offerExportWithoutLens = o }
+                else { self?.message = failMessage ?? "Export failed." }
             }
         }
     }

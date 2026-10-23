@@ -18,7 +18,9 @@ enum MemoryBudget {
     static var tier: Tier { limitMB < 2600 ? .low : limitMB < 4500 ? .standard : .high }
 
     /// The editing preview's long edge.
-    static var previewEdge: CGFloat { tier == .low ? 2048 : 2560 }
+    /// 2048 on a standard phone (2560 until 23 Oct): the screen shows the photo at most ~1900 px long, and a smaller
+    /// preview makes every render and every layer behind it 0.64 times as big; the 100 % view builds its own copy.
+    static var previewEdge: CGFloat { tier == .high ? 2560 : 2048 }
     /// AI Denoise holds a 1.3 GB model beside the photo: too much for a 2 GB limit.
     static var denoiseFits: Bool { tier != .low }
 
