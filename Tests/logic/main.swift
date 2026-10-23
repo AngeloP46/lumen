@@ -346,13 +346,13 @@ do {
     var decoded = false
     check(HeavyWork.shared.run(.preview, megapixels: 24) { () -> Int in decoded = true; return 1 } == 1 && decoded,
           "coordinator: with no memory report (the simulator) a preview decode runs at once")
-    HeavyWork.availableMB = { 2475 }
+    HeavyWork.availableMB = { 1000 }
     var loaded = false
     check(HeavyWork.shared.run(.healModel, megapixels: 0, optional: true) { () -> Int in loaded = true; return 1 } == nil && !loaded,
-          "coordinator: the Heal model is not loaded with 2475 MB free (the load takes ~2.8 GB for a moment)")
-    HeavyWork.availableMB = { 3200 }
+          "coordinator: the Heal model is not loaded with 1000 MB free")
+    HeavyWork.availableMB = { 2764 }
     check(HeavyWork.shared.run(.healModel, megapixels: 0, optional: true) { () -> Int in loaded = true; return 1 } == 1 && loaded,
-          "coordinator: the Heal model loads with room for the spike")
+          "coordinator: the Heal model loads with 2764 MB free (0.1.608 refused three heals there)")
 }
 
 // ---- B4 / B2 (23 Oct): long brush strokes keep their shape with far fewer points; heavy work waits for the screen
