@@ -81,6 +81,23 @@ final class CanvasModel {
         return (s.count, s[s.count / 2], s[min(s.count - 1, s.count * 95 / 100)], s.last ?? 0)
     }
 
+    /// While true the canvas keeps its last frame and draws nothing new: loading the Heal model or healing needs all the
+    /// memory it can get, and a redraw of a heavy picture holds up to a gigabyte while it goes (quality checklist A22).
+    /// It resumes by itself after 20 s in case something forgets to.
+    var drawingPaused = false {
+        didSet {
+            pauseWatchdog?.cancel(); pauseWatchdog = nil
+            if drawingPaused {
+                let w = DispatchWorkItem { [weak self] in self?.drawingPaused = false }
+                pauseWatchdog = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: w)
+            } else {
+                redrawAll()
+            }
+        }
+    }
+    private var pauseWatchdog: DispatchWorkItem?
+
     func update(_ img: CIImage?) {
         image = img
         redrawAll()
@@ -144,6 +161,7 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
     private var redrawWaiting = false
 
     func draw(in view: MTKView) {
+        guard !model.drawingPaused else { return }
         guard inFlight < 2 else { redrawWaiting = true; return }
         guard let queue = LumenGPU.queue, let drawable = view.currentDrawable,
               let cb = queue.makeCommandBuffer() else { return }
