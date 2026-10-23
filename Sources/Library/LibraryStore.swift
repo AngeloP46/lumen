@@ -25,6 +25,9 @@ private let thumbQueue = DispatchQueue(label: "lumen.thumbs", qos: .utility)
 private let exportQueue = DispatchQueue(label: "lumen.batch-export", qos: .userInitiated)
 /// Serial: undo-history writes for every photo, in order (see `LibraryStore.save`).
 private let historyQueue = DispatchQueue(label: "lumen.history", qos: .utility)
+/// Serial: the slow file work of deleting photos (history flush, Heal-patch scan, unlinking), one photo at a time
+/// (checklist A10). The photo itself is gone from the list, marked deleted and its original removed before this runs.
+private let deleteQueue = DispatchQueue(label: "lumen.delete", qos: .utility)
 /// History waiting to be written, by file (only touched on `historyQueue`): a burst of saves writes the newest once,
 /// 0.2 s later, and at once when the photo closes, is deleted or the app leaves the screen. (2 s lost the undo
 /// history when the app was closed right after an edit: UI test testOctoberEditorFixes, 19 Oct.)
@@ -173,9 +176,13 @@ final class LibraryStore: ObservableObject {
         }
         // after the presets are read: they count as references too
         if testRoot == nil { sweepHealPatches() }
-        if testRoot == nil, DemoMode.isOn, DemoMode.value("-lumenDemoPersistenceChecks") == "1" {
-            Task { @MainActor in await self.checkPersistenceRecovery() }
-        }
+    }
+
+    /// CI: runs the save-recovery check once the demo library has been set up (it adds a scratch photo to the list, so
+    /// it must not run while the demo setup is still replacing the library's photos).
+    func runPersistenceChecksIfRequested() {
+        guard DemoMode.isOn, DemoMode.value("-lumenDemoPersistenceChecks") == "1" else { return }
+        Task { @MainActor in await self.checkPersistenceRecovery() }
     }
 
     /// Simulator regression: real failing writes (a directory occupies the file path), then storage recovers.
@@ -278,6 +285,7 @@ final class LibraryStore: ObservableObject {
         library.userPresets = [UserPreset(name: "Legacy", settings: recipe)]
         let lease = HealStore.retain([active.id])
         library.delete(removed)
+        library.waitForDeletes()
         check([current, undo, redo, dropped].allSatisfy { !exists($0) }, "current undo redo and trimmed owner patches removed")
         check([shared, copied, preset].allSatisfy(exists), "retained history clipboard and preset preserved")
         check(exists(active), "in-flight render retains patch")
@@ -292,6 +300,7 @@ final class LibraryStore: ObservableObject {
         check(written == false && !exists(late), "late Heal result cannot recreate deleted pixels")
         library.clipboard = nil; library.userPresets = []
         library.delete(kept)
+        library.waitForDeletes()
         check(!exists(shared), "shared patch removed after last photo deleted")
         // Retained legacy references are intentionally preserved; this is not a global garbage sweep.
         check(!fm.fileExists(atPath: library.fileURL(removed).path) && !fm.fileExists(atPath: library.thumbURL(removed).path), "photo and thumbnail removed")
@@ -317,7 +326,9 @@ final class LibraryStore: ObservableObject {
             try? fm.copyItem(at: indexURL, to: backupURL)
             // photos copied in but never listed (the app closed mid-import, or the list couldn't be written): back
             // in the library instead of invisible for ever (checklist A2)
-            let files = (try? fm.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: [.creationDateKey])) ?? []
+            var files = (try? fm.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: [.creationDateKey])) ?? []
+            for partial in files where partial.pathExtension == "partial" { try? fm.removeItem(at: partial) }   // an import that was cut short
+            files.removeAll { $0.pathExtension == "partial" }
             let known = Set(list.map(\.fileName))
             let orphans = Self.rebuild(from: files.filter { !known.contains($0.lastPathComponent) })
             if !orphans.isEmpty {
@@ -584,8 +595,10 @@ final class LibraryStore: ObservableObject {
     /// same rule as the editor's Paste). AI Denoise is pasted by `cleanWithAIDenoise` once a photo is cleaned.
     func paste(_ clip: Clipboard, to list: [LibraryItem]) {
         for item in list {
-            let own = settings(for: item)
-            let s = clip.pasted(onto: own)
+            // what the editor would open the photo with (a RAW never edited starts in HDR): pasting must not turn that
+            // default off just because the photo had no edits file yet
+            let own = editorSettings(for: item)
+            let s = clip.pasted(onto: own, samePhoto: item.id == clip.sourceID)
             guard s != own else { continue }
             save(s, for: item)
             refreshThumbnail(item)
@@ -613,7 +626,9 @@ final class LibraryStore: ObservableObject {
         thumbQueue.async {
             let fm = FileManager.default
             var used = presets
-            for url in (try? fm.contentsOfDirectory(at: editsDir, includingPropertiesForKeys: nil)) ?? [] where url.pathExtension == "json" {
+            // can't list the edits folder: nothing is known to be unused, so nothing is removed
+            guard let editFiles = try? fm.contentsOfDirectory(at: editsDir, includingPropertiesForKeys: nil) else { return }
+            for url in editFiles where url.pathExtension == "json" {
                 guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) else {
                     if url.lastPathComponent.contains(".kept-") || url.lastPathComponent.hasSuffix(".damaged.json") { continue }
                     return
@@ -641,6 +656,10 @@ final class LibraryStore: ObservableObject {
     /// each. Photos already cleaned only get the strength.
     func cleanWithAIDenoise(_ list: [LibraryItem], strength: Double) {
         guard EditSession.hasDenoiseModel, !list.isEmpty else { return }
+        guard MemoryBudget.denoiseFits else {
+            lastError = "AI Denoise needs more memory than this iPhone gives an app (iPhones with 6 GB or more). The other edits were pasted."
+            return
+        }
         batchQueue = list.prefix(Self.denoiseBatchCap).map(\.id)
         batchTotal = batchQueue.count
         batchStrength = strength
@@ -893,55 +912,68 @@ final class LibraryStore: ObservableObject {
 
     func delete(_ item: LibraryItem) {
         guard items.contains(where: { $0.id == item.id }) else { return }
-        // The file work runs off the main thread (checklist A10): the history flush and the Heal-patch scan
-        // (which reads every other photo's sidecars) used to run on the UI thread, and a multi-select delete
-        // did it once per photo. The photo leaves the list at once, as before, so the grid updates immediately;
-        // a file that can't be removed stays on disk and is re-adopted at launch rather than lost.
-        let fileURL = fileURL(item), editURL = editURL(item), historyURL = historyURL(item), thumbURL = thumbURL(item)
-        let otherIDs = items.map(\.id)
+        // At once, on the main thread, everything that must hold the moment the user taps Remove (checklist A10: the
+        // overnight version of this left the photo "live" until its file work had finished, so a late save or a Heal
+        // result could recreate what was being deleted): the photo is marked deleted (late Heal results and saves are
+        // refused), leaves the list and the saved list, and its original file goes, so a kill from here on can't
+        // bring it back (unlisted photo files are adopted at launch). Only the slow file work runs in the background.
+        let fileURL = fileURL(item), historyURL = historyURL(item), thumbURL = thumbURL(item)
+        let owned = HealStore.markDeleted(owner: fileURL)
+        items.removeAll { $0.id == item.id }
+        failedSaves[item.id] = nil
+        loadNotices[item.id] = nil
+        saveIndex()
+        try? fm.removeItem(at: fileURL)
         let presetHeals = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
         let clipHeals = Set(clipboard?.settings.heals.map(\.id) ?? [])
-        let editsDir = editsDir
-        Task.detached(priority: .userInitiated) { [weak self] in
-            // finish queued history writes first: they may name Heal patches, and must not recreate the file afterwards
-            historyQueue.sync { LibraryStore.writePendingHistory() }
+        let editsDir = editsDir, id = item.id.uuidString
+        deleteQueue.async { [weak self] in
             let fm = FileManager.default
-            var patches = HealStore.markDeleted(owner: fileURL)
-            for url in [editURL, historyURL] {
-                if let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) {
+            var patches = owned
+            // queued history writes first: they may name Heal patches, and must not recreate the file afterwards
+            historyQueue.sync { LibraryStore.writePendingHistory(historyURL) }
+            let names = (try? fm.contentsOfDirectory(atPath: editsDir.path))
+            let own = Set((names ?? []).filter { $0 == "\(id).json" || $0 == "\(id).history.json" || $0 == "\(id).damaged.json" || $0.hasPrefix("\(id).kept-") })
+            for name in own where name.hasSuffix(".json") {
+                if let data = try? Data(contentsOf: editsDir.appendingPathComponent(name)), let json = try? JSONSerialization.jsonObject(with: data) {
                     patches.formUnion(HealStore.references(in: json))
                 }
             }
-            // reading every other photo's edits is only needed when this one has Heal patches to clean up;
-            // fail closed when a retained sidecar is unreadable, rather than deleting pixels another photo needs
-            var retained: Set<UUID>?
-            if patches.isEmpty {
-                retained = []
-            } else {
-                var ids: Set<UUID>? = presetHeals.union(clipHeals)
-                for oid in otherIDs where oid != item.id && ids != nil {
-                    for url in [editsDir.appendingPathComponent("\(oid.uuidString).json"),
-                                editsDir.appendingPathComponent("\(oid.uuidString).history.json")] {
-                        guard fm.fileExists(atPath: url.path) else { continue }
-                        guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) else { ids = nil; break }
-                        ids?.formUnion(HealStore.references(in: json))
+            // Patches another photo (or a preset, or the clipboard) still refers to stay. Every other edits and history
+            // file in the folder counts, not only listed photos' (so no list can be stale), and an unreadable one means
+            // nothing is removed: never delete pixels another photo may need. Deletes run one at a time, so a sidecar
+            // being removed by another delete is never half read.
+            var retained: Set<UUID>? = patches.isEmpty ? [] : presetHeals.union(clipHeals)
+            if !patches.isEmpty {
+                if let names {
+                    for name in names where name.hasSuffix(".json") && !own.contains(name) && retained != nil {
+                        guard let data = try? Data(contentsOf: editsDir.appendingPathComponent(name)),
+                              let json = try? JSONSerialization.jsonObject(with: data) else {
+                            if name.hasSuffix(".damaged.json") { continue }   // a copy of a file that didn't parse: nothing in it to keep
+                            retained = nil; break
+                        }
+                        retained?.formUnion(HealStore.references(in: json))
                     }
+                } else {
+                    retained = nil
                 }
-                retained = ids
             }
             DenoiseStore.remove(fileURL)
-            for u in [fileURL, thumbURL, editURL, historyURL] { try? fm.removeItem(at: u) }
+            for name in own { try? fm.removeItem(at: editsDir.appendingPathComponent(name)) }   // edits, history, kept copies
+            try? fm.removeItem(at: thumbURL)
             // The thumbnail queue is serial: this runs after any render already in flight for this photo.
             thumbQueue.async { try? FileManager.default.removeItem(at: thumbURL) }
-            await MainActor.run {
-                guard let self else { return }
-                self.items.removeAll { $0.id == item.id }
-                self.saveIndex()
-                if let retained { HealStore.remove(patches.subtracting(retained)) }
-                else { self.lastError = "Photo removed, but its Heal patches could not safely be cleaned up because another photo's edits are unreadable." }
+            if let retained { HealStore.remove(patches.subtracting(retained)) }
+            else {
+                Task { @MainActor [weak self] in
+                    self?.lastError = "Photo removed, but its Heal patches could not safely be cleaned up because another photo's edits are unreadable."
+                }
             }
         }
     }
+
+    /// Waits until every delete has finished its file work (the in-app checks; the app never needs to wait).
+    func waitForDeletes() { deleteQueue.sync {} }
 
     // MARK: Rating / flags
 
@@ -1042,12 +1074,17 @@ final class LibraryStore: ObservableObject {
         let ext = url.pathExtension.lowercased()
         let fileName = ext.isEmpty ? id.uuidString : "\(id.uuidString).\(ext)"
         let dst = dir.appendingPathComponent(fileName)
+        let partial = dir.appendingPathComponent(fileName + ".partial")
         var failure: Error?
         var coordError: NSError?
         NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordError) { readable in
-            do { try FileManager.default.copyItem(at: readable, to: dst) } catch { failure = error }
+            do {
+                try FileManager.default.copyItem(at: readable, to: partial)
+                try FileManager.default.moveItem(at: partial, to: dst)
+            } catch { failure = error }
         }
         if let error = failure ?? coordError {
+            try? FileManager.default.removeItem(at: partial)
             try? FileManager.default.removeItem(at: dst)
             return .failure(error)
         }
@@ -1108,7 +1145,14 @@ final class LibraryStore: ObservableObject {
         let ext = src.pathExtension.lowercased()
         let fileName = ext.isEmpty ? id.uuidString : "\(id.uuidString).\(ext)"
         let dst = filesDir.appendingPathComponent(fileName)
-        try fm.copyItem(at: src, to: dst)
+        let partial = filesDir.appendingPathComponent(fileName + ".partial")   // see copyIn
+        do {
+            try fm.copyItem(at: src, to: partial)
+            try fm.moveItem(at: partial, to: dst)
+        } catch {
+            try? fm.removeItem(at: partial)
+            throw error
+        }
         let item = LibraryItem(id: id, displayName: name, fileName: fileName, added: Date(), taken: Self.dateTaken(dst))
         items.insert(item, at: 0)
         saveIndex()

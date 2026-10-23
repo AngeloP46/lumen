@@ -863,7 +863,10 @@ final class LumenUITests: XCTestCase {
         el("kind-subject").tap()
         XCTAssertTrue(el("mask-busy").waitForExistence(timeout: 2), "the slow AI mask job should be running")
         let first = el("photo").label
-        el("photo").swipeLeft()
+        // swiping is switched off while the Masks tool is open (a finger places the mask), so go on by the menu
+        el("btn-menu").tap()
+        XCTAssertTrue(app.buttons["Next photo"].waitForExistence(timeout: 5))
+        app.buttons["Next photo"].tap()
         XCTAssertTrue(waitForEvent(timeout: 45) { evs in
             guard el("photo").label != first else { return false }
             return Self.queuedSeconds(evs).map { $0 < 2.0 } ?? false
@@ -1171,23 +1174,16 @@ final class LumenUITests: XCTestCase {
         XCTAssertFalse(events().contains { $0.contains("saved edits") }, "closing an untouched photo must not rewrite its edits")
     }
 
-    /// A5: an edit made just before Lumen leaves the screen is kept (the 0.5 s save delay used to lose it).
+    /// A5: an edit made just before Lumen leaves the screen is kept. The save normally waits 0.5 s; here it waits 8 s,
+    /// so only the save-on-leaving can have written it (the test used to pass with the fix removed).
     func testEditKeptWhenLeavingStraightAway() {
-        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "list"])
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "list", "-lumenDemoSaveDelay", "8"])
         let s = el("slider-Shadows")
         s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)))
-        let edited = valueOf("reset-Shadows")
-        XCUIDevice.shared.press(.home)
+        XCUIDevice.shared.press(.home)   // straight away: the 8 s save has not run
         sleep(2)
-        app.terminate()
-        // the same photo again, without starting from fresh edits
-        if let i = app.launchArguments.firstIndex(of: "-lumenDemoFresh") { app.launchArguments.removeSubrange(i...i + 1) }
-        app.launch()
-        XCTAssertTrue(el("photo").waitForExistence(timeout: 60))
-        sleep(3)
-        if !el("reset-Shadows").exists { tapTool("Light"); sleep(1) }
-        XCTAssertEqual(valueOf("reset-Shadows"), edited, "the edit made just before leaving should be saved")
+        XCTAssertTrue(events().contains { $0.contains("saved edits") }, "leaving the app should have saved the edit at once")
     }
 
     /// ⋯ → Copy edits…: the Copy sheet opens; `choose` picks what to copy; Copy closes it.
@@ -1644,8 +1640,10 @@ final class LumenUITests: XCTestCase {
         launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])   // exposure 0.3 (Light), vibrance 25 (Colour)
         copyEdits {
             el("copy-none").tap()
-            app.switches["copy-Light"].tap()
+            // the switch sits at the right end of its row; the row's centre is its label
+            app.switches["copy-Light"].coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
         }
+        XCTAssertTrue(waitGone(el("copy-go"), timeout: 10), "Copy should have closed the sheet (was anything ticked?)")
         el("pill-Reset").tap()   // Light back to 0 on this photo
         sleep(1)
         XCTAssertEqual(valueOf("reset-Exposure"), "0.00")

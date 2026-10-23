@@ -56,6 +56,16 @@ final class CanvasModel {
     /// Called on the main thread with the screen's (current, potential) EDR headroom when either changes by more than
     /// 5% (HDR mode only).
     var onHeadroom: ((CGFloat, CGFloat) -> Void)?
+    private var activeObserver: NSObjectProtocol?
+    init() {
+        // iOS refuses GPU work in the background: a frame asked for then is lost, so the picture is drawn again when
+        // the app is back on screen (nothing else would ask: SwiftUI updates no longer redraw it)
+        activeObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.redrawAll()
+        }
+    }
+    deinit { if let o = activeObserver { NotificationCenter.default.removeObserver(o) } }
+    func redrawAll() { for v in views.allObjects where v.window != nil { v.setNeedsDisplay() } }
     /// Called once, after the next frame has been drawn (diagnostics: open → first frame).
     var onFirstFrame: (() -> Void)?
 
@@ -73,7 +83,7 @@ final class CanvasModel {
 
     func update(_ img: CIImage?) {
         image = img
-        for v in views.allObjects where v.window != nil { v.setNeedsDisplay() }
+        redrawAll()
     }
 }
 

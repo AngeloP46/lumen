@@ -82,6 +82,7 @@ struct EditsSheet: View {
 struct CopyEditsSheet: View {
     let settings: EditSettings
     let sourceName: String
+    let sourceID: UUID
     let copy: (Clipboard) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var sel = CopySelection()
@@ -139,10 +140,10 @@ struct CopyEditsSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Copy") {
                         remember()
-                        copy(Clipboard(settings: settings, selection: sel, sourceName: sourceName))
+                        copy(Clipboard(settings: settings, selection: sel, sourceName: sourceName, sourceID: sourceID))
                         dismiss()
                     }
-                    .disabled(Clipboard(settings: settings, selection: sel, sourceName: sourceName).isEmpty)
+                    .disabled(Clipboard(settings: settings, selection: sel, sourceName: sourceName, sourceID: sourceID).isEmpty)
                     .accessibilityIdentifier("copy-go")
                 }
             }

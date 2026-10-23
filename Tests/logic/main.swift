@@ -130,6 +130,9 @@ do {
     var newer = encoded(rich); newer["formatVersion"] = EditSettings.currentFormat + 1; newer["someFutureSetting"] = 3
     let n = EditsFile.load(data(newer))
     check(n.report.newerVersion && n.report.lostSomething && n.settings.exposure == 0.7, "load report: a newer file must be flagged and still read (\(n.report))")
+    check(n.settings.formatVersion == EditSettings.currentFormat, "load report: edits read from a newer file are saved back in this version's format (\(n.settings.formatVersion))")
+    let again = EditsFile.load((try? JSONEncoder().encode(n.settings)) ?? Data())
+    check(!again.report.newerVersion && !again.report.lostSomething, "load report: a file this version saved must not read as newer again (\(again.report))")
     let bad = EditsFile.load(json("{ not json"))
     check(bad.report.unreadable && bad.report.message != nil, "load report: a damaged file must be flagged")
     var wrongType = encoded(rich); wrongType["exposure"] = "bright"
@@ -210,6 +213,13 @@ do {
     let dclip = Clipboard(settings: src, selection: withDenoise, sourceName: "A")
     check(dclip.bringsDenoise && dclip.summary.hasSuffix("AI Denoise"), "copy: AI Denoise ticked shows in the summary")
     check(Clipboard(settings: src, selection: CopySelection(), sourceName: "A").isEmpty, "copy: nothing ticked is empty")
+    // pasting back onto the photo it came from leaves its masks as they are (no re-adapting, no reorder)
+    let source = UUID()
+    var back = sel; back.set(.light, true)
+    let selfClip = Clipboard(settings: src, selection: back, sourceName: "A", sourceID: source)
+    let ownedBySource = selfClip.pasted(onto: src, samePhoto: true)
+    check(ownedBySource.masks == src.masks, "paste: onto the photo it was copied from, its masks must not change")
+    check(selfClip.pasted(onto: src, samePhoto: false).masks != src.masks, "paste: onto another photo the masks are adapted (the contrast to the rule above)")
     var oneMask = CopySelection(); oneMask.masks = [sky.id]
     check(Clipboard(settings: src, selection: oneMask, sourceName: "A").summary == "Sky mask", "copy: one mask reads by name")
 }

@@ -63,6 +63,8 @@ struct EditorView: View {
     @State private var showDiagnostics = false
     @State private var showHistory = false
     @State private var showCopy = false
+    /// Paste with AI Denoise ticked asks first: it needs a clean of this photo.
+    @State private var denoisePasteClip: Clipboard?
     @State private var wbMark: CGPoint?
 
     // panel height the user chose by dragging the handle (per tool); nil = automatic
@@ -209,7 +211,18 @@ struct EditorView: View {
         .sheet(isPresented: $showHistory) { HistorySheet(vm: vm) }
         .sheet(isPresented: $showPhotoInfo) { PhotoInfoView(item: item, url: store.fileURL(item)) }
         .sheet(isPresented: $showCopy) {
-            CopyEditsSheet(settings: vm.settings, sourceName: item.displayName) { store.clipboard = $0 }
+            CopyEditsSheet(settings: vm.settings, sourceName: item.displayName, sourceID: item.id) { store.clipboard = $0 }
+        }
+        .confirmationDialog("Paste AI Denoise too?", isPresented: Binding(get: { denoisePasteClip != nil }, set: { if !$0 { denoisePasteClip = nil } }),
+                            titleVisibility: .visible) {
+            if let c = denoisePasteClip {
+                Button("Paste and clean this photo (about a minute)") { vm.paste(c, withDenoise: true); denoisePasteClip = nil }
+                    .accessibilityIdentifier("paste-and-clean")
+                Button("Paste without AI Denoise") { vm.paste(c); denoisePasteClip = nil }
+                Button("Cancel", role: .cancel) { denoisePasteClip = nil }
+            }
+        } message: {
+            Text("AI Denoise cleans each photo on its own. If you leave Lumen it pauses and carries on when you're back.")
         }
         .onChange(of: vm.wbPicking) { _, on in if !on { wbMark = nil } }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },
@@ -689,7 +702,11 @@ struct EditorView: View {
                 // like Lightroom's Copy Settings / Paste Settings: what goes is chosen when copying
                 Button { showCopy = true } label: { Label("Copy edits…", systemImage: "doc.on.doc") }
                     .accessibilityIdentifier("menu-copy")
-                Button { if let c = store.clipboard { vm.paste(c) } } label: {
+                Button {
+                    guard let c = store.clipboard else { return }
+                    // a clean is about a minute with the screen locked: ask first (unless this photo is already cleaned)
+                    if c.bringsDenoise, !vm.denoiseReady { denoisePasteClip = c } else { vm.paste(c, withDenoise: true) }
+                } label: {
                     Label { Text("Paste edits"); Text(store.clipboard?.summary ?? "Copy edits first") } icon: { Image(systemName: "doc.on.clipboard") }
                 }
                 .disabled(store.clipboard == nil)

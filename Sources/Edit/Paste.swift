@@ -46,6 +46,8 @@ struct Clipboard: Equatable {
     var selection: CopySelection
     /// The photo they came from (for the "Pasted … from …" message).
     var sourceName: String
+    /// Its id: pasting back onto it must not re-adapt its own masks (checklist review, 23 Oct).
+    var sourceID: UUID? = nil
 
     /// Pasting brings AI Denoise (the photo may need a clean first).
     var bringsDenoise: Bool { selection.aiDenoise && settings.aiDenoise > 0 }
@@ -64,7 +66,9 @@ struct Clipboard: Equatable {
 
     /// `own` with the copied edits pasted on. Everything not chosen stays the photo's own; heals, Lens Blur (and its
     /// focus mask) and AI Denoise's strength always do (the caller pastes AI Denoise once the photo is cleaned).
-    func pasted(onto own: EditSettings) -> EditSettings {
+    /// `samePhoto`: it is being pasted back onto the photo it was copied from; the masks it picked are already there as
+    /// they are (re-adapting them would drop a tapped subject, reorder them and add an undo step for nothing).
+    func pasted(onto own: EditSettings, samePhoto: Bool = false) -> EditSettings {
         var s = own
         for t in CopySelection.tools where selection.has(t) {
             s.take(t, from: settings)
@@ -73,7 +77,7 @@ struct Clipboard: Equatable {
         s.aiDenoise = own.aiDenoise               // Detail's take() copies it; a clean of this photo decides
         if selection.hdr { s.hdr = settings.hdr; s.hdrStops = settings.hdrStops }
         let chosen = settings.copyableMasks.filter { selection.masks.contains($0.id) }
-        if !chosen.isEmpty {
+        if !chosen.isEmpty, !samePhoto {
             // pasting the same mask again replaces it instead of adding a second copy
             let ids = Set(chosen.map(\.id))
             s.masks.removeAll { ids.contains($0.id) && $0.id != own.lensBlur.maskID }

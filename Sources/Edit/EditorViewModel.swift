@@ -621,7 +621,9 @@ final class EditorViewModel: ObservableObject {
             }
         }
         saveWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        // CI: `-lumenDemoSaveDelay <s>` makes the wait long enough for a test to leave the app inside it
+        let delay = DemoMode.value("-lumenDemoSaveDelay").flatMap(Double.init) ?? 0.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func flushSave() {
@@ -1360,6 +1362,8 @@ final class EditorViewModel: ObservableObject {
     private var peopleSearch = 0
     /// A running multi-person removal can be stopped (A19: only AI Denoise could). What is removed so far is kept.
     nonisolated(unsafe) private var removePeopleCancel = false
+    /// People are being removed one by one (the Stop button shows only then, not for a single painted heal).
+    @Published private(set) var removingPeople = false
 
     func findPeople() {
         guard !healBusy, let session else { return }
@@ -1440,6 +1444,7 @@ final class EditorViewModel: ObservableObject {
         healBusy = true
         healBusyText = chosen.count == 1 ? "Removing…" : "Removing 1 of \(chosen.count)…"
         removePeopleCancel = false
+        removingPeople = true
         freeMemoryForHeal()
         let mp = megapixels
         let item = self.item
@@ -1464,6 +1469,7 @@ final class EditorViewModel: ObservableObject {
             let done = made, failed = failures, stopped = self?.removePeopleCancel == true
             Task { @MainActor [weak self] in
                 guard let self else { store?.addHeals(done, to: item); return }
+                self.removingPeople = false
                 self.peopleFound = nil
                 self.peopleChosen = []
                 if stopped { self.healMessage = "Stopped after \(done.count) of \(chosen.count)." }
@@ -1488,14 +1494,19 @@ final class EditorViewModel: ObservableObject {
     // MARK: Paste
 
     /// Paste edits: exactly what was chosen when copying (`Clipboard.pasted`, the same rule as the library's Paste).
-    /// AI Denoise needs a clean of this photo (about a minute): it is set once the photo is cleaned.
-    func paste(_ clip: Clipboard) {
+    /// AI Denoise needs a clean of this photo (about a minute, a locked screen): only with `withDenoise`, which the
+    /// menu asks the user for first; a clean that already exists just sets the strength.
+    func paste(_ clip: Clipboard, withDenoise: Bool = false) {
         lastChange = .distantPast
-        settings = clip.pasted(onto: settings)
-        if clip.bringsDenoise {
-            if session?.hasDenoised == true { settings.aiDenoise = clip.settings.aiDenoise }
-            else { denoiseTarget = clip.settings.aiDenoise; DispatchQueue.main.async { [weak self] in self?.startDenoise() } }
+        settings = clip.pasted(onto: settings, samePhoto: item.id == clip.sourceID)
+        guard withDenoise, clip.bringsDenoise else { return }
+        if session?.hasDenoised == true { settings.aiDenoise = clip.settings.aiDenoise; return }
+        guard MemoryBudget.denoiseFits, EditSession.hasDenoiseModel else {
+            message = "AI Denoise isn't available on this iPhone (it needs more memory than it gives an app). The other edits were pasted."
+            return
         }
+        denoiseTarget = clip.settings.aiDenoise
+        DispatchQueue.main.async { [weak self] in self?.startDenoise() }
     }
 
     // MARK: Auto-level

@@ -130,6 +130,7 @@ struct LibraryView: View {
                     }
                     store.clipboard = nil
                 }
+                store.runPersistenceChecksIfRequested()
                 if let n = DemoMode.value("-lumenDemoOpen"), let i = Int(n), store.items.indices.contains(i) {
                     path = [store.items[i]]
                 }
@@ -143,7 +144,7 @@ struct LibraryView: View {
             .overlay(alignment: .bottom) { denoiseBanner }
             .onAppear { store.refreshPausedCleans() }
             .sheet(item: $copyFrom) { item in
-                CopyEditsSheet(settings: store.settings(for: item), sourceName: item.displayName) { clip in
+                CopyEditsSheet(settings: store.editorSettings(for: item), sourceName: item.displayName, sourceID: item.id) { clip in
                     store.clipboard = clip
                     show("Copied \(clip.summary). Select photos and tap Paste.")
                 }

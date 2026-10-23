@@ -132,7 +132,7 @@ struct HealOverlay: View {
             .accessibilityIdentifier("heal-busy")
         }
         // A19: while people are being removed, a Stop button goes below the badge (what's removed stays removed).
-        if vm.healBusy, vm.healBusyText.hasPrefix("Removing") {
+        if vm.healBusy, vm.removingPeople {
             Button("Stop") { vm.cancelRemovingPeople() }
                 .font(.footnote.weight(.semibold))
                 .padding(.horizontal, 14).padding(.vertical, 6)

@@ -84,17 +84,22 @@ final class HeavyWork: @unchecked Sendable {
         condition.unlock()
         // short of room even alone: what can be made again goes first
         if alone, Self.availableMB() < need + Self.marginMB {
-            Self.release?(kind)
-            // what the app just let go of (the 100 % copy, GPU caches) can take a moment to come back
-            for _ in 0..<6 where Self.availableMB() < need { Thread.sleep(forTimeInterval: 0.5) }
-            let free = Self.availableMB()
-            if free < need {
-                if optional {
+            if optional {
+                // an optional job (the 100 % copy, the original copy) is not worth letting go of models for, or
+                // sleeping on the shared work queue for (it stalled the next photo's decode by 3 s): it starts if there
+                // is room, else it is skipped at once
+                let free = Self.availableMB()
+                if free < need {
                     finish(me)
                     Self.note?("\(kind.rawValue): skipped, only \(free) MB free (~\(need) MB needed)")
                     return nil
                 }
-                Self.note?("\(kind.rawValue): starting with only \(free) MB free (~\(need) MB needed)")
+            } else {
+                Self.release?(kind)
+                // what the app just let go of (the 100 % copy, GPU caches) can take a moment to come back
+                for _ in 0..<6 where Self.availableMB() < need { Thread.sleep(forTimeInterval: 0.5) }
+                let free = Self.availableMB()
+                if free < need { Self.note?("\(kind.rawValue): starting with only \(free) MB free (~\(need) MB needed)") }
             }
         }
         defer { finish(me) }

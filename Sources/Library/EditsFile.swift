@@ -50,8 +50,11 @@ enum EditsFile {
     static func load(_ data: Data) -> (settings: EditSettings, report: LoadReport) {
         var report = LoadReport()
         let decoder = JSONDecoder()
-        if let s = try? decoder.decode(EditSettings.self, from: data) {
+        if var s = try? decoder.decode(EditSettings.self, from: data) {
             report.newerVersion = s.formatVersion > EditSettings.currentFormat
+            // what this version holds is in this version's format: saved back, the file must not claim to be the newer
+            // one it came from (it no longer holds that version's extras), or a later newer Lumen would trust it
+            s.formatVersion = EditSettings.currentFormat
             return (s, report)
         }
         guard let old = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
@@ -84,6 +87,7 @@ enum EditsFile {
             if decodes(trial) != nil { merged = trial } else { report.droppedSettings.append(k) }
         }
         guard var s = decodes(merged) else { return (EditSettings(), report) }
+        s.formatVersion = EditSettings.currentFormat   // see above
         // A malformed container is not an empty mask list. Preserve the original and tell the caller.
         if let masks = old["masks"], !(masks is [Any]) { report.droppedMasks += 1 }
         // masks one by one, and inside a mask its parts one by one

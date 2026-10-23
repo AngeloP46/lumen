@@ -403,6 +403,8 @@ struct EditSettings: Codable, Equatable {
     /// The edits file format this was written in. A newer Lumen writes a higher number, so an older Lumen (after a
     /// rollback) knows to keep a copy before it saves over what it can't fully read (quality checklist A1).
     @Defaulted<DefaultFormat> var formatVersion: Int
+    /// Raise this whenever a change to what is saved would lose information in an older Lumen (a new required key, a
+    /// renamed case, a new mask kind): older versions then recognise a newer file, keep a copy of it and say so.
     static let currentFormat = 1
 
     var hasCrop: Bool { cropL > 0 || cropT > 0 || cropR < 1 || cropB < 1 }
