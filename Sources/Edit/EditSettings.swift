@@ -306,6 +306,8 @@ enum DefaultZero: DefaultValue { static let value = 0.0 }
 enum DefaultHundred: DefaultValue { static let value = 100.0 }
 enum DefaultZone: DefaultValue { static let value = GradeZone() }
 enum DefaultLensBlur: DefaultValue { static let value = LensBlurSettings() }
+/// Files without the key were written before 22 Oct 2026: today's format (they read fine).
+enum DefaultFormat: DefaultValue { static let value = EditSettings.currentFormat }
 
 /// Decodes to the default when the key is absent, so sidecars and saved presets from before the key existed still load.
 @propertyWrapper
@@ -397,6 +399,13 @@ struct EditSettings: Codable, Equatable {
 
     // Heal: things removed with the AI eraser. They belong to this photo only (never pasted or saved in presets).
     @Defaulted<DefaultNoHeals> var heals: [HealSpot]
+
+    /// The edits file format this was written in. A newer Lumen writes a higher number, so an older Lumen (after a
+    /// rollback) knows to keep a copy before it saves over what it can't fully read (quality checklist A1).
+    @Defaulted<DefaultFormat> var formatVersion: Int
+    /// Raise this whenever a change to what is saved would lose information in an older Lumen (a new required key, a
+    /// renamed case, a new mask kind): older versions then recognise a newer file, keep a copy of it and say so.
+    static let currentFormat = 1
 
     var hasCrop: Bool { cropL > 0 || cropT > 0 || cropR < 1 || cropB < 1 }
     var hasTransform: Bool { tVertical != 0 || tHorizontal != 0 || tAspect != 0 || tScale != 100 || tOffX != 0 || tOffY != 0 }
@@ -666,7 +675,8 @@ extension EditSettings {
         for (name, value) in new where String(describing: value) != String(describing: before[name] ?? "") {
             changed.append((name, value))
         }
-        let names = Array(NSOrderedSet(array: changed.map { Self.historyName($0.0) })) as? [String] ?? []
+        var seen = Set<String>()
+        let names = changed.map { Self.historyName($0.0) }.filter { seen.insert($0).inserted }   // in order, once each
         guard !names.isEmpty else { return "No change" }
         if masks.count != old.masks.count { return masks.count > old.masks.count ? "Mask added" : "Mask removed" }
         if heals.count != old.heals.count { return heals.count > old.heals.count ? "Heal" : "Heal removed" }

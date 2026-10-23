@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: 'Run only this test method, for example testPinchZoomsAndDoubleTapToggles (empty = all)'
+        description: 'Run only these test methods, comma-separated, e.g. testPinchZoomsAndDoubleTapToggles (empty = all)'
         required: false
         default: ''
       device:
@@ -64,7 +64,8 @@ jobs:
           xcrun simctl bootstatus $UDID -b
           set +e
           ONLY_ARG=""
-          if [ -n "$ONLY_TEST" ]; then ONLY_ARG="-only-testing:LumenUITests/LumenUITests/$ONLY_TEST"; fi
+          # one test, or several separated by commas
+          for t in $(echo "$ONLY_TEST" | tr ',' ' '); do ONLY_ARG="$ONLY_ARG -only-testing:LumenUITests/LumenUITests/$t"; done
           xcodebuild test -project Lumen.xcodeproj -scheme Lumen $ONLY_ARG \
             -destination "platform=iOS Simulator,id=$UDID" \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \

@@ -42,8 +42,8 @@ extension EditSession {
     nonisolated(unsafe) static var healModelReady = false
     /// Loads (and on first launch compiles) the Heal model. Slow: call it in the background, early.
     static func prepareHealModel() {
-        _ = healModel
-        healModelReady = healModel != nil
+        let model = healModel   // once: a second read after a release would load it all over again
+        healModelReady = model != nil
     }
     /// Called at each step of a heal (app: the diagnostics log; engine test: prints memory), to see where memory goes.
     nonisolated(unsafe) static var healProbe: ((String) -> Void)?

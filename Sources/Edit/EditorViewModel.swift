@@ -5,6 +5,11 @@ import UniformTypeIdentifiers
 
 private let histQueue = DispatchQueue(label: "lumen.hist", qos: .utility)
 private let workQueue = DispatchQueue(label: "lumen.work", qos: .userInitiated)
+// AI masks get their own queue: they are seconds of work, and while the previous photo's masks were being
+// worked out the next photo's decode waited behind them on the serial work queue (phone 0.1.465: 5 s to
+// "photo ready"; checklist A7). Memory coordination stays with HeavyWork, so the queue only changes time,
+// never how much runs at once.
+private let aiMaskQueue = DispatchQueue(label: "lumen.aimask", qos: .userInitiated)
 
 struct ExportResult: Identifiable {
     let id = UUID()
@@ -64,6 +69,8 @@ final class EditorViewModel: ObservableObject {
     private var strokeOpen = false
     @Published private(set) var autoMaskBusy = false
     @Published private(set) var autoMaskMissing: Set<String> = []
+    /// AI steps that failed (as against ran and found nothing): the banner says so and offers "Try again" (A18).
+    @Published private(set) var autoMaskFailed: Set<String> = []
 
     // Crop editing: the whole straightened picture is shown with a frame on top
     @Published var cropEditing = false { didSet { requestRender() } }
@@ -92,6 +99,12 @@ final class EditorViewModel: ObservableObject {
     private var histHDRImage: CIImage?
     private var histStops: (Double, Double) = (2, 0)
     private var saveWork: DispatchWorkItem?
+    // Captured by the pending save: late heal results must survive the editor itself being released.
+    private final class SaveState {
+        var revision = 0
+        var saved = 0
+    }
+    private let saveState = SaveState()
 
     // Undo / redo
     private var undoStack: [EditSettings] = []
@@ -129,7 +142,48 @@ final class EditorViewModel: ObservableObject {
     // MARK: Loading
 
     nonisolated(unsafe) private var memoryWarning: NSObjectProtocol?
-    deinit { if let o = memoryWarning { NotificationCenter.default.removeObserver(o) } }
+    nonisolated(unsafe) private var lifecycleObservers: [NSObjectProtocol] = []
+    /// True while the saved edits are being put on screen: that is not a change, so it isn't saved again (before
+    /// 22 Oct opening a photo saved it 0.5 s later, writing back whatever this version could read: checklist A1).
+    private var loadingSettings = false
+    deinit {
+        if let o = memoryWarning { NotificationCenter.default.removeObserver(o) }
+        // every observer goes with the editor (two were left behind per photo opened: checklist A11)
+        for o in denoiseObservers + lifecycleObservers { NotificationCenter.default.removeObserver(o) }
+        // tells "the closed editor's copies are still held" apart from other memory that stays (checklist A8)
+        Diagnostics.shared.note("editor freed")
+    }
+    /// "photo ready" for diagnostics: how long it took (waiting for the work queue, then decoding) and what it holds.
+    private func notePhotoReady(asked: Date, began: Date, size: CGSize, heals: Int, denoise: Double, hdr: Bool) {
+        let total = Date().timeIntervalSince(asked), waited = began.timeIntervalSince(asked), decoded = Date().timeIntervalSince(began)
+        let times = String(format: "photo ready in %.1f s (waited %.1f s, decoded %.1f s; ", total, waited, decoded)
+        let mp = Int(size.width * size.height / 1_000_000)
+        let lens = Int(settings.effective.lensBlur.amount), masks = settings.masks.count
+        Diagnostics.shared.note(times + "\(mp) MP, \(heals) heals, AI Denoise \(Int(denoise * 100)), Lens Blur \(lens), \(masks) masks, HDR \(hdr))")
+    }
+
+    /// When the photo was asked for (open → first frame, for diagnostics).
+    private var openedAt: Date?
+
+    /// The editor is closing: what this session's frames cost, and memory at that moment (checklist F, A8).
+    func reportSession() {
+        let f = canvas.frameStats()
+        if f.count > 0 {
+            let r = renderStats()
+            Diagnostics.shared.note(String(format: "editor closed: %d frames, median %.0f ms, 95%% %.0f ms, slowest %.0f ms; building the picture median %.1f ms, 95%% %.1f ms",
+                                           f.count, f.median, f.p95, f.max, r.median, r.p95))
+        } else {
+            Diagnostics.shared.note("editor closed")
+        }
+    }
+
+    /// Time spent on the main thread building the picture in `requestRender` (milliseconds).
+    private var renderTimes: [Double] = []
+    private func renderStats() -> (median: Double, p95: Double) {
+        let s = renderTimes.sorted()
+        guard !s.isEmpty else { return (0, 0) }
+        return (s[s.count / 2], s[min(s.count - 1, s.count * 95 / 100)])
+    }
 
     func start(store: LibraryStore) {
         guard !started else { return }
@@ -143,6 +197,7 @@ final class EditorViewModel: ObservableObject {
             EditSession.releaseMaskModels()
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.maskMemo = [:]
                 if self.denoiseProgress == nil { self.denoiseQueue.async { EditSession.releaseDenoiseModel() } }
                 if !self.healBusy && !self.healPreparing { EditSession.releaseHealModel() }
                 // the 100 % copy goes even while zoomed in: a softer view is better than iOS closing Lumen
@@ -167,8 +222,32 @@ final class EditorViewModel: ObservableObject {
                 }
             }
         }
+        loadingSettings = true
         settings = loaded
+        loadingSettings = false
         applyingHistory = false
+        if let notice = store.takeLoadNotice(item) { message = notice }
+        // a heal that finished after an earlier editor of this photo closed is added to the file by the store; this
+        // editor read the file before that, so it takes the heals over (else its next save would overwrite them)
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: .lumenHealsAdded, object: nil, queue: .main) { [weak self] note in
+            guard let self, note.userInfo?["photo"] as? UUID == self.item.id, let spots = note.userInfo?["spots"] as? [HealSpot] else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let known = Set(self.settings.heals.map(\.id))
+                let fresh = spots.filter { !known.contains($0.id) }
+                guard !fresh.isEmpty else { return }
+                self.settings.heals.append(contentsOf: fresh)
+                self.settings.setOn(.heal, true)
+            }
+        })
+        // Lumen leaving the screen may be the last chance to write: the edit waiting its 0.5 s goes now (checklist A5)
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
+                                                                         object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.saveWork != nil else { return }
+                self.flushSave()
+            }
+        })
         // undo history arrives a moment later (read in the background, not while the photo is opening); edits made
         // meanwhile go on top of it
         let opened = loaded
@@ -183,6 +262,7 @@ final class EditorViewModel: ObservableObject {
         let heals = settings.effective.heals
         let denoise = settings.effective.aiDenoise / 100
         let asked = Date()
+        openedAt = asked
         workQueue.async {
             let began = Date()
             let s = EditSession(url: url, expandHDR: wantsHDR)
@@ -210,11 +290,12 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.session = s
                 self.source = src
+                self.maskMemo = [:]
                 self.sourceHeals = heals.map(\.id)
                 self.unhealedSource = nil   // belonged to the previous photo
                 // what runs next is logged step by step (owner's phone, 21 Oct: a 48 MP ProRAW closed Lumen 2-4 s after
                 // opening, with nothing in the log to say which step)
-                Diagnostics.shared.note("photo ready (\(heals.count) heals, AI Denoise \(Int(denoise * 100)), Lens Blur \(Int(self.settings.effective.lensBlur.amount)), \(self.settings.masks.count) masks, HDR \(wantsHDR))")
+                self.notePhotoReady(asked: asked, began: began, size: s?.nativeSize ?? .zero, heals: heals.count, denoise: denoise, hdr: wantsHDR)
                 self.isLoading = false
                 self.loadFailed = (src == nil)
                 if let src { self.imageSize = src.size; self.sourceSize = src.size }
@@ -276,7 +357,7 @@ final class EditorViewModel: ObservableObject {
     nonisolated(unsafe) private var denoisePausing = false
     /// The strength AI Denoise is set to when the clean it waits for finishes (pasted edits ask for theirs).
     private var denoiseTarget: Double?
-    private var denoiseObservers: [NSObjectProtocol] = []
+    nonisolated(unsafe) private var denoiseObservers: [NSObjectProtocol] = []
 
     /// The slider moved: the first time the photo is cleaned (tens of seconds, with progress); after that only the mix
     /// changes, so the photo is decoded again once the slider rests.
@@ -479,11 +560,15 @@ final class EditorViewModel: ObservableObject {
                     Diagnostics.shared.note("reload failed")
                     return
                 }
-                if sameHeals, let previous, previous.size == src.size {
-                    let (masks, tried) = previous.snapshotMasks()
-                    for key in tried { src.storeMask(key, masks[key]) }
-                    src.storeDepth(previous.depthField)
-                    src.storeScene(previous.sceneField)
+                // AI masks for the heals the photo had before are kept, so undo / redo of a heal or a person removed
+                // brings its masks back instead of working them all out again (diagnostics 22 Oct: eight full
+                // subject + scene + depth runs in 12 s while undoing and redoing)
+                if let previous { self.memoMasks(of: previous, heals: self.sourceHeals) }
+                if let memo = self.maskMemo[heals.map(\.id)], memo.size == src.size {
+                    for key in memo.tried { src.storeMask(key, memo.masks[key]) }
+                    src.storeDepth(memo.depth)
+                    src.storeScene(memo.scene)
+                    if !sameHeals { Diagnostics.shared.note("AI masks: kept from before (undo/redo)") }
                 }
                 self.session = s
                 self.source = src
@@ -527,7 +612,7 @@ final class EditorViewModel: ObservableObject {
             redoStack.removeAll()
             lastChange = Date()
         }
-        scheduleSave()
+        if !loadingSettings { scheduleSave() }
         requestRender()
         if settings.masks != old.masks || settings.lensBlur != old.lensBlur { prepareAutoMasksIfNeeded() }
         // HDR changes how the file is decoded; heals are painted in while decoding
@@ -536,21 +621,33 @@ final class EditorViewModel: ObservableObject {
     }
 
     private func scheduleSave() {
+        saveState.revision += 1
+        let revision = saveState.revision, state = saveState
         saveWork?.cancel()
         let s = settings, item = item
         // before the saved history has arrived, let the store add this step to the file's own history (writing ours
         // would drop the older steps)
         let history: LibraryStore.EditHistory? = historyLoaded ? LibraryStore.EditHistory(current: s, undo: undoStack, redo: redoStack) : nil
         let work = DispatchWorkItem { [weak store] in
-            Task { @MainActor in store?.save(s, for: item, history: history) }
+            Task { @MainActor in
+                guard let store, state.revision == revision, state.saved < revision else { return }
+                store.save(s, for: item, history: history)
+                state.saved = revision // the store owns retries after a failed write
+            }
         }
         saveWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        // CI: `-lumenDemoSaveDelay <s>` makes the wait long enough for a test to leave the app inside it
+        let delay = DemoMode.value("-lumenDemoSaveDelay").flatMap(Double.init) ?? 0.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func flushSave() {
         saveWork?.cancel()
-        store?.save(settings, for: item, history: historyLoaded ? LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack) : nil)
+        saveWork = nil
+        if saveState.saved < saveState.revision {
+            store?.save(settings, for: item, history: historyLoaded ? LibraryStore.EditHistory(current: settings, undo: undoStack, redo: redoStack) : nil)
+            saveState.saved = saveState.revision
+        }
         store?.flushHistory()
     }
 
@@ -559,6 +656,12 @@ final class EditorViewModel: ObservableObject {
     /// Rebuilds the (lazy) graph and hands it to the Metal view. Cheap enough to call on every slider tick.
     func requestRender() {
         guard let session, let source else { return }
+        let buildStart = CACurrentMediaTime()
+        defer { if renderTimes.count < 5000 { renderTimes.append((CACurrentMediaTime() - buildStart) * 1000) } }
+        if let opened = openedAt {
+            openedAt = nil
+            canvas.onFirstFrame = { Diagnostics.shared.note(String(format: "first frame drawn %.1f s after opening", Date().timeIntervalSince(opened))) }
+        }
         let s = showOriginal ? EditSettings() : settings
         // Masks show the photo cropped and turned like every other tool; the mask overlay and handles map through
         // `SourceGeometry` (before 2026-10-10 the Masks tool showed the uncropped, unturned photo instead)
@@ -905,6 +1008,18 @@ final class EditorViewModel: ObservableObject {
         if select { selectMask(m.id); maskTab = .shape }
     }
 
+    /// AI masks of the last few heal versions of this photo (keyed by their heal ids), for undo / redo. Only the masks
+    /// (a few MB each at preview size), never the decoded photo.
+    private struct MaskMemo { let size: CGSize; let masks: [String: CIImage]; let tried: Set<String>; let depth: DepthField?; let scene: SceneField?; let used: Date }
+    private var maskMemo: [[UUID]: MaskMemo] = [:]
+
+    private func memoMasks(of source: ImageSource, heals: [UUID]) {
+        let (masks, tried) = source.snapshotMasks()
+        guard !tried.isEmpty else { return }
+        maskMemo[heals] = MaskMemo(size: source.size, masks: masks, tried: tried, depth: source.depthField, scene: source.sceneField, used: Date())
+        while maskMemo.count > 4, let oldest = maskMemo.min(by: { $0.value.used < $1.value.used })?.key { maskMemo[oldest] = nil }
+    }
+
     private func prepareAutoMasksIfNeeded() {
         guard let session, let source, !autoMaskBusy, denoiseProgress == nil else { return }
         let needs = ((lensBlurEditing || settings.effective.lensBlur.amount > 0) && (!source.hasTried(EditSession.aiDepth) || !source.hasTried(EditSession.aiSubject) || !source.hasTried(EditSession.subjectKey(settings.lensBlur.subjectPoint)))) || settings.masks.contains { m in
@@ -930,7 +1045,7 @@ final class EditorViewModel: ObservableObject {
         Diagnostics.shared.note("AI masks: working them out")
         let slow = DemoMode.value("-lumenDemoSlowAI") != nil   // CI: time to see the busy notice
         let mp = megapixels
-        workQueue.async {
+        aiMaskQueue.async {
             if slow { Thread.sleep(forTimeInterval: 4) }
             _ = HeavyWork.shared.run(.aiMasks, megapixels: mp) { session.prepareAutoMasks(analysisSettings, source: source) }
             let missing: Set<String> = Set([EditSession.aiSubject, EditSession.aiSky, EditSession.aiPeople, EditSession.aiDepth, EditSession.aiScene].filter { source.hasTried($0) && source.cachedMask($0) == nil })
@@ -942,6 +1057,7 @@ final class EditorViewModel: ObservableObject {
                 // new one is analysed now (it was skipped while this job was busy)
                 guard self.source === source else { self.prepareAutoMasksIfNeeded(); return }
                 self.autoMaskMissing = missing
+                self.autoMaskFailed = source.failures
                 if self.lensFocusPending, self.settings.lensBlur == askedBlur { self.finishLensFocus() }
                 self.syncDetailMasks()
                 self.requestRender()
@@ -1186,16 +1302,17 @@ final class EditorViewModel: ObservableObject {
         freeMemoryForHeal()   // it decodes the photo at 3072 px: the copies that can be made again go first
         healBusy = true
         healBusyText = EditSession.healModelReady ? "Removing…" : "Preparing Heal…"
-        freeMemoryForHeal()
         Diagnostics.shared.note("heal start (model ready \(EditSession.healModelReady))")
         let mp = megapixels
-        workQueue.async {
+        let item = self.item
+        workQueue.async { [weak store = self.store] in
             let spot = HeavyWork.shared.run(.heal, megapixels: mp) { session.makeHeal(strokes: [stroke], earlier: earlier) } ?? nil
             LumenGPU.context.clearCaches()
             Diagnostics.shared.note(spot == nil ? "heal failed" : "heal done")
             let why = EditSession.healFailure ?? .failed
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                // the editor closed meanwhile: the fix still goes on the photo (checklist A4)
+                guard let self else { if let spot { store?.addHeals([spot], to: item) }; return }
                 guard let spot else {
                     self.healBusy = false
                     self.healStroke = []
@@ -1235,8 +1352,10 @@ final class EditorViewModel: ObservableObject {
         let hdr = settings.hdr
         let generation = loadGeneration
         Diagnostics.shared.note("original copy (no heals, no AI Denoise): making it")
+        let mp = megapixels
         workQueue.async {
-            let src = HeavyWork.shared.run(.original, megapixels: 0, optional: true) {
+            // the estimate is the photo's size (checklist A8): megapixels 0 declared 450 MB for every photo
+            let src = HeavyWork.shared.run(.original, megapixels: mp, optional: true) {
                 session.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true, heals: [], denoise: false)
             } ?? nil
             Task { @MainActor [weak self] in
@@ -1257,6 +1376,10 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var peopleChosen: Set<Int> = []
     /// Bumped by Cancel (or leaving Heal) so a search still running is ignored when it finishes.
     private var peopleSearch = 0
+    /// A running multi-person removal can be stopped (A19: only AI Denoise could). What is removed so far is kept.
+    nonisolated(unsafe) private var removePeopleCancel = false
+    /// People are being removed one by one (the Stop button shows only then, not for a single painted heal).
+    @Published private(set) var removingPeople = false
 
     func findPeople() {
         guard !healBusy, let session else { return }
@@ -1325,6 +1448,9 @@ final class EditorViewModel: ObservableObject {
         requestRender()
     }
 
+    /// Stops a running multi-person removal between people (A19); the people already removed stay removed.
+    func cancelRemovingPeople() { removePeopleCancel = true }
+
     /// Removes the people picked, one heal each (each built on the ones before), all added as one undo step.
     func removeChosenPeople() {
         guard !healBusy, let session, let people = peopleFound else { return }
@@ -1333,12 +1459,16 @@ final class EditorViewModel: ObservableObject {
         let earlier = settings.effective.heals
         healBusy = true
         healBusyText = chosen.count == 1 ? "Removing…" : "Removing 1 of \(chosen.count)…"
+        removePeopleCancel = false
+        removingPeople = true
         freeMemoryForHeal()
         let mp = megapixels
-        workQueue.async {
+        let item = self.item
+        workQueue.async { [weak self, weak store = self.store] in
             var made: [HealSpot] = []
             var failures: [HealFailure] = []
             for (i, person) in chosen.enumerated() {
+                if self?.removePeopleCancel == true { break }   // A19: stop between people; what's removed stays removed
                 if i > 0 {
                     let text = "Removing \(i + 1) of \(chosen.count)…"
                     Task { @MainActor [weak self] in self?.healBusyText = text }
@@ -1352,12 +1482,14 @@ final class EditorViewModel: ObservableObject {
                     failures.append(EditSession.healFailure ?? .failed)
                 }
             }
-            let done = made, failed = failures
+            let done = made, failed = failures, stopped = self?.removePeopleCancel == true
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self else { store?.addHeals(done, to: item); return }
+                self.removingPeople = false
                 self.peopleFound = nil
                 self.peopleChosen = []
-                if let first = failed.first {
+                if stopped { self.healMessage = "Stopped after \(done.count) of \(chosen.count)." }
+                else if let first = failed.first {
                     self.healMessage = done.isEmpty ? first.message
                         : "\(failed.count) of \(chosen.count) couldn't be removed. Paint over what's left to try again."
                 }
@@ -1375,25 +1507,22 @@ final class EditorViewModel: ObservableObject {
         if selectedHealID == id { selectedHealID = nil }
     }
 
-    // MARK: Paste some edits
+    // MARK: Paste
 
-    /// Pastes only the chosen tools from the copied edits.
-    func paste(_ sections: Set<EditSection>, from c: EditSettings, denoise: Bool = false) {
+    /// Paste edits: exactly what was chosen when copying (`Clipboard.pasted`, the same rule as the library's Paste).
+    /// AI Denoise needs a clean of this photo (about a minute, a locked screen): only with `withDenoise`, which the
+    /// menu asks the user for first; a clean that already exists just sets the strength.
+    func paste(_ clip: Clipboard, withDenoise: Bool = false) {
         lastChange = .distantPast
-        var s = settings
-        for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: c) }
-        if sections.contains(.masks) { s.masks = s.masks.forAnotherPhoto }
-        // AI Denoise needs a clean of this photo (about a minute): only pasted when asked for, then cleaned at once
-        s.aiDenoise = settings.aiDenoise
-        if denoise, c.aiDenoise > 0 {
-            if session?.hasDenoised == true { s.aiDenoise = c.aiDenoise }
-            else { denoiseTarget = c.aiDenoise; DispatchQueue.main.async { [weak self] in self?.startDenoise() } }
+        settings = clip.pasted(onto: settings, samePhoto: item.id == clip.sourceID)
+        guard withDenoise, clip.bringsDenoise else { return }
+        if session?.hasDenoised == true { settings.aiDenoise = clip.settings.aiDenoise; return }
+        guard MemoryBudget.denoiseFits, EditSession.hasDenoiseModel else {
+            message = "AI Denoise isn't available on this iPhone (it needs more memory than it gives an app). The other edits were pasted."
+            return
         }
-        if sections.contains(.masks), let id = settings.lensBlur.maskID,
-           let ownFocus = settings.masks.first(where: { $0.id == id }) {
-            s.masks.removeAll { $0.id == id }; s.masks.append(ownFocus)
-        }
-        settings = s
+        denoiseTarget = clip.settings.aiDenoise
+        DispatchQueue.main.async { [weak self] in self?.startDenoise() }
     }
 
     // MARK: Auto-level
@@ -1462,6 +1591,7 @@ final class EditorViewModel: ObservableObject {
     /// Why an AI mask part selects nothing on this photo (nil = it found something, is still looking, or isn't AI).
     func emptyReason(_ c: MaskComponent) -> String? {
         guard !autoMaskBusy else { return nil }
+        if let failed = failureReason(c) { return failed }
         let missing = autoMaskMissing
         switch c.kind {
         case .subject: return missing.contains(EditSession.aiSubject) ? "No subject found in this photo" : nil
@@ -1481,6 +1611,30 @@ final class EditorViewModel: ObservableObject {
             return "No \(ListFormatter.localizedString(byJoining: names)) found in this photo"
         default: return nil
         }
+    }
+
+    /// This mask part's AI step failed (not "found nothing"): says so, so the user knows trying again can help.
+    private func failureReason(_ c: MaskComponent) -> String? {
+        let keys: [String]
+        switch c.kind {
+        case .subject, .background: keys = [EditSession.aiSubject, EditSession.subjectKey(c.subjectPoint)]
+        case .sky: keys = [EditSession.aiSky, EditSession.aiScene]
+        case .people: keys = [EditSession.aiPeople]
+        case .depth: keys = [EditSession.aiDepth]
+        case .landscape: keys = [EditSession.aiScene]
+        default: return nil
+        }
+        guard keys.contains(where: { autoMaskFailed.contains($0) }) else { return nil }
+        return "The AI couldn't run on this photo (usually not enough memory). That isn't the same as finding nothing: try again."
+    }
+
+    /// Banner's "Try again": everything that failed is attempted once more.
+    func retryAI() {
+        source?.clearFailures()
+        autoMaskFailed = []
+        autoMaskMissing = []
+        Diagnostics.shared.note("AI masks: trying again after a failure")
+        prepareAutoMasksIfNeeded()
     }
 
     /// What the AI is still working out for `m`, shown on the photo so a tap on an automatic mask type never looks
@@ -1670,9 +1824,19 @@ final class EditorViewModel: ObservableObject {
         workQueue.async {
             defer { patches.close() }
             Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
-            let data = HeavyWork.shared.run(.export, megapixels: mp) {
-                session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
-            } ?? nil
+            let exportStart = Date()
+            let outcome = HeavyWork.shared.run(.export, megapixels: mp) {
+                session.renderDataOutcome(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+            }
+            var data: Data?
+            var failMessage: String?
+            switch outcome {
+            case .data(let d): data = d
+            case .failed(let f): failMessage = f.message
+            case nil: failMessage = "There isn't enough free memory to export this photo right now. Close other apps and try again."
+            }
+            Diagnostics.shared.note(String(format: "export %@ in %.1f s (%@)", data == nil ? "failed" : "done",
+                                           Date().timeIntervalSince(exportStart), data.map { "\($0.count / 1_048_576) MB" } ?? "no file"))
             var url: URL?
             if let data {
                 let u = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-lumen.\(o.format.ext)")
@@ -1682,7 +1846,7 @@ final class EditorViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.isExporting = false
                 self?.refreshUnhealed()
-                if let url { self?.exported = ExportResult(url: url) } else { self?.message = "Export failed." }
+                if let url { self?.exported = ExportResult(url: url) } else { self?.message = failMessage ?? "Export failed." }
             }
         }
     }

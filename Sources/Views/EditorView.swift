@@ -68,7 +68,9 @@ struct EditorView: View {
     @State private var showPhotoInfo = false
     @State private var showDiagnostics = false
     @State private var showHistory = false
-    @State private var showPasteSome = false
+    @State private var showCopy = false
+    /// Paste with AI Denoise ticked asks first: it needs a clean of this photo.
+    @State private var denoisePasteClip: Clipboard?
     @State private var wbMark: CGPoint?
 
     // panel height the user chose by dragging the handle (per tool); nil = automatic
@@ -152,7 +154,7 @@ struct EditorView: View {
             vm.setLensBlurEditing(tool == .lensBlur)
             if DemoMode.isOn { applyDemo() }
         }
-        .onDisappear { vm.flushSave(); store.refreshThumbnail(item); vm.healToolChanged(open: false, now: true); vm.detailToolChanged(open: false, now: true); EditSession.releaseMaskModels(); LumenGPU.context.clearCaches() }
+        .onDisappear { vm.reportSession(); vm.flushSave(); store.refreshThumbnail(item); vm.healToolChanged(open: false, now: true); vm.detailToolChanged(open: false, now: true); EditSession.releaseMaskModels(); LumenGPU.context.clearCaches() }
         .onChange(of: tool) { _, new in
             vm.wbPicking = false
             vm.lensBlurPicking = false
@@ -236,8 +238,19 @@ struct EditorView: View {
         .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
         .sheet(isPresented: $showHistory) { HistorySheet(vm: vm) }
         .sheet(isPresented: $showPhotoInfo) { PhotoInfoView(item: item, url: store.fileURL(item)) }
-        .sheet(isPresented: $showPasteSome) {
-            if let c = store.clipboard { PasteSomeSheet(clip: c) { vm.paste($0, from: c, denoise: $1) } }
+        .sheet(isPresented: $showCopy) {
+            CopyEditsSheet(settings: vm.settings, sourceName: item.displayName, sourceID: item.id) { store.clipboard = $0 }
+        }
+        .confirmationDialog("Paste AI Denoise too?", isPresented: Binding(get: { denoisePasteClip != nil }, set: { if !$0 { denoisePasteClip = nil } }),
+                            titleVisibility: .visible) {
+            if let c = denoisePasteClip {
+                Button("Paste and clean this photo (about a minute)") { vm.paste(c, withDenoise: true); denoisePasteClip = nil }
+                    .accessibilityIdentifier("paste-and-clean")
+                Button("Paste without AI Denoise") { vm.paste(c); denoisePasteClip = nil }
+                Button("Cancel", role: .cancel) { denoisePasteClip = nil }
+            }
+        } message: {
+            Text("AI Denoise cleans each photo on its own. If you leave Lumen it pauses and carries on when you're back.")
         }
         .onChange(of: vm.wbPicking) { _, on in if !on { wbMark = nil } }
         .alert("Lumen", isPresented: Binding(get: { vm.message != nil },
@@ -587,6 +600,7 @@ struct EditorView: View {
                         .frame(maxHeight: .infinity, alignment: .top).padding(.top, 156)   // below the histogram
                 }
                 if vm.loadFailed { Text("This file couldn't be opened.").foregroundStyle(.secondary) }
+                SaveProblemBanner().frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 8)
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
@@ -598,7 +612,7 @@ struct EditorView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("canvas")
             // two fingers pinch and pan together over every tool except Crop (including the mask overlay)
-            .background(TwoFingerInstaller(enabled: !showEdits && !showPasteSome && !showExportChoices && vm.exported == nil) { phase, p, d in
+            .background(TwoFingerInstaller(enabled: !showEdits && !showCopy && !showExportChoices && vm.exported == nil) { phase, p, d in
                 twoFingers(phase, CGPoint(x: p.x - origin.x, y: p.y - origin.y), d, xform)
             })
             // fallback pinch in case the watcher above never sees the fingers
@@ -696,7 +710,10 @@ struct EditorView: View {
             .shadow(color: .black, radius: 2)
             .position(x: x, y: max(top + 16, 16))
             .allowsHitTesting(false)
-            // the handle: drag sideways to move the line
+            // the handle: drag sideways to move the line. The drag is read in the full-canvas named space
+            // (like every other handle), not the handle's own 30 pt frame: `r` is in canvas coordinates, so a
+            // location in the handle's local space made the line barely follow the finger (checklist A15, flaky
+            // testClippingWarningAndBeforeAfterSplit).
             Circle().fill(Color.white).frame(width: 30, height: 30)
                 .overlay(Image(systemName: "arrow.left.and.right").font(.system(size: 12, weight: .bold)).foregroundStyle(.black))
                 .shadow(color: .black.opacity(0.5), radius: 2)
@@ -704,7 +721,7 @@ struct EditorView: View {
                 .accessibilityIdentifier("split-handle")
                 .accessibilityValue(String(format: "%.2f", Double(vm.splitPos)))
                 .position(x: x, y: (top + bottom) / 2)
-                .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("splitSpace")).onChanged { g in
                     guard r.width > 0 else { return }
                     vm.splitPos = min(max((g.location.x - r.minX) / r.width, 0.02), 0.98)
                 })
@@ -717,6 +734,7 @@ struct EditorView: View {
             .position(x: x, y: max(min(bottom - 22, xform.canvas.height - 22), top + 40))
         }
         .frame(width: xform.canvas.width, height: xform.canvas.height)
+        .coordinateSpace(name: "splitSpace")
     }
 
     /// Color tool, white balance picker on: a tap on the photo makes that spot neutral.
@@ -775,17 +793,21 @@ struct EditorView: View {
             FloatButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }.accessibilityIdentifier("btn-undo")
             FloatButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }.accessibilityIdentifier("btn-redo")
             // Export has its own button: it used to be the last entry of a long menu that could not always be scrolled.
-            // DRAFT — sandbox: the export gate lives here (plan §4.1); flag-off builds run the same line as before.
             FloatButton(system: "square.and.arrow.up") { requestExport() }.accessibilityIdentifier("btn-export")
             Menu {
                 // Short, flat, most-used first. Nothing in here changes while the menu is open.
-                Button { store.clipboard = vm.settings } label: { Label("Copy edits", systemImage: "doc.on.doc") }
-                Button { if var c = store.clipboard { c.heals = vm.settings.heals; c.aiDenoise = vm.settings.aiDenoise; vm.settings = c } } label: {
-                    Label("Paste edits", systemImage: "doc.on.clipboard")
-                }.disabled(store.clipboard == nil)
-                Button { showPasteSome = true } label: {
-                    Label("Paste some edits…", systemImage: "checklist")
-                }.disabled(store.clipboard == nil)
+                // like Lightroom's Copy Settings / Paste Settings: what goes is chosen when copying
+                Button { showCopy = true } label: { Label("Copy edits…", systemImage: "doc.on.doc") }
+                    .accessibilityIdentifier("menu-copy")
+                Button {
+                    guard let c = store.clipboard else { return }
+                    // a clean is about a minute with the screen locked: ask first (unless this photo is already cleaned)
+                    if c.bringsDenoise, !vm.denoiseReady { denoisePasteClip = c } else { vm.paste(c, withDenoise: true) }
+                } label: {
+                    Label { Text("Paste edits"); Text(store.clipboard?.summary ?? "Copy edits first") } icon: { Image(systemName: "doc.on.clipboard") }
+                }
+                .disabled(store.clipboard == nil)
+                .accessibilityIdentifier("menu-paste")
                 Button { showHistory = true } label: { Label("History", systemImage: "clock.arrow.circlepath") }
                     .accessibilityIdentifier("menu-history")
                 Button(role: .destructive) { vm.reset() } label: { Label("Reset all edits", systemImage: "arrow.counterclockwise") }

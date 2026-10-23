@@ -1,0 +1,29 @@
+name: Logic tests
+# Fast checks of the rules that lose work if they break (edits files, history, paste rules), built from the app's own
+# Foundation-only files. Linux, a few seconds, no Mac runner. See Tests/logic/main.swift and docs/QUALITY-CHECKLIST.md.
+on:
+  push:
+    paths:
+      - 'Sources/**'
+      - 'Tests/logic/**'
+      - '.github/workflows/logic-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  logic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
+        with:
+          persist-credentials: false
+      - name: Build and run
+        run: |
+          swift --version
+          swiftc -swift-version 5 -o logic-test \
+            Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/Paste.swift Sources/Edit/LoadedModel.swift Sources/Library/EditsFile.swift \
+            Tests/logic/main.swift
+          ./logic-test

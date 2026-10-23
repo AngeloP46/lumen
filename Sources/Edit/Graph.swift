@@ -236,10 +236,50 @@ extension EditSession {
         return ctx.createCGImage(img, from: img.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
     }
 
+    /// Why an export could not be made (quality checklist A17: before this, every failure read as one
+    /// unhelpful "Export failed").
+    enum ExportFailure: Equatable {
+        /// AI Denoise is on but the cleaned copy could not be made (model not here, iCloud restore, damaged file).
+        case denoiseMissing
+        /// The photo could not be decoded (file missing, iCloud not downloaded, damaged).
+        case decode
+        /// Lens Blur is on but its focus map could not be prepared (depth model absent or failed).
+        case depthUnavailable
+        /// The image rendered but could not be encoded to the chosen format.
+        case encode
+
+        var message: String {
+            switch self {
+            case .denoiseMissing:
+                return "The cleaned copy could not be made (AI Denoise). Turn AI Denoise off to export, or reopen the photo and try again."
+            case .decode:
+                return "The photo could not be read (the file may be missing)."
+            case .depthUnavailable:
+                return "Lens Blur can't be exported because the depth information couldn't be prepared. Turn Lens Blur off, or reopen the photo and try again."
+            case .encode:
+                return "The photo could not be written. Try a different format or a smaller size."
+            }
+        }
+    }
+
+    enum ExportOutcome {
+        case data(Data)
+        case failed(ExportFailure)
+    }
+
     /// Export. `quality` 0...1 (JPEG/HEIC), `maxEdge` = long edge in pixels (nil = full size), `includeHDR` adds the
-    /// HDR gain map when the photo is edited in HDR.
+    /// HDR gain map when the photo is edited in HDR. Returns `nil` on failure (the engine tests and the memory
+    /// baseline use this); for a user-facing reason, call `renderDataResult`.
     func renderData(_ s: EditSettings, format: ExportFormat, quality: Double, maxEdge: CGFloat? = nil,
                     includeHDR: Bool = true) -> Data? {
+        switch renderDataOutcome(s, format: format, quality: quality, maxEdge: maxEdge, includeHDR: includeHDR) {
+        case .data(let d): return d
+        case .failed: return nil
+        }
+    }
+
+    func renderDataOutcome(_ s: EditSettings, format: ExportFormat, quality: Double, maxEdge: CGFloat? = nil,
+                           includeHDR: Bool = true) -> ExportOutcome {
         heals = s.effective.heals
         denoiseAmount = s.effective.aiDenoise / 100
         // an export must show the AI Denoise it was asked for: make the cleaned copy now if it isn't there yet
@@ -247,10 +287,10 @@ extension EditSession {
             let ok = makeDenoised() == .done
             Self.releaseDenoiseModel()
             // never quietly export without the AI Denoise that was asked for
-            guard ok else { return nil }
+            guard ok else { return .failed(.denoiseMissing) }
         }
         // (Decoding into a buffer first was tried on 19 Oct: same peak, ~1.8 GB more kept afterwards.)
-        guard let src = makeSource(maxEdge: nil, materialize: false) else { return nil }
+        guard let src = makeSource(maxEdge: nil, materialize: false) else { return .failed(.decode) }
         Self.healProbe?("export: full-size source ready")
         // a big photo's AI masks are worked out on a 2560 px copy and scaled up (at full size, 48 MP, the masks' filters
         // and models each re-ran the RAW engine at 8064 px: 21 Oct review); what is still missing is done at full size
@@ -266,7 +306,7 @@ extension EditSession {
         prepareAutoMasks(s, source: src)
         Self.healProbe?("export: masks ready")
         // Never quietly export an unblurred photo when a requested focus map could not be prepared.
-        if s.effective.lensBlur.amount > 0 && lensBlurMask(s, source: src) == nil { return nil }
+        if s.effective.lensBlur.amount > 0 && lensBlurMask(s, source: src) == nil { return .failed(.depthUnavailable) }
         var img = develop(s, source: src, geometry: true)
         let q: [CIImageRepresentationOption: Any] = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
         // HDR: the SDR rendition is the base image; the gain-map options need iOS 18 / macOS 15.
@@ -291,22 +331,26 @@ extension EditSession {
             if let hdrImg, #available(iOS 18.0, macOS 15.0, *) {
                 var o = q
                 o[.hdrImage] = hdrImg
-                if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return d }
+                if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
             }
-            return try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q)
+            if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
+            return .failed(.encode)
         case .heic:
             if let hdrImg {
                 if #available(iOS 18.0, macOS 15.0, *) {
                     var o = q
                     o[.hdrImage] = hdrImg
-                    if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: o) { return d }
+                    if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
                 } else if let hlg = CGColorSpace(name: CGColorSpace.itur_2100_HLG),
                           let d = try? ctx.heif10Representation(of: hdrImg, colorSpace: hlg, options: q) {
-                    return d
+                    return .data(d)
                 }
             }
-            return try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q)
-        case .tiff: return try? ctx.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:])
+            if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
+            return .failed(.encode)
+        case .tiff:
+            if let d = try? ctx.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:]) { return .data(d) }
+            return .failed(.encode)
         }
     }
 

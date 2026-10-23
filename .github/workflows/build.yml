@@ -65,6 +65,14 @@ jobs:
           bash .github/ci/get-seg-model.sh Models
           bash .github/ci/get-heal-model.sh Models
           bash .github/ci/denoise-convert/build-denoise.sh Models
+      - name: Every AI model is really in the build
+        # a failed download or conversion leaves an empty stand-in so the project still builds; a build that ships must
+        # not quietly lack a model (it would export without AI Denoise, for example: quality checklist A6)
+        run: |
+          for m in DepthAnythingV2SmallF16 DETRResnet50SemanticSegmentationF16 LaMa Denoise; do
+            [ -f "Models/$m.mlmodelc/coremldata.bin" ] || { echo "::error::Models/$m.mlmodelc is missing or empty (download or conversion failed)"; exit 1; }
+          done
+          echo "all four AI models present"
       - name: Install pinned XcodeGen
         run: bash .github/ci/install-xcodegen.sh
       - name: Generate Xcode project

@@ -1,8 +1,271 @@
 # Lumen – project notes for Claude
 
+## Quality work before the App Store (from 22 Oct 2026)
+- Codex continuation: batch1 `5deccec` passed IPA/readiness, Linux logic, and engine/ProRAW checks. Independent
+  review found five persistence defects, corrected on batch1 with recovery/no-op/malformed-mask regressions;
+  see `docs/QUALITY-CHECKLIST.md` continuation section for exact evidence and remaining work. All batches 0–6
+  remain in scope; later batches and sandbox ports are not yet complete. No merge/publication authorized.
+- `docs/QUALITY-CHECKLIST.md` is the durable record: findings (two independent reviews), fix batches, test results,
+  baselines, phone tests. Update it with every batch. Angelo's rules for this work: fix batches only after he approves
+  the plan; reproduce first, add regression coverage, run the checks, get an independent review of each batch; apply
+  shared fixes to both versions; **no merges that publish to SideStore and no App Store submission without his
+  instruction** (main PRs are left ready, not merged).
+
+## Two builds: every change goes to both (Angelo, 15 October)
+- **main** = Angelo's personal app on SideStore: everything free, no paywall, no watermark, no StoreKit.
+- **sandbox** branch (PC folder `Lumen-Sandbox`) = the same app developed as a real **App Store product**: paid Pro features, paywall, trial, watermark on free exports, StoreKit, privacy policy. Read its `SANDBOX-BRIEF.md`, `HANDOFF.md` and `SANDBOX-LOG.md` before touching it.
+- Every bug fix and shared editor feature ships to **both**: release it on main first (branch → PR → merge), then port the same change to `sandbox` (branch from `sandbox`, PR into `sandbox`, run its compile check with APP_STORE OFF/ON), and log it in `SANDBOX-LOG.md`.
+- When porting a NEW feature, keep or add the sandbox's Pro gating where it fits, and ask Angelo if it is unclear whether it should be free or Pro. Never copy paywall/StoreKit/watermark code or the APP_STORE flag into main, and never push to main from `Lumen-Sandbox`.
+- Tell Angelo which of the two each change has reached.
+- App Store pricing, Free vs Pro, claims and the marketing plan: `MARKETING.md` on the sandbox branch (`Lumen-Sandbox\MARKETING.md`). Keep it out of main.
+
+## AI Denoise (0.1.360, 20 Oct; owner asked for it)
+- Model: **SCUNet** colour real-noise (cszn/SCUNet, Apache-2.0), run on the **GPU** (`.cpuAndGPU`; CI sets
+  `LUMEN_DENOISE_UNITS=cpu`). Weights pinned: HF `WAS/was-node-suite-weights` revision dcc864ea…, SHA-256 fa78899b…
+  (`fetch.py`). Converted in CI to Core ML, float16, 512 x 512 tiles (`build-denoise.sh`, cached; on failure an empty
+  `Denoise.mlmodelc` keeps the project building). `scunet.py`: the shifted-window mask is built in NumPy.
+- 20 Oct history: SCUNet on the Neural Engine (0.1.371) never reached 25 % of 24 MP in 100 s (attention layers don't
+  suit the ANE) and iOS closed Lumen once (that build also loaded the GPU copy for a probe). NAFNet-SIDD-width32
+  (0.1.381, #60) was quick on the ANE but wrecked bright tiles (channel-attention sum ~200,000 > float16's 65,504; the
+  CI Mac runs on the CPU in full precision and can't show it) and even fixed (#62: 8 x 8 block mean) left half the
+  noise (SIDD-only training). Owner: one model, good and quick, use the chips to the full -> SCUNet on the GPU (#63).
+- Speed (owner, 20 Oct: good image, wants it faster). 0.1.388 on the phone: 84 s for 24 MP = load 10.3 s + first tile
+  10.4 s (GPU setup) + 0.50 s/tile; memory hit 2.75 GB while loading. #65: the shifted-window mask is two small
+  broadcast parts (was 89 M stored values; identical output, 24 % faster on a PC CPU), GPU float16 sums
+  (`allowLowPrecisionAccumulationOnGPU`), and the model is loaded + run once on a blank tile when Detail opens
+  (`detailToolChanged`, `warmDenoise`), kept while Detail is open, released 30 s after leaving it or on a memory
+  warning. Tile prep is negligible (~1 s of 84), so pipelining would not help. NAFNet on the ANE did 0.08 s/tile.
+- **Measured 0.1.394 (owner, 20 Oct): 57 s for 24 MP** (median 0.42 s/tile, first tile 0.4 s after Detail's warm-up
+  of 2.7 s, peak 1.9 GB, no memory warnings, 0 tiles redone). Owner: "results were very good". Next idea to try:
+  1024 px tiles (overlap work 31 % -> 14 %, estimate ~45 s; check memory).
+- 21 Oct (#68): tiles keep 16 px of context (was 32; whole photo 60 dB from it, no step at any boundary): 117 tiles for
+  24 MP. Results are raw 16-bit RGBA (`.rgba16`, read memory-mapped, no decode) plus a 2560 px copy that previews,
+  thumbnails and the unhealed view use (before, every decode read the whole 24 MP PNG, ~400 MB spikes); old PNG
+  results still read. The model is let go of straight after a clean and in the background (0.1.394: kept while Detail
+  was open, ~600 MB, and iOS closed Lumen on return to the screen). Detail: AI Denoise is a pill in the actions row
+  (like Light's Auto), Reset on the right; first tap cleans, then it switches AI Denoise off / on.
+- 21 Oct (#70, owner's 48 MP ProRAW was closed by iOS at the start of a clean): the result is written to its file row
+  of tiles by row of tiles (never held whole) and the preview copy averaged from those rows; the photo is read whole
+  once when 4x its size is free (fastest; 24 MP = ~190 MB), else strip by strip from the RAW engine (diagnostics line
+  "denoise reads the photo whole / in strips", strip read times in "denoise done"). The engine test forces strips
+  (`denoiseForceStrips`); the memory step reads whole.
+- 21 Oct (#72, owner's 48 MP ProRAW: clean worked, 221 tiles 110 s, but memory stayed ~2 GB after and Heal on top
+  closed Lumen): the clean reads through its own `EditSession` (the photo's CIRAWFilter kept the full-size decode
+  cached), and the small copy is 4096 px so the 100 % view never reads the whole result (it did, 372 MB, each time).
+- 21 Oct (#74, the crash report named "100% view: building 4096 px copy", 214 -> 2851 MB, on a 48 MP ProRAW): the
+  100 % view asks for free memory that grows with the photo past 24 MP (x MP/24: 48 MP gets 3072 px with > 2.6 GB
+  free, never 4096); results with a small copy under 4096 px get one made once, row by row from the mapped file
+  (`upgradePreview`); the job builds its small copy row by row too (`RowShrinker`; the whole-copy averaging held
+  ~200 MB).
+- 21 Oct edge-case review (two read-only reviews, #75): nothing starts a clean by itself any more (`ensureDenoise(start:)`:
+  only the pill, or resuming one the background stopped; HDR switch / undo / presets / paste used to start a locked
+  1-2 min clean); a clean asked for during AI masks waits for them; masks and the original copy wait for a clean.
+  Hold-to-compare and the split's before half show the original (no heals, no AI Denoise: `makeSource(..., denoise:
+  false)`). Paste (editor and library) and presets keep each photo's own AI Denoise. The pill switches back on at
+  the strength it had. After a reload while zoomed the 100 % copy is rebuilt. Remove people frees memory first.
+  Thumbnails and preset previews use a materialized small source (lazy ones re-ran the RAW engine per AI step).
+  Export: a failed clean fails the export; photos > 30 MP get their AI masks from a 2560 px copy, scaled up. AI
+  Denoise reads whole only with room for the RAW decode too (+50 MB/MP). Cleaned copies moved to Application
+  Support (out of Files), excluded from backup, orphans swept at launch. Diagnostics: a 2 s heartbeat in the state
+  file ("last seen HH:MM:SS using N MB"), background written at once, iOS's daily exit counts (MXMetricPayload),
+  iOS reports capped at 20 KB.
+- **21 Oct (#76): one clean for HDR on and off, pause/resume, batch paste.** Results now keep the *noise* the model
+  took out (`.noise`, RGBA half floats, linear light x scale, alpha 1; 0 where the model input was >= 0.98) in one
+  file per photo (`<stem>-noise.json`); every decode takes it out by the amount (kernel `lumenNoiseRemove`), in either
+  HDR mode (noise is in shadows/midtones, where both decodes match; engine test "AI Denoise in the other HDR mode"
+  + sheet `denoise-other-mode.jpg`). Older cleaned-copy results (per mode, `kind` nil) are still read. A clean pauses
+  (Lumen leaves the screen: `pause`) keeping rows so far + `<stem>-noise.partial.json`, and continues from there next
+  time (also after a swipe-away: opening the photo carries on, the library shows "AI Denoise paused on ... ·
+  Continue"; not by itself after iOS closed Lumen mid-clean: `Diagnostics.closedDuringLastRun`). `makeDenoised`
+  returns `DenoiseOutcome` and takes a job lock (one clean at a time). Paste: AI Denoise only when asked (library:
+  "Paste AI Denoise too?" with a time estimate, max `denoiseBatchCap` = 5 photos, cleaned one after another by
+  `LibraryStore.cleanWithAIDenoise` with a progress banner, Cancel, pause/continue, queue kept in UserDefaults;
+  editor's Paste some: an AI Denoise toggle). Library paste keepOwn keeps flips/perspective (`take(.crop)`) and Heal's
+  on/off. `RowShrinker<P: ShrinkPixel>` serves UInt16 and Float16 rows.
+- **Heavy-work coordinator (21 Oct, `Sources/HeavyWork.swift`)**: the 100 % copy, AI masks, heal, Remove people,
+  the original copy, AI Denoise (long) and exports (editor and library batch) run through `HeavyWork.shared.run`.
+  Each states ~MB needed for the photo's size (`needMB`: 50 MB/MP for the RAW engine's full decode plus a base);
+  it starts at once when nothing heavy runs, beside others only with 700 MB to spare, else it waits (logged
+  "waiting for ..."); one long job at a time; short of room when alone, `HeavyWork.release` clears GPU caches and
+  mask models first; optional jobs (100 % copy, original copy) are skipped instead ("skipped, N MB free").
+  Light work (preview, thumbnails, histogram, preset previews) doesn't go through it.
+- **History (21 Oct, owner: like Lightroom, don't overdo it)**: ⋯ → History (`menu-history`, `HistorySheet`) lists
+  the steps of the photo's undo history newest first, named by `EditSettings.historyLabel(from:)` (Mirror diff:
+  one slider = "Highlights +34", masks/heals "Mask added"/"Heal", many at once "Preset or pasted edits" or "Reset");
+  tap = `goBack(n)` (redo comes forward). UI test `testHistoryGoesBack`. The plain ⋯ → Paste edits keeps the photo's
+  own AI Denoise (Paste some edits can include it). Ratings and flags already exist in ⋯ → Rating and flags.
+- **Paste masks (21 Oct, owner's yes)**: library Paste edits has "Paste the look and masks (keep each photo's crop)"
+  (`apply(..., masks: true)`); pasted masks go through `[Mask].forAnotherPhoto` (AI parts are worked out again on
+  each photo, a tapped subject point becomes that photo's detected subject; brushes and gradients stay put), the
+  photo's own Lens Blur focus mask is kept; editor Paste some does the same. Thumbnails work out only Lens Blur's
+  AI masks (all of them loaded the phone and the CI simulator; other AI masks show after the photo is opened).
+- **Design pass (21 Oct, from the full suite's screenshots)**: every tool's actions are `PillButton`s with the
+  page-wide reset on the right. Changed: Lens Blur's "Refine with brush" / "Reset" text links -> pills (its focus,
+  depth bar and Near/Far stay its own: owner); Heal's Remove people / Delete this fix / Clear all (N) -> pills, Clear
+  all on the right; Curve gets a visible Reset pill (`curve-reset`) beside its presets menu. Already consistent:
+  Light, Color, Colour mix, Detail, Crop, Transform, Masks, Presets.
+- Send diagnostics is compact (owner: too much to paste): a summary line per launch (version, times, how it ended,
+  peak, AI Denoise runs, heals), then the log without routine memory samples (new highs and the last 8 lines before
+  iOS closed Lumen are kept), repeated memory warnings folded into one line, iOS reports only with real content.
+  After a crash the sheet's first button is "Share crash report": the last 3 closures only, each with the last step
+  logged before it ("last step ... at HH:MM:SS; memory A -> B MB") and the 12 lines leading up to it (`crashes`).
+  Opening a photo logs its steps ("photo ready (...)", "AI masks: working them out", "copy without heals").
+- Every tile is checked against its input (finite, mean change < 0.1, < 0.5 % of samples off by > 0.3); a wrong one is
+  redone on the CPU (`denoiseCPU`), else the photo's own pixels are kept. Diagnostics: "denoise model loaded in N s",
+  "denoise first tiles a / b / c s", then "denoise done in N s: …, N redone on the CPU".
+- WSL on the owner's PC crashes converting it (7 GB): don't retry locally; CI Macs swap and manage.
+- App (`Sources/Edit/Denoise.swift`): `makeDenoised` cleans the full-size camera decode (no heals) once, tiles keep a
+  32 px margin (no blending), one model on the GPU (no probe: two loaded copies cost memory), saves a
+  16-bit PNG + json per photo and HDR mode in Library/denoise (`DenoiseStore`, removed with the photo). Every decode
+  mixes it in by `EditSettings.aiDenoise` (0...100) with `withDenoise`, keeping highlights above the cleaned range.
+  Export makes it if missing. Detail → AI Denoise button; full-screen lock `denoise-busy` with progress, time left and
+  Cancel; the job stops if Lumen leaves the screen. The diagnostics log gets "denoise model loaded in N s" and
+  "denoise first tiles a / b / c s, N tiles in all" straight away, then 25 % steps and "denoise done in N s: …".
+- 24 MP ARW = 126 tiles of 512 px. Target < 30 s (owner's ideal).
+- Send diagnostics now holds only the last 3 launches of the log and the 3 newest iOS reports from the past 3 days,
+  as compact JSON (20 Oct: a report carried two days of log and every saved report).
+- Engine test: Gaussian noise std 0.04 on cat.jpg: error 0.039 → 0.011, edges 95 % kept, 50 % mixes between, 0 = off,
+  files removed; sheet `denoise.jpg`. Memory test step "AI denoise". Sandbox: Pro (`usesProFeatures`).
+
+## Status — 19 October (overnight stability work; SideStore 0.1.311+)
+- **Send diagnostics** (⋯ menu in editor and library, `Sources/Diagnostics.swift`): memory log in Library/Diagnostics
+  (`Diagnostics.shared.note(...)` at photo open, heal steps, 100 % copy, export, memory warnings; a 2 s sampler logs big
+  footprint moves; "previous run ended while Lumen was open" = iOS closed it) plus MetricKit crash/hang/disk-write JSON.
+  One text file is shared on request; nothing is sent otherwise. Ask Angelo for it after any crash.
+- **AI models** are `LoadedModel` holders (Engine.swift), not static lets: Heal's model is released 30 s after leaving
+  Heal (at once when the photo closes), its CPU fallback straight after use, and depth/scene models on a memory warning
+  or when the editor closes. `hasHealModel/hasSceneModel/hasDepthModel` only check for `coremldata.bin` (screens call
+  them while drawing; an empty UI-test stand-in folder counts as missing).
+- **Memory guard**: the 100 % copy is 4096 px with > 2 GB free, 3072 px with > 1.3 GB, else none
+  (`Diagnostics.availableMB` = os_proc_available_memory). Heal and export drop the copies that can be remade first.
+- **Heal memory**: the photo is decoded at 2x the model's resolution, only the square's part is rendered once into a
+  small buffer, then the full decode is let go of before the model runs (was ~2.3 GB of a heal, now ~0.5 GB). The model's
+  own prediction takes ~1.3 GB for a moment on the CI Mac's GPU, so the 1280 px model (~2.5x that) stays off; 800 px.
+- **CI memory test**: engine-test step "Memory budget" (`--memory`) prints `MEMORY` lines per step (open, 100 % view,
+  subject, heal with per-step probes, export) and fails over budget (measured 19 Oct + ~10 %; Mac numbers).
+- **Heal at photo edges**: the hole is mirrored like `mirrorPadded`'s context (`withMirrors`), so a person at the edge is
+  no longer painted back from their mirror image.
+- **Lens Blur / AI masks after a heal** are worked out again from the healed photo (`reloadSource` carries masks over only
+  when heals are unchanged); before, a removed person stayed "near" and left a sharp hole in the blur.
+- **Remove people** finds more people: VNDetectHumanRectanglesRequest bodies that the whole-photo segmentation mostly
+  missed get segmentation again on a crop, kept inside the body's box; 3072 px decode, up to 30 people. Whole-photo
+  quarters were tried and merged neighbours into one (dropped). Shadow removal was tried and reverted: on dappled paving
+  it smeared a large area and a neighbour's legs (bus test photo). Ideas only, not built.
+- **Undo history** (`<id>.history.json`) is written 0.2 s after a save, when the app leaves the screen, on close and
+  before deletes. A 2 s delay (0.1.288 only) lost it on a quick close (UI test `testOctoberEditorFixes`).
+- **Code review fixes (0.1.311)**: exports keep EXIF/TIFF/GPS (date taken, camera, lens; orientation 1) — before, Photos
+  dated exports the day they were made; sidecar migration keeps optional keys (Lens Blur mask/focus) and Lens Blur's
+  scale conversion; damaged sidecars copied to `<id>.damaged.json`; batch export clears GPU caches per photo, keeps the
+  screen awake, compares names ignoring case; old temp exports removed at launch; Files imports copy off the main
+  thread with NSFileCoordinator; no undo/redo/swipe while a heal or export runs; stale 100 % copies dropped; Heal
+  never stuck after a failed reload; AI masks re-run when the photo was re-decoded during analysis.
+- **UI tests** use `tapTool(name)`, which scrolls the tool bar first: the full suite had been failing since the bar
+  started scrolling (Masks/Heal/Presets off screen on the test iPhone). Releases skip the full suite, so check it.
+- **Library grid** caches decoded thumbnails per photo and version (`LibraryStore.thumbnail(_:)`), 0.1.333.
+- **Publishing gotcha**: the publish job skips a build when a newer commit is on main. Merging a docs- or tests-only PR
+  while a code merge's build is running leaves SideStore on the old version (19 Oct: #41 skipped after docs #45).
+  Merge docs/tests after the code build has published, or dispatch build.yml on main afterwards.
+- 19 Oct SideStore versions: 0.1.274 diagnostics, 0.1.288 stability batch, 0.1.311 review fixes + undo fix,
+  0.1.325 people finder, 0.1.329 heal memory, 0.1.333 thumbnails. All ported to sandbox (#40, #42, #43, #48, #49).
+- **0.1.346 (#51)**: undo history loads in the background (`LibraryStore.loadHistory`; saves before it arrives pass
+  no history so the store extends the file's own); brush masks cached by `ImageSource.RasterKey` (id + per-stroke
+  summary), newest version per brush; Heal scales by the square's 99.5 % brightness x 1.25 (`brightEnd`) and keeps
+  brighter highlights outside the hole; export steps report to `healProbe`. Export memory (~5.5 GB peak on the CI Mac,
+  within budget) left as is: decoding into a buffer first gave the same peak and kept 1.8 GB more.
+- All 19 Oct review items are done; nothing open from that review.
+
+## Status — 15 October (Claude review of the 14 October work)
+- Reviewed everything other AIs added since 70f1448: sound and safe overall.
+- Fixed: undo/redo history moved out of the edits sidecar into `edits/<id>.history.json`, encoded and written on a serial background queue (`historyQueue`). The edits file is written synchronously and stays small (previously every 0.5 s save rewrote up to 200 snapshots on the main thread). Old `_undoHistory` in sidecars is still read and moves on the next save. Deletion and Heal-reference scans include the history file; deleting a photo without Heal patches no longer reads every other photo's edits. CI: `testHealDeletionPrivacy` has a 9th check for the separate file.
+- Lens Blur (PR #7, SideStore 0.1.225, sandbox PR #10): `maskedLensBlur` = three `CIBokehBlur` disc layers (1/3, 2/3, full; disc = 1.6x the old radius) mixed by the blur map in `lumenLensCompose`; `lumenLensWeigh` feeds only background (premultiplied, so blur ÷ alpha = background-only average: no subject halo). `smoothLensBlur` (old CIMaskedVariableBlur) is the fallback. Amount scale: `LensBlurSettings.radiusScale` = 0.018 × 0.35 (new 100 = old 35), `startAmount` 23 (old 8), `scaleVersion` 2 (older saves divided by 0.35 on decode). Roll-off: `fullFrom` = focus + width, `rampStart` = fullFrom − max(0.2, 2 × width); the automatic ramp and the linked mask's Near feather both use it. Panel: no help paragraph / "Enable blur at 8"; preview-while-sliding is an icon (`lens-blur-preview`); amount/Near-Far/Refine are disabled only when depth is missing (busy analysis used to lock them: owner's "can't adjust after coming back"). Near/Far edit the linked mask without selecting it (`updateLensDepth`); Masks lists `userMasks` (never Lens Blur's mask). Tests: `testLensBlurAmountStillAdjustsAfterLeavingTool`, engine no-bleed / point-light / scale-conversion checks.
+- Auto (PR #11, SideStore 0.1.236, sandbox PR #12): `Auto.swift` rewritten. `EditSession.autoKeys` = exposure, contrast, highlights, shadows, whites, blacks, vibrance, temperature, tint (Clarity no longer touched). Exposure meters Vision's subject (`ensureSubject`, coverage 3–70 %) else centre-weighted; high-key unclipped scenes darken at 40 %, scenes with bright lights brighten at 50 % and never past 1.6× white; HDR white level = 2^hdrStops for highlights. Contrast from the 5–95 % spread, Vibrance from mid-tone saturation (0 for B&W/grey), white balance from near-neutral cells (≥5 % of the frame, 60 % of the cast, 30 % if strong, Temp ±30 / Tint ±20). Runs on `workQueue` (`autoBusy`, hourglass icon); only Auto's keys are applied on completion. Engine test now compiles Auto.swift. In sandbox, Auto now only sets free (Light/Color) values.
+
+## Lens Blur phone feedback follow-up — 14 October
+Owner reported amount still 0 and unclear subject selection on 0.1.207. PR #5:
+old untouched zero/default settings migrate once on explicit tool entry to amount 8;
+new explicit zero/reset choices stay off. Selecting a new subject re-enables amount 8
+when off. Highlighted picking button, selection status and four-second red background
+confirmation; manual eye can show/hide selection. Main Lens Blur page now uses the
+same depth bar/presets/Near edge/Far edge controls as Masks. Brushes remain inline.
+Shared fixes mirrored into sandbox; personal SideStore stays unlocked. Owner explicitly
+requested publication ASAP after focused checks. Checks pending; latest feed 0.1.207.
+Phone verification: old photos start at 8, subject selection feedback, depth/brush feel.
+Troubleshooting: old fully-default saved zeros could not be distinguished from unused
+settings; migrate those once, preserve custom-focus zeros and all new explicit zeros.
+
+
+## Security changes — 14 October 2026
+
+GitHub main is now protected: pull requests required, Release readiness from GitHub
+Actions required, branches must be current, rules apply to admins, force pushes and
+branch deletion blocked. Zero additional human approvals avoids locking out the sole
+owner. NEVER temporarily disable protection or use --admin to merge failed checks.
+Secret scanning and push protection enabled; sandbox origin cleaned, GitHub CLI uses
+system keyring. Angelo confirmed revoking the old LLM token. Git access reverified.
+
+Both clones now pin build actions, XcodeGen and model revisions/file hashes. Build
+and test jobs have read-only tokens and checkout does not retain credentials.
+Only the isolated main publish job may write releases; it rejects stale main builds.
+Engine renders are run artifacts, not a release upload from a write-enabled test job.
+Heal deletion removes current/history/owned patches, preserves retained references,
+and waits for active export/thumbnail readers. Late writes/saves are blocked.
+Legacy orphan patches absent from every sidecar cannot safely be attributed; corrupt
+retained sidecars cause a cleanup warning rather than destructive cleanup.
+
+Security validation completed: personal IPA 38625860904; testHealDeletionPrivacy
+38625864692 (8 cases); sandbox OFF/ON 38625938312; PR readiness 38626612845.
+Security-only main publication 38627206272 passed. SideStore source.json verified
+as 0.1.200, build 200, com.example.lumen, Lumen-200.ipa, 322268814 bytes,
+SHA256 005fc7745dc657f03fa57d3d11390c7404a3408c6a98c8f96fe32df4bba94ce2.
+No payment changes.
+
+New workflow: use a work branch + PR, run relevant checks, merge the checked PR via
+GitHub. Notes-only PRs skip the Mac build and still run Release readiness. A [skip ci]
+commit requires manual build.yml on that exact branch before merging; after merge
+with skipped CI, manually dispatch build.yml on main to publish the update.
+Do not force-push main or use the older direct-push instructions below.
+
+Public unrestricted SideStore distribution remains unchanged for the owner's update
+feed; distribution before selling Pro is still a business decision. GitHub account
+two-factor authentication was not verifiable through the current API token.
+
+## Status — shared revisions complete, 14 October
+Lens Blur and photo information merged through protected PR #2 as 34b72c3.
+Shared source is in sandbox too; Store code remains separate. Personal main/SideStore
+is fully unlocked. Angelo approved publication on 14 October. SideStore 0.1.207
+(build 207) is published: run 38634930064 succeeded on main fbe5b7a. Feed bundle ID,
+download URL, size (322324910 bytes) and SHA256 matched the released Lumen-207.ipa:
+4d5b0b1faa801f21a87ce2c4401e87135783ce9041b535dd556c0b0eaede94c6.
+This includes the security fixes, Lens Blur revisions and photo-information button.
+
+Implemented: whole detected/selected-instance subject protection and subject depth
+percentiles; first-use amount 8 with saved zero/off preserved; progressive far blur;
+photo-calibrated distance; full Near/Far feather travel and accurate depth graphic;
+inline linked-mask refinement with brushes/Add/Subtract; transient red slider preview
+with saved off preference. Top info button reads standard original EXIF/TIFF camera,
+lens, date, dimensions, size, shutter/aperture/ISO across camera brands.
+
+Validation (final app source d383f7e; frozen test revision e9d997b; later commits notes):
+engine/metadata 38631365097 passed 79 checks including nine camera-make fixtures and
+real Sony RAW preview/JPEG export; focused UI 38631369309 passed one combined test,
+zero failures (87 seconds), including default 8, inline refinement, preview on/off,
+saved-zero reopen, info sheet and both Near/Far endpoints. Screenshots/renders inspected.
+Personal IPA 38631360377 and protected PR/readiness 38632032581 passed. Sandbox
+38631373218 passed policy and APP_STORE OFF/ON compilation; compile-only skips shots.
+
+Things to verify: update to 0.1.207 in SideStore, then check representative camera
+RAW/ProRAW subject edges, brush feel, HDR/export appearance and performance on phone.
+
+Troubleshooting: missing subjects offer distance/range/brush fallback. Old saved
+Lens Blur objects preserve zero rather than guessing previous intent. Simulator touch
+checks use marked synthetic depth/subject fixtures and do not establish AI quality.
+Auto Level uses Vision horizon detection then straight-edge voting, not camera roll
+metadata. Photo info uses available standard metadata; missing fields stay missing.
+Read PRODUCT-BRIEF.md for the iOS/RAW/all-brands and cheaper-Lightroom direction.
+
 Read this first. It records what exists, how it's built and shipped, and what to do next.
 
-**App Store pricing, Free vs Pro, claims and marketing plan:** read `MARKETING.md` (Angelo's decisions, 18 October; it replaces older price notes in `HANDOFF.md`).
+**App Store sandbox (this branch):** the Store layer (`Sources/Store/`, paywall, watermark, `#if APP_STORE` hooks) sits on top of main's code. Read `SANDBOX-LOG.md` and `MARKETING.md` (pricing, Free vs Pro, claims) before touching it. Never copy Store code into main.
 
 ## Housekeeping (do this every session)
 - Before finishing any session, update the **Status**, **Things to verify** and **Troubleshooting** sections below with what changed or was learned, then commit and push (`git add -A; git commit; git push`) so the next session starts current.
@@ -84,7 +347,7 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - Artifacts (screenshots, renders) can't be downloaded from the cloud session (blob storage is blocked by its proxy); check them from the PC or rely on the test assertions.
 
 ## Release routine (owner's call 2026-10-11: no long waits for small fixes)
-- Small fix: push the branch, wait only for **Build IPA** (~2 min, proves it compiles), run just the related UI test(s) on the scratch branch `diag-pinch` if any, fast-forward `main` → SideStore. The full UI suite (~35 min) keeps running on the branch afterwards; if it finds a problem, fix it in the next release.
+- Small fix: push the branch, open a PR, wait for **Build IPA** (~2 min, proves it compiles) + Release readiness, run just the related UI test(s) on a scratch branch if any, merge the PR on GitHub → SideStore. The full UI suite (~35 min) keeps running on the branch afterwards; if it finds a problem, fix it in the next release. (`main` is protected: no direct pushes or fast-forwards.)
 - Big or risky change (engine, gestures, layout maths across tools): wait for the full suite before releasing.
 - Mask Adjust and Detail: the page Reset rides on the first section heading (`ParamPanel.pageReset`), strip = round icon; released 0.1.113 before the full suite finished.
 
@@ -127,9 +390,21 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 - Apple's Photos **Clean Up** (Apple Intelligence, iPhone 17 Pro Max) is the suggested route for hard removals: export from Lumen, Clean Up in Photos as the last step.
 - Owner, 2026-10-11 after the 0.1.158 fix: quick heal removed the person behind the car perfectly; Smart fill is probably not needed. Don't restart it unless he asks.
 
+## Status (14 October 2026: SideStore 0.1.197 published: shared editor fixes and Lens Blur)
+- Angelo explicitly requested the same bug/feature improvements in personal SideStore and sandbox; this overrides the App Store-only main freeze for shared improvements. Main remains paywall/subscription/watermark free. No App Store Store files or build flags are merged into main.
+- Fixed maximum elastic pinch release to retain the last touch anchor, closed-panel photo centering, clipping warnings outside transparent photo pixels, and depth feather sliders' extra cap. Saved per-photo undo/redo in the atomic settings sidecar under _undoHistory, capped at 100; older versions ignore this key. Old discarded undo steps cannot be recreated.
+- New standalone Lens Blur beside Detail: estimated depth for camera RAW/JPEG, tap focus, amount/distance/range, background refinement via a linked Depth mask with Add/Subtract brush corrections. Blur applies before geometry and to HDR gain as well, with radius scaled to source size. Presets/paste retain each photo's focus. Older saved settings default blur off.
+- User chose scrolling toolbar with fixed readable targets (66 pt portrait, 48 pt landscape); labels retained. No need to shrink all tools on smaller phones.
+- Exact no-op paths avoid filter colour conversion when no farther plane exists or refinement opacity is zero. Ready depth is reused while dragging Blur amount so analysis does not interrupt controls.
+- Validation passed: original fixes UI/build/engine, depth slider test 38599011360, full blur engine 38600705716 (969 checks), final focused blur + real Sony ARW preview/JPEG export 38602642007 (32 checks), final combined interaction test 38602633151 and IPA build 38602637294, source feef0e4. Lens Blur/control/refinement screenshots inspected: readable single-row toolbar, panels above toolbar. Sandbox export-policy and APP_STORE OFF/ON build steps passed in 38600345922; optional duplicate screenshot step cancelled after completion of those checks. Main publication passed in 38604801375 (build commit cbc8405, source code feef0e4). Verified release source.json version 0.1.197, build 197, bundle personal Lumen, Lumen-197.ipa and its SHA-256/size. Subsequent notes-only commits do not change that app code. Phone appearance/performance remains for owner feedback.
+
+## Troubleshooting (14 October additions)
+- Lens Blur depth failure: controls show that depth could not be estimated, and export refuses to silently omit requested blur. Build must include the existing depth model. UI tests use a clearly marked demo-only synthetic depth fixture for touch checks; this does not establish AI quality.
+- Lens Blur boundaries can show estimated-depth errors or background colour bleed: use inline Refine background with Add/Subtract brush. Camera RAW is the primary intended use; Portrait depth extraction has not been added in this change.
+- Undo from before the new version cannot be reconstructed; future undo/redo is persisted per photo. The global Edits switches still preserve values independently.
+
 ## Status (2026-10-12 01:00: main = latest SideStore build, released after full UI suite + engine test passed: Landscape parts off the sky, AI busy notice, sky-aware depth)
-- The PC copy (`GP work\Lumen`) could not be pulled after this release (the computer link had dropped): next session, run `git pull --ff-only` there first.
-- Panel space (owner, 2026-10-11): in one-at-a-time (strip) layout the panel hugs its row (`panelPlan` snaps to `ToolSpec.compact` unless the handle is being dragged); section headings live in `ToolSpec.sections` and no longer raise the list threshold (`listMin` = header + one heading + 4 rows). In the strip, `PanelActions`' Reset is a 34 pt round icon (id still `pill-Reset`); the mask page's Reset is just "Reset". Radial turn knob sits just below the centre pin (thumb reach). UI test job limit is 45 min (the suite outgrew 30).
+- Panel space (owner, 2026-10-11): in one-at-a-time (strip) layout the panel hugs its row (`panelPlan` snaps to `ToolSpec.compact` unless the handle is being dragged); section headings live in `ToolSpec.sections` and no longer raise the list threshold (`listMin` = header + one heading + 4 rows). In the strip, `PanelActions`' Reset is a 34 pt round icon (id still `pill-Reset`); the mask page's Reset is just "Reset". Radial turn knob sits just below the centre pin (thumb reach). UI test job limit is 75 min (the suite outgrew 30, then 45 on 20 Oct).
 - Pro pack (owner ticked every item of the overnight report): Crop | Transform tabs (flip as seen on screen, auto-level via `levelAngle` / VNDetectHorizonRequest, 7:5, 3:1, custom ratio, grid choices `cropGrid`; Transform = `tVertical/tHorizontal/tAspect/tScale/tOffX/tOffY`, a CIPerspectiveTransform in `geometry` composited over a clear full frame, mapped for masks by `Homography` in `SourceGeometry`; flips `flipH/flipV` before the turns, `mirrored` flips radial angles). Clipping warning (`lumenClip` kernel, More → View; NOT on the histogram: a button there blocked press-and-hold on the photo). Before/after split (More → View, `splitCompare/splitPos`, draggable `split-handle`). Paste some edits (`PasteSomeSheet`, `EditSettings.take`). Grade Global wheel (`ColorGrading.global`, 5th tab). Preset Strength (`presetRecord`, `EditSettings.blend`). People mask (`computePeople`, VNGeneratePersonSegmentationRequest). Mask overlay cropped to the photo. Mask type grid = 5 columns.
 - Auto-level: Vision horizon first (its angle is anticlockwise: Straighten = -angle), else `edgeLevel` (Sobel edge-direction histogram, refined by re-measuring after turning) for photos with no horizon. Engine checks a tilted horizon, a tilted 'building' and a level photo.
 - Transform Fill frame (`tFill`, default on, like Lightroom's Constrain Crop): `Homography.corners` zooms the warp just enough that every frame corner is inside the photo; off shows the black edges.
@@ -156,12 +431,16 @@ No Xcode project is committed: `project.yml` (XcodeGen) generates it in CI. Meta
 
 ## How to continue in a new session
 1. Open the session with working directory `C:\Users\pc user\Projects\app development\Lumen` and tell it to read CLAUDE.md first.
-2. `git checkout main; git pull`, then work on a new branch (`git checkout -b <short-name>`). Every push to it runs Build IPA, the Engine test (engine files) and the UI tests (app files). When green: `git checkout main; git merge --ff-only <short-name>; git push origin main` (this also publishes to SideStore), then delete the branch here and on GitHub (`git branch -d <name>; git push origin --delete <name>`). Before merging, `git fetch` and merge `origin/main` in if another session pushed meanwhile.
+2. `git checkout main; git pull`, then work on a new branch (`git checkout -b <short-name>`). Every push to it runs Build IPA, the Engine test (engine files) and the UI tests (app files). When green, open a PR and merge it on GitHub (`gh pr create`, `gh pr merge --merge`); `main` is protected, so never push or fast-forward it directly. The merge publishes to SideStore. Bring the branch up to date with `origin/main` first if another session merged meanwhile.
 3. Watch CI with `gh run list --repo AngeloP46/lumen --branch <branch>`; fetch artifacts with `gh run download <id> --name <artifact>` (engine-renders, screenshots, uitest, Lumen-ipa) and look at the images.
 4. Another session may be working in this same folder: check `git status` before switching branches and never commit or discard changes you didn't make without asking.
 5. Update this file before finishing.
 
 ## Things to verify on the phone
+- Lens Blur 0.1.225+: disc look and speed at high amounts on 24 MP ARWs (three bokeh passes), roll-off feel, new amount scale, adjusting after leaving and returning.
+- Auto 0.1.236: subject metering on cars/people, high-key and night scenes, white balance on mixed light, how long the hourglass shows.
+- Updated SideStore build: max pinch release at off-centre points, closed-panel centering, clipping margins, Near/Far slider travel, undo/redo after reopen.
+- Lens Blur on representative camera RAW/ProRAW (including Sony): focus picking, subject edges around cars/people, zoomed preview, HDR and exported appearance. Automated tests do not confirm real-phone appearance/performance.
 - HDR on the real screen: does the badge show `HDR +x.x`, do bright skies/lights glow with detail, does the HDR export look right in Photos.
 - Two-finger pan and pinch, zooming out in Masks, slider scrolling from anywhere: how they feel under a real finger.
 - Library: Select, paste edits onto many, batch export speed with 24 MP ARWs, date sections (date taken comes from EXIF).

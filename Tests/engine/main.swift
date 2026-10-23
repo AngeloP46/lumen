@@ -272,9 +272,10 @@ if args.contains("--memory") {
     // for a moment; iPhones mostly use the Neural Engine). Phone numbers come from ⋯ → Send diagnostics.
     let budget: [String: Int] = ["open": 1000, "full-size view": 2500, "subject": 2650, "heal": 5600, "export": 6600, "AI denoise": 6600]
     let total = 6600
-    guard let arw = files.first(where: { $0.pathExtension.lowercased() == "arw" }),
+    // the first RAW in the folder: the Sony ARW (samples), or the iPhone ProRAW (proraw; quality checklist F)
+    guard let arw = files.first(where: { ["arw", "dng"].contains($0.pathExtension.lowercased()) }),
           let session = EditSession(url: arw, expandHDR: true) else {
-        check(false, "memory test needs the Sony ARW"); finishChecks()
+        check(false, "memory test needs a RAW photo"); finishChecks()
     }
     print("MEMORY start \(footprintMB()) MB, photo \(Int(session.nativeSize.width))x\(Int(session.nativeSize.height))")
     var preview: ImageSource?
@@ -311,7 +312,8 @@ if args.contains("--memory") {
         if let spot { s.heals = [spot] }
     }
     peaks["export"] = stepPeak("export") { _ = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true) }
-    if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil, EditSession.hasDenoiseModel {
+    if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil, EditSession.hasDenoiseModel,
+       ProcessInfo.processInfo.environment["LUMEN_MEMORY_SKIP_DENOISE"] == nil {
         DenoiseStore.directory = outDir.appendingPathComponent("denoise-memory")
         var ok = false
         let t = now()
@@ -596,6 +598,16 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         continue
     }
     opened += 1
+    // A failed AI step is told apart from one that found nothing, and can be tried again (quality checklist A18)
+    do {
+        source.storeMask(EditSession.aiPeople, nil)           // "ran, found nothing"
+        check(source.hasTried(EditSession.aiPeople) && source.failures.isEmpty, "\(stem): a step that found nothing is tried, not failed")
+        source.noteFailure(EditSession.aiPeople)               // "failed"
+        check(source.failures == [EditSession.aiPeople], "\(stem): a failure is recorded")
+        source.clearFailures()
+        check(!source.hasTried(EditSession.aiPeople) && source.failures.isEmpty, "\(stem): clearing failures lets the step run again")
+        check(source.snapshotMasks().masks[EditSession.aiPeople] == nil, "\(stem): a cleared failure leaves no stale mask")
+    }
     let t2 = now()
     print("\(stem): native \(session.nativeSize) preview \(source.size) open \(Int((t1 - t0) * 1000))ms source \(Int((t2 - t1) * 1000))ms air \(source.air) dn \(source.darkNorm)")
 
@@ -1036,17 +1048,11 @@ do {
         } catch { check(false, "settings JSON: \(name) round trip threw \(error)") }
     }
 
-    // Same recipe as LibraryStore.settings(for:): lay an old sidecar's known keys over today's defaults.
+    // The app's own migration (EditsFile.decodeSettings, used by LibraryStore.settings(for:)): an old sidecar's known
+    // keys laid over today's defaults (this used to be a copy of the recipe; quality checklist C7)
     do {
-        let defaults = try JSONSerialization.jsonObject(with: JSONEncoder().encode(EditSettings())) as? [String: Any] ?? [:]
-        check(!defaults.isEmpty, "settings JSON: default settings encoded to an empty object")
-        var old: [String: Any] = ["exposure": 1.5, "contrast": 20, "someRemovedSlider": 7]
-        old = old.filter { defaults[$0.key] != nil }
-        check(old.count == 2, "settings JSON: unknown key was not filtered out")
-        var merged = defaults
-        for (k, v) in old { merged[k] = v }
-        let d = try JSONSerialization.data(withJSONObject: merged)
-        let s = try JSONDecoder().decode(EditSettings.self, from: d)
+        let old: [String: Any] = ["exposure": 1.5, "contrast": 20, "someRemovedSlider": 7]
+        let s = EditsFile.decodeSettings(try JSONSerialization.data(withJSONObject: old))
         check(s.exposure == 1.5 && s.contrast == 20, "settings JSON: partial sidecar lost its saved values (exposure \(s.exposure), contrast \(s.contrast))")
         check(s.saturation == 0 && s.cropR == 1 && s.cropB == 1 && s.masks.isEmpty && s.curves.isNeutral,
               "settings JSON: keys missing from a partial sidecar did not fall back to defaults")

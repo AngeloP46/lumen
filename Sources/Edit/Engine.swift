@@ -5,24 +5,6 @@ import Metal
 import ImageIO
 import UniformTypeIdentifiers
 
-/// GPU objects shared by the whole app (preview view, thumbnails, export).
-/// An AI model loaded the first time it is needed and let go of with `release()` (when its tool closes or memory is
-/// short). Before 19 Oct each model was a `static let`, so once used it stayed in memory until the app closed.
-/// Code that is using the model holds its own reference, so releasing never pulls it from under a running job.
-final class LoadedModel<M>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: M?
-    private var tried = false
-    private let load: () -> M?
-    init(_ load: @escaping () -> M?) { self.load = load }
-    var model: M? {
-        lock.lock(); defer { lock.unlock() }
-        if !tried { value = load(); tried = true }
-        return value
-    }
-    func release() { lock.lock(); value = nil; tried = false; lock.unlock() }
-}
-
 enum LumenGPU {
     static let device: MTLDevice? = MTLCreateSystemDefaultDevice()
     static let queue: MTLCommandQueue? = device?.makeCommandQueue()
@@ -154,6 +136,20 @@ final class ImageSource: @unchecked Sendable {
         return (masks, tried)
     }
     func hasTried(_ key: String) -> Bool { lock.lock(); defer { lock.unlock() }; return tried.contains(key) }
+
+    /// An AI step that failed (the request threw, the model wouldn't load, no memory) as opposed to one that ran and found
+    /// nothing. Before, both came back as nil and were remembered as "tried", so a failure read "No people found in this
+    /// photo" and could never be retried (quality checklist A18).
+    private var failedKeys: Set<String> = []
+    func noteFailure(_ key: String) { lock.lock(); failedKeys.insert(key); lock.unlock() }
+    var failures: Set<String> { lock.lock(); defer { lock.unlock() }; return failedKeys }
+    /// Lets the AI try again for everything that failed.
+    func clearFailures() {
+        lock.lock(); defer { lock.unlock() }
+        tried.subtract(failedKeys)
+        for k in failedKeys { masks[k] = nil }
+        failedKeys = []
+    }
 
     /// Estimated depth (see Masks.swift computeDepth), kept for picking a depth by tapping and for the range graph.
     var depthField: DepthField? { lock.lock(); defer { lock.unlock() }; return depth }

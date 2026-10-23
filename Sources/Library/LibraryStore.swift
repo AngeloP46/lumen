@@ -21,10 +21,18 @@ struct BatchResult: Identifiable {
     let urls: [URL]
 }
 
+extension Notification.Name {
+    /// Heals added to a photo whose editor had closed (`LibraryStore.addHeals`); an editor open on it adopts them.
+    static let lumenHealsAdded = Notification.Name("lumenHealsAdded")
+}
+
 private let thumbQueue = DispatchQueue(label: "lumen.thumbs", qos: .utility)
 private let exportQueue = DispatchQueue(label: "lumen.batch-export", qos: .userInitiated)
 /// Serial: undo-history writes for every photo, in order (see `LibraryStore.save`).
 private let historyQueue = DispatchQueue(label: "lumen.history", qos: .utility)
+/// Serial: the slow file work of deleting photos (history flush, Heal-patch scan, unlinking), one photo at a time
+/// (checklist A10). The photo itself is gone from the list, marked deleted and its original removed before this runs.
+private let deleteQueue = DispatchQueue(label: "lumen.delete", qos: .utility)
 /// History waiting to be written, by file (only touched on `historyQueue`): a burst of saves writes the newest once,
 /// 0.2 s later, and at once when the photo closes, is deleted or the app leaves the screen. (2 s lost the undo
 /// history when the app was closed right after an edit: UI test testOctoberEditorFixes, 19 Oct.)
@@ -37,7 +45,13 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var thumbVersion = 0
     /// Decoded thumbnails, by photo and version: every finished thumbnail redraws the grid, and each cell used to read
     /// and decode its JPEG from disk again on the main thread (code review, 19 Oct).
-    private let thumbCache = NSCache<NSString, UIImage>()
+    private let thumbCache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        // A bound the cache can actually shed under memory pressure (checklist A8: it was unlimited; decoded 640 px
+        // thumbnails are a few MB apiece once rendered). Count limit only: the cost limit can't see the pixels.
+        c.countLimit = 200
+        return c
+    }()
     private var thumbVersions: [UUID: Int] = [:]
 
     /// The photo's thumbnail, decoded once per version.
@@ -49,8 +63,21 @@ final class LibraryStore: ObservableObject {
         return img
     }
     @Published private(set) var userPresets: [UserPreset] = []
-    @Published var clipboard: EditSettings?
+    /// Copied edits and what was chosen from them (Copy edits…); Paste applies exactly that.
+    @Published var clipboard: Clipboard?
     @Published var lastError: String?
+    /// A save that failed (storage full, a write error): shown until a save works again; the edits stay in memory
+    /// and are written again every few seconds (checklist A2).
+    @Published private(set) var saveProblem: String?
+    /// Saves that failed, newest per photo, written again by `retryFailedSaves`.
+    private var failedSaves: [UUID: (settings: EditSettings, history: EditHistory?)] = [:]
+    private var pendingBackups: [UUID: Data] = [:]
+    private var indexSaveFailed = false
+    private var presetsSaveFailed = false
+    private var retryTimer: Timer?
+    /// What reading a photo's edits couldn't (from a newer Lumen, or damaged), for the editor to say once (A1).
+    private var loadNotices: [UUID: String] = [:]
+    func takeLoadNotice(_ item: LibraryItem) -> String? { loadNotices.removeValue(forKey: item.id) }
     @Published var importing = false
     @Published var importTotal = 0
     @Published var importDone = 0
@@ -65,6 +92,8 @@ final class LibraryStore: ObservableObject {
     private var batchRunning = false
     nonisolated(unsafe) private var batchPausing = false
     nonisolated(unsafe) private var batchCancel = false
+    /// A batch export can be cancelled (A19: only AI Denoise could be). The photos already done are kept.
+    nonisolated(unsafe) private var exportCancel = false
     private let batchDenoiseQueue = DispatchQueue(label: "lumen.denoise.batch", qos: .userInitiated)
     private var batchObservers: [NSObjectProtocol] = []
     /// Cleans that paused in the editor (Lumen left the screen or was swiped away): photo and how far it got.
@@ -125,6 +154,7 @@ final class LibraryStore: ObservableObject {
             DenoiseStore.directory = oldDenoise
         }
         DispatchQueue.global(qos: .utility).async { DenoiseStore.sweep() }
+        Self.historyFailed = { [weak self] error in self?.reportSaveFailure(error) }
         Task { @MainActor [weak self] in self?.restoreDenoiseWork() }
         try? fm.createDirectory(at: HealStore.directory, withIntermediateDirectories: true)
         // Smart fill (beta, 0.1.154) was taken out again: free the ~950 MB it may have downloaded
@@ -149,6 +179,68 @@ final class LibraryStore: ObservableObject {
                 return UserPreset(id: id, name: name, settings: Self.decodeSettings(d))
             }
         }
+        // after the presets are read: they count as references too
+        if testRoot == nil { sweepHealPatches() }
+    }
+
+    /// CI: runs the save-recovery check once the demo library has been set up (it adds a scratch photo to the list, so
+    /// it must not run while the demo setup is still replacing the library's photos).
+    func runPersistenceChecksIfRequested() {
+        guard DemoMode.isOn, DemoMode.value("-lumenDemoPersistenceChecks") == "1" else { return }
+        Task { @MainActor in await self.checkPersistenceRecovery() }
+    }
+
+    /// Simulator regression: real failing writes (a directory occupies the file path), then storage recovers.
+    private func checkPersistenceRecovery() async {
+        let item = LibraryItem(id: UUID(), displayName: "Save recovery test", fileName: "recovery.dng", added: Date())
+        items.append(item)
+        let edits = editURL(item), history = historyURL(item)
+        func check(_ ok: Bool, _ text: String) { DemoMode.log("save recovery \(ok ? "PASS" : "FAIL") \(text)") }
+        func drain() async {
+            await withCheckedContinuation { continuation in
+                historyQueue.async { Self.writePendingHistory(); continuation.resume() }
+            }
+        }
+        defer {
+            items.removeAll { $0.id == item.id }
+            failedSaves[item.id] = nil
+            try? fm.removeItem(at: edits)
+            try? fm.removeItem(at: history)
+            saveIndex()
+        }
+        do {
+            try fm.createDirectory(at: edits, withIntermediateDirectories: true)
+            var first = EditSettings(); first.exposure = 1.25; first.hdr = false
+            save(first, for: item, history: EditHistory(current: first, undo: [EditSettings()], redo: []))
+            await drain()
+            check(settings(for: item) == first && editorSettings(for: item) == first, "reopen uses pending edits")
+            check(self.history(for: item, current: first).undo == [EditSettings()], "pending undo survives reopen")
+            var second = settings(for: item); second.contrast = 15
+            save(second, for: item)
+            await drain()
+            check(self.history(for: item, current: second).undo.last == first, "editing again preserves pending history")
+            try fm.removeItem(at: edits)
+            retryFailedSaves()
+            await drain()
+            check(EditsFile.decodeSettings(try Data(contentsOf: edits)) == second, "recovered storage saves newest edits")
+            try fm.removeItem(at: history)
+            try fm.createDirectory(at: history, withIntermediateDirectories: true)
+            var third = second; third.exposure = 2
+            save(third, for: item, history: EditHistory(current: third, undo: [first, second], redo: []))
+            await drain()
+            // Let the main-actor failure notification start the retry timer.
+            try await Task.sleep(nanoseconds: 300_000_000)
+            check(saveProblem != nil, "history-only failure remains visible")
+            try fm.removeItem(at: history)
+            for _ in 0..<70 {
+                if fm.fileExists(atPath: history.path), saveProblem == nil { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            let restored = EditsFile.readHistory(file: history, legacy: nil)
+            check(restored?.current == third && restored?.undo == [first, second], "history-only failure retries automatically")
+            check(saveProblem == nil, "warning clears after all writes recover")
+        } catch { check(false, error.localizedDescription) }
+        DemoMode.log("save recovery DONE")
     }
 
 
@@ -192,11 +284,13 @@ final class LibraryStore: ObservableObject {
         let saved = library.history(for: removed, current: edits)
         check(sidecar != nil && sidecar?["_undoHistory"] == nil && fm.fileExists(atPath: library.historyURL(removed).path)
               && saved.undo == [previous] && saved.redo == [next], "undo history kept in its own file")
-        var clipboard = EditSettings(); clipboard.heals = [copied]; library.clipboard = clipboard
+        var clipboard = EditSettings(); clipboard.heals = [copied]
+        library.clipboard = Clipboard(settings: clipboard, selection: CopySelection(), sourceName: "Removed")
         var recipe = EditSettings(); recipe.heals = [preset]
         library.userPresets = [UserPreset(name: "Legacy", settings: recipe)]
         let lease = HealStore.retain([active.id])
         library.delete(removed)
+        library.waitForDeletes()
         check([current, undo, redo, dropped].allSatisfy { !exists($0) }, "current undo redo and trimmed owner patches removed")
         check([shared, copied, preset].allSatisfy(exists), "retained history clipboard and preset preserved")
         check(exists(active), "in-flight render retains patch")
@@ -211,6 +305,7 @@ final class LibraryStore: ObservableObject {
         check(written == false && !exists(late), "late Heal result cannot recreate deleted pixels")
         library.clipboard = nil; library.userPresets = []
         library.delete(kept)
+        library.waitForDeletes()
         check(!exists(shared), "shared patch removed after last photo deleted")
         // Retained legacy references are intentionally preserved; this is not a global garbage sweep.
         check(!fm.fileExists(atPath: library.fileURL(removed).path) && !fm.fileExists(atPath: library.thumbURL(removed).path), "photo and thumbnail removed")
@@ -234,6 +329,19 @@ final class LibraryStore: ObservableObject {
             // keep the last good list, in case this one is ever damaged
             try? fm.removeItem(at: backupURL)
             try? fm.copyItem(at: indexURL, to: backupURL)
+            // photos copied in but never listed (the app closed mid-import, or the list couldn't be written): back
+            // in the library instead of invisible for ever (checklist A2)
+            var files = (try? fm.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: [.creationDateKey])) ?? []
+            for partial in files where partial.pathExtension == "partial" { try? fm.removeItem(at: partial) }   // an import that was cut short
+            files.removeAll { $0.pathExtension == "partial" }
+            let known = Set(list.map(\.fileName))
+            let orphans = Self.rebuild(from: files.filter { !known.contains($0.lastPathComponent) })
+            if !orphans.isEmpty {
+                items = (items + orphans).sorted { $0.added > $1.added }
+                saveIndex()
+                lastError = "\(orphans.count) photo\(orphans.count == 1 ? " was" : "s were") missing from Lumen's list and \(orphans.count == 1 ? "is" : "are") back (edits kept)."
+                Diagnostics.shared.note("library: \(orphans.count) unlisted photo file(s) adopted")
+            }
             return
         }
         let files = (try? fm.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: [.creationDateKey])) ?? []
@@ -291,13 +399,36 @@ final class LibraryStore: ObservableObject {
     // MARK: Edits
 
     func settings(for item: LibraryItem) -> EditSettings {
+        if let pending = failedSaves[item.id] { return pending.settings }
         guard let data = try? Data(contentsOf: editURL(item)) else { return EditSettings() }
-        // a damaged file would be replaced by defaults on the next save: keep a copy first
-        if (try? JSONSerialization.jsonObject(with: data)) == nil {
-            let copy = editsDir.appendingPathComponent("\(item.id.uuidString).damaged.json")
-            if !fm.fileExists(atPath: copy.path) { try? data.write(to: copy) }
+        let (s, report) = EditsFile.load(data)
+        // anything this version couldn't read: the original file is kept before anything can be saved over it
+        if report.lostSomething {
+            var backedUp = false
+            do {
+                try keepCopy(of: data, for: item)
+                pendingBackups[item.id] = nil
+                backedUp = true
+            } catch {
+                pendingBackups[item.id] = data
+                reportSaveFailure(error)
+            }
+            let notice = backedUp ? report.message : "Some saved edits couldn't be read. Lumen couldn't keep a backup yet, so it will preserve the original file until a backup can be saved."
+            if let m = notice, loadNotices[item.id] == nil {
+                loadNotices[item.id] = m
+                Diagnostics.shared.note("edits of \(item.displayName): \(m)")
+            }
         }
-        return Self.decodeSettings(data)
+        return s
+    }
+
+    /// `<id>.kept-<date>.json` beside the edits, once per distinct content.
+    private func keepCopy(of data: Data, for item: LibraryItem) throws {
+        let existing = (try? fm.contentsOfDirectory(atPath: editsDir.path)) ?? []
+        for name in existing where name.hasPrefix("\(item.id.uuidString).kept-") || name == "\(item.id.uuidString).damaged.json" {
+            if (try? Data(contentsOf: editsDir.appendingPathComponent(name))) == data { return }
+        }
+        try data.write(to: editsDir.appendingPathComponent("\(item.id.uuidString).kept-\(UUID().uuidString).json"), options: .atomic)
     }
 
     /// What the editor opens a photo with: its saved edits, or for a photo never edited, today's defaults, with HDR on
@@ -306,7 +437,7 @@ final class LibraryStore: ObservableObject {
         var s = settings(for: item)
         // CI keeps the old start (the UI tests switch HDR themselves) unless a test asks for this
         let demoOff = DemoMode.isOn && DemoMode.value("-lumenDemoRawHDR") == nil
-        if !demoOff, !FileManager.default.fileExists(atPath: editURL(item).path),
+        if !demoOff, failedSaves[item.id] == nil, !FileManager.default.fileExists(atPath: editURL(item).path),
            UTType(filenameExtension: (item.fileName as NSString).pathExtension.lowercased())?.conforms(to: .rawImage) == true {
             #if APP_STORE
             // HDR is a Pro feature: starting a free user's RAW in HDR would watermark it and ask them to pay
@@ -319,51 +450,7 @@ final class LibraryStore: ObservableObject {
         return s
     }
 
-    private static func decodeSettings(_ data: Data) -> EditSettings {
-        let decoder = JSONDecoder()
-        if let s = try? decoder.decode(EditSettings.self, from: data) { return s }
-        // Older sidecar: lay its values over today's defaults, dropping anything that no longer fits.
-        // The template has one mask so masks, components and their adjustments get today's defaults too.
-        var template = EditSettings()
-        template.masks = [Mask.make(.brush)]
-        guard var old = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              var defaults = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(template))) as? [String: Any]
-        else { return EditSettings() }
-        old = old.filter { defaults[$0.key] != nil }
-        // Lens Blur reads the absence of these to recognise an old save (old amount scale; a saved choice): the
-        // template must not fill them in
-        if var lens = defaults["lensBlur"] as? [String: Any] {
-            lens["scaleVersion"] = nil; lens["activated"] = nil
-            defaults["lensBlur"] = lens
-        }
-        let maskTemplate = defaults["masks"] ?? [Any]()
-        defaults["masks"] = [Any]()
-        for dropping in [[], ["masks"]] as [[String]] {
-            var merged = defaults
-            for (k, v) in old where !dropping.contains(k) {
-                merged[k] = Self.overlay(v, on: k == "masks" ? maskTemplate : defaults[k] ?? v)
-            }
-            if let d = try? JSONSerialization.data(withJSONObject: merged),
-               let s = try? decoder.decode(EditSettings.self, from: d) { return s }
-        }
-        return EditSettings()
-    }
-
-    /// Lays old JSON values over a template: objects are merged key by key (keys the template lacks are dropped),
-    /// array elements are each merged over the template's first element.
-    private static func overlay(_ value: Any, on template: Any) -> Any {
-        if let v = value as? [String: Any], let t = template as? [String: Any] {
-            var out = t
-            // keys the template lacks are kept: they are the optional ones (left out of the template because they are
-            // nil there), e.g. Lens Blur's linked mask and focus point, which migration used to drop (code review, 19 Oct)
-            for (k, x) in v { out[k] = t[k].map { overlay(x, on: $0) } ?? x }
-            return out
-        }
-        if let v = value as? [Any], let t = (template as? [Any])?.first, t is [String: Any] {
-            return v.map { overlay($0, on: t) }
-        }
-        return value
-    }
+    private static func decodeSettings(_ data: Data) -> EditSettings { EditsFile.decodeSettings(data) }
 
     /// CI only: as if the photo had never been opened.
     func forgetEdits(_ item: LibraryItem) {
@@ -371,11 +458,7 @@ final class LibraryStore: ObservableObject {
         for u in [editURL(item), historyURL(item)] { try? FileManager.default.removeItem(at: u) }
     }
 
-    struct EditHistory: Codable {
-        var current: EditSettings
-        var undo: [EditSettings]
-        var redo: [EditSettings]
-    }
+    typealias EditHistory = EditsFile.History
 
     /// Undo/redo lives in its own file next to the edits (`<id>.history.json`), written on `historyQueue`.
     /// The edits sidecar stays small, so the save that runs twice a second while editing is cheap and never
@@ -384,12 +467,7 @@ final class LibraryStore: ObservableObject {
     private func historyURL(_ item: LibraryItem) -> URL { editsDir.appendingPathComponent("\(item.id.uuidString).history.json") }
 
     nonisolated private static func readHistory(file: URL, legacy: Data?) -> EditHistory? {
-        if let data = try? Data(contentsOf: file), let h = try? JSONDecoder().decode(EditHistory.self, from: data) { return h }
-        guard let data = legacy,
-              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let value = json["_undoHistory"],
-              let encoded = try? JSONSerialization.data(withJSONObject: value) else { return nil }
-        return try? JSONDecoder().decode(EditHistory.self, from: encoded)
+        EditsFile.readHistory(file: file, legacy: legacy)
     }
 
     func history(for item: LibraryItem, current: EditSettings) -> EditHistory {
@@ -422,9 +500,22 @@ final class LibraryStore: ObservableObject {
         let url = editURL(item), file = historyURL(item)
         // the old sidecar is read before it is overwritten: it may still hold a pre-move `_undoHistory`
         let oldData = supplied == nil ? try? Data(contentsOf: url) : nil
-        let previous = supplied == nil ? oldData.map(Self.decodeSettings) ?? EditSettings() : nil
-        // small, fast and synchronous: what the photo looks like is never lost
-        if let data = try? JSONEncoder().encode(s) { try? data.write(to: url, options: .atomic) }
+        let previous = supplied == nil ? failedSaves[item.id]?.settings ?? oldData.map(Self.decodeSettings) ?? EditSettings() : nil
+        // small, fast and synchronous: what the photo looks like is never lost; a failed write is said and retried
+        do {
+            if let original = pendingBackups[item.id] {
+                try keepCopy(of: original, for: item)
+                pendingBackups[item.id] = nil
+            }
+            if DemoMode.value("-lumenDemoFailSaves") != nil { throw CocoaError(.fileWriteOutOfSpace) }   // CI
+            try JSONEncoder().encode(s).write(to: url, options: .atomic)
+            if DemoMode.isOn { DemoMode.log("saved edits \(item.fileName)") }
+            failedSaves[item.id] = nil
+        } catch {
+            failedSaves[item.id] = (s, supplied)
+            reportSaveFailure(error)
+            // Keep history in memory too, so reopening a photo with a pending save keeps its undo steps.
+        }
         historyQueue.async {
             var history: EditHistory
             if let supplied { history = supplied } else {
@@ -436,20 +527,67 @@ final class LibraryStore: ObservableObject {
             history.current = s
             history.undo = Array(history.undo.suffix(100))
             history.redo = Array(history.redo.suffix(100))
-            let scheduled = pendingHistory[file] != nil
             pendingHistory[file] = history
-            if !scheduled {
-                historyQueue.asyncAfter(deadline: .now() + 0.2) { Self.writePendingHistory(file) }
-            }
+            historyQueue.asyncAfter(deadline: .now() + 0.2) { Self.writePendingHistory(file) }
         }
     }
 
-    /// Writes waiting history now (one file, or all). On `historyQueue` only.
+    /// Writes waiting history now (one file, or all). On `historyQueue` only. A failed write keeps it waiting and
+    /// is reported like a failed save (it is tried again with the next save).
     nonisolated private static func writePendingHistory(_ only: URL? = nil) {
         let files = only.map { [$0] } ?? Array(pendingHistory.keys)
         for file in files {
             guard let history = pendingHistory.removeValue(forKey: file) else { continue }
-            if let data = try? JSONEncoder().encode(history) { try? data.write(to: file, options: .atomic) }
+            do {
+                try JSONEncoder().encode(history).write(to: file, options: .atomic)
+            } catch {
+                if pendingHistory[file] == nil { pendingHistory[file] = history }
+                Diagnostics.shared.note("undo history not saved: \(error.localizedDescription)")
+                Task { @MainActor in historyFailed?(error) }
+            }
+        }
+    }
+    /// Set by the store: a history write failed.
+    nonisolated(unsafe) private static var historyFailed: ((Error) -> Void)?
+
+    /// Shown in the library and the editor until a save works again.
+    private func reportSaveFailure(_ error: Error) {
+        let full = (error as NSError).code == NSFileWriteOutOfSpaceError || (error as NSError).domain == NSPOSIXErrorDomain && (error as NSError).code == 28
+        let text = full ? "Your edits can't be saved: the iPhone is out of storage. Free some space; Lumen keeps trying."
+                        : "Your edits couldn't be saved (\(error.localizedDescription)). Lumen keeps trying."
+        if saveProblem != text {
+            saveProblem = text
+            Diagnostics.shared.note("save failed: \(error.localizedDescription)")
+        }
+        guard retryTimer == nil else { return }
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.retryFailedSaves() }
+        }
+    }
+
+    /// Writes again every save that failed (also when the editor closes or Lumen leaves the screen).
+    func retryFailedSaves() {
+        for (id, pending) in failedSaves {
+            guard let item = item(id) else { failedSaves[id] = nil; continue }
+            save(pending.settings, for: item, history: pending.history)
+        }
+        for (id, original) in pendingBackups {
+            guard let item = item(id) else { pendingBackups[id] = nil; continue }
+            do { try keepCopy(of: original, for: item); pendingBackups[id] = nil }
+            catch { reportSaveFailure(error) }
+        }
+        if indexSaveFailed { saveIndex() }
+        if presetsSaveFailed { savePresets() }
+        historyQueue.async { [weak self] in
+            Self.writePendingHistory()
+            let historySaved = pendingHistory.isEmpty
+            Task { @MainActor [weak self] in
+                guard let self, historySaved, self.failedSaves.isEmpty, self.pendingBackups.isEmpty,
+                      !self.indexSaveFailed, !self.presetsSaveFailed else { return }
+                self.retryTimer?.invalidate(); self.retryTimer = nil
+                if self.saveProblem != nil { Diagnostics.shared.note("saving works again") }
+                self.saveProblem = nil
+            }
         }
     }
 
@@ -464,53 +602,64 @@ final class LibraryStore: ObservableObject {
         for item in list { delete(item) }
     }
 
-    /// Puts `edits` on every photo in `list`. `keepOwn` keeps each photo's own crop, straighten, rotation and masks
-    /// (those belong to one picture), so only the look is copied; `masks` then copies the masks too (worked out again
-    /// on each photo) while still keeping each photo's crop.
-    func apply(_ edits: EditSettings, to list: [LibraryItem], keepOwn: Bool, masks pasteMasks: Bool = false) {
+    /// Paste: the copied edits onto every photo in `list`, exactly as chosen when copying (`Clipboard.pasted`, the
+    /// same rule as the editor's Paste). AI Denoise is pasted by `cleanWithAIDenoise` once a photo is cleaned.
+    func paste(_ clip: Clipboard, to list: [LibraryItem]) {
         for item in list {
-            var s = edits
-            let own = settings(for: item)
-            s.lensBlur = own.lensBlur  // focus belongs to this photo
-            s.setOn(.lensBlur, own.isOn(.lensBlur))
-            if !keepOwn, let id = own.lensBlur.maskID, let focus = own.masks.first(where: { $0.id == id }) {
-                s.masks.removeAll { $0.id == id }; s.masks.append(focus)
-            }
-            s.heals = own.heals   // heals are made for one photo's pixels: always keep each photo's own
-            s.aiDenoise = own.aiDenoise   // so is AI Denoise (a clean each): pasting never starts or drops one
-            s.setOn(.heal, own.isOn(.heal))   // Heal's on/off belongs with the photo's own heals
-            if keepOwn && pasteMasks {
-                // the clipboard's masks, adapted to this photo, plus this photo's own Lens Blur focus mask
-                let focus = own.lensBlur.maskID.flatMap { id in own.masks.first { $0.id == id } }
-                s.masks = edits.masks.filter { $0.id != edits.lensBlur.maskID }.forAnotherPhoto + (focus.map { [$0] } ?? [])
-            } else if !keepOwn {
-                s.masks = s.masks.forAnotherPhoto
-            }
-            if keepOwn {
-                if !pasteMasks { s.masks = own.masks }
-                // crop, straighten, turns, flips and perspective all belong to one picture (21 Oct review: flips and
-                // the Transform sliders used to be pasted over)
-                s.take(.crop, from: own)
-            }
+            // what the editor would open the photo with (a RAW never edited starts in HDR): pasting must not turn that
+            // default off just because the photo had no edits file yet
+            let own = editorSettings(for: item)
+            let s = clip.pasted(onto: own, samePhoto: item.id == clip.sourceID)
+            guard s != own else { continue }
             save(s, for: item)
             refreshThumbnail(item)
         }
     }
 
-    /// "Choose…": pastes only the ticked tools of `edits` onto every photo in `list`; everything else stays each
-    /// photo's own (heals, Lens Blur and its focus mask, AI Denoise's clean), like the editor's Paste some edits.
-    func apply(_ sections: Set<EditSection>, from edits: EditSettings, to list: [LibraryItem]) {
-        for item in list {
-            let own = settings(for: item)
-            var s = own
-            for sec in EditSection.allCases where sections.contains(sec) && sec.canPaste { s.take(sec, from: edits) }
-            if sections.contains(.masks) {
-                let focus = own.lensBlur.maskID.flatMap { id in own.masks.first { $0.id == id } }
-                s.masks = edits.masks.filter { $0.id != edits.lensBlur.maskID }.forAnotherPhoto + (focus.map { [$0] } ?? [])
+    /// Heals made for a photo whose editor has closed meanwhile (a heal or Remove people finishing after Back): added
+    /// to the saved edits instead of being lost (checklist A4).
+    func addHeals(_ spots: [HealSpot], to item: LibraryItem) {
+        guard !spots.isEmpty, items.contains(where: { $0.id == item.id }) else { HealStore.remove(Set(spots.map(\.id))); return }
+        var s = settings(for: item)
+        s.heals.append(contentsOf: spots)
+        s.setOn(.heal, true)
+        save(s, for: item)
+        refreshThumbnail(item)
+        Diagnostics.shared.note("heal finished after the editor closed: kept (\(spots.count))")
+        // the photo may have been opened again meanwhile: that editor read its edits before these heals existed
+        NotificationCenter.default.post(name: .lumenHealsAdded, object: nil, userInfo: ["photo": item.id, "spots": spots])
+    }
+
+    /// At launch: Heal patches nothing refers to any more (a heal whose undo step fell off the 100-step history, a heal
+    /// thrown away before 22 Oct when its editor had closed) are removed. Only patches older than a day, and only when
+    /// every edits and history file could be read (otherwise nothing is removed: never delete pixels still needed).
+    private func sweepHealPatches() {
+        let editsDir = self.editsDir, presets = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
+        let healDir = HealStore.directory
+        thumbQueue.async {
+            let fm = FileManager.default
+            var used = presets
+            // can't list the edits folder: nothing is known to be unused, so nothing is removed
+            guard let editFiles = try? fm.contentsOfDirectory(at: editsDir, includingPropertiesForKeys: nil) else { return }
+            for url in editFiles where url.pathExtension == "json" {
+                guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) else {
+                    if url.lastPathComponent.contains(".kept-") || url.lastPathComponent.hasSuffix(".damaged.json") { continue }
+                    return
+                }
+                used.formUnion(HealStore.references(in: json))
             }
-            s.aiDenoise = own.aiDenoise
-            save(s, for: item)
-            refreshThumbnail(item)
+            let dayAgo = Date().addingTimeInterval(-86_400)
+            var unused = Set<UUID>()
+            for url in (try? fm.contentsOfDirectory(at: healDir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            where url.pathExtension == "png" && !url.lastPathComponent.hasSuffix("-mask.png") {
+                guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), !used.contains(id),
+                      let changed = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                      changed < dayAgo else { continue }
+                unused.insert(id)
+            }
+            guard !unused.isEmpty else { return }
+            HealStore.remove(unused)
+            Diagnostics.shared.note("heal patches nothing uses any more: \(unused.count) removed")
         }
     }
 
@@ -520,6 +669,10 @@ final class LibraryStore: ObservableObject {
     /// each. Photos already cleaned only get the strength.
     func cleanWithAIDenoise(_ list: [LibraryItem], strength: Double) {
         guard EditSession.hasDenoiseModel, !list.isEmpty else { return }
+        guard MemoryBudget.denoiseFits else {
+            lastError = "AI Denoise needs more memory than this iPhone gives an app (iPhones with 6 GB or more). The other edits were pasted."
+            return
+        }
         batchQueue = list.prefix(Self.denoiseBatchCap).map(\.id)
         batchTotal = batchQueue.count
         batchStrength = strength
@@ -619,6 +772,8 @@ final class LibraryStore: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.batchRunning = false
+                // the photo was removed while it was being cleaned: what the clean wrote belongs to nobody (checklist A20)
+                if self.item(id) == nil { DenoiseStore.remove(url) }
                 switch outcome {
                 case .done:
                     var s = self.settings(for: item)   // as it is now (it may have been edited meanwhile)
@@ -632,6 +787,9 @@ final class LibraryStore: ObservableObject {
                     self.batchPausedByBackground = true
                     self.denoiseBatch?.paused = true
                     UIApplication.shared.isIdleTimerDisabled = false
+                    // Lumen came back before the job reached its next tile and stopped: the return-to-screen check had
+                    // already run (it saw the job still running), so nothing would ever carry on (checklist A20)
+                    if UIApplication.shared.applicationState == .active, !self.batchCancel { self.continueDenoiseBatch() }
                 case .cancelled:
                     self.denoiseBatch = nil
                     UIApplication.shared.isIdleTimerDisabled = false
@@ -649,6 +807,9 @@ final class LibraryStore: ObservableObject {
 
     // MARK: Batch export
 
+    /// Stops a running batch export after the current photo; what has already been exported is kept (A19).
+    func cancelExport() { exportCancel = true }
+
     /// Exports every photo in `list` one after another in the background, then offers them in `batchResult`.
     func export(_ list: [LibraryItem], options o: ExportOptions) {
 #if APP_STORE
@@ -658,31 +819,46 @@ final class LibraryStore: ObservableObject {
         }
 #endif
         guard batchProgress == nil, !list.isEmpty else { return }
+        exportCancel = false
         batchProgress = (0, list.count)
-        // In the App Store build, untouched RAW photos export with neutral saved settings.
-        // editorSettings(for:) injects HDR for an unopened RAW, which is a Pro feature;
-        // applying that default during a free batch export would silently bypass the gate.
-#if APP_STORE
-        let jobs = list.map { (url: fileURL($0), edits: settings(for: $0), name: $0.displayName) }
-#else
-        // Personal SideStore/tester builds preserve main's default RAW HDR behavior.
+        // editorSettings: a RAW never opened exports as the editor would show it (HDR on)
         let jobs = list.map { (url: fileURL($0), edits: editorSettings(for: $0), name: $0.displayName) }
-#endif
         UIApplication.shared.isIdleTimerDisabled = true   // a long batch must not stop when the screen locks
         let patches = HealStore.retain(Set(jobs.flatMap { $0.edits.heals.map(\.id) }))
         let dir = fm.temporaryDirectory.appendingPathComponent("lumen-export-\(UUID().uuidString)", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        exportQueue.async {
+        exportQueue.async { [weak self] in
             defer { patches.close() }
             var urls: [URL] = []
             var used = Set<String>()
+            var failures: [String] = []   // A17: what went wrong, not just how many
             for (n, job) in jobs.enumerated() {
+                if self?.exportCancel == true { break }   // A19: stop between photos; what's done is kept
                 autoreleasepool {
-                    guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr && o.hdr) else { return }
+                    // Decode the way the editor would (checklist A14): "Include HDR" only controls the gain map,
+                    // not the decode. Decoding SDR for an HDR-edited photo changed the pixels, so the same SDR
+                    // export from the editor and from the library came out differently.
+                    guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr) else { return }
                     let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
-                    guard let data = HeavyWork.shared.run(.export, megapixels: mp, {
-                        session.renderData(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
-                    }) ?? nil else { return }
+                    let started = Date()
+                    let outcome: EditSession.ExportOutcome? = HeavyWork.shared.run(.export, megapixels: mp) {
+                        session.renderDataOutcome(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+                    }
+                    let state: String
+                    switch outcome {
+                    case .data: state = "done"
+                    case .failed: state = "failed"
+                    case nil: state = "out of memory"
+                    }
+                    Diagnostics.shared.note(String(format: "batch export %d of %d %@ in %.1f s (%.0f MP)", n + 1, jobs.count,
+                                                   state, Date().timeIntervalSince(started), mp))
+                    var data: Data?
+                    switch outcome {
+                    case .data(let d): data = d
+                    case .failed(let f): failures.append(f.message)
+                    case nil: failures.append("There isn't enough free memory to export this photo right now.")
+                    }
+                    guard let data = data else { return }
                     var name = job.name + "-lumen", k = 2
                     // the file system ignores case: IMG_1 and img_1 would overwrite each other
                     while used.contains(name.lowercased()) { name = "\(job.name)-lumen-\(k)"; k += 1 }
@@ -700,7 +876,11 @@ final class LibraryStore: ObservableObject {
                 guard let self else { return }
                 self.batchProgress = nil
                 if DemoMode.isOn { DemoMode.log("batch exported \(done.count) of \(jobs.count)") }
-                if done.count < jobs.count { self.lastError = "\(jobs.count - done.count) of \(jobs.count) photos could not be exported." }
+                if exportCancel { self.lastError = "Export stopped after \(done.count) of \(jobs.count)." }
+                else if done.count < jobs.count {
+                    let why = Array(Set(failures)).sorted()
+                    self.lastError = "\(jobs.count - done.count) of \(jobs.count) photos could not be exported.\(why.isEmpty ? "" : "\n" + why.joined(separator: "\n"))"
+                }
                 if !done.isEmpty { self.batchResult = BatchResult(urls: done) }
             }
         }
@@ -754,43 +934,70 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    /// Keep references in other photos, presets and the clipboard. Fail closed when a retained
-    /// sidecar is unreadable, rather than deleting pixels still needed by another photo.
-    private func retainedHealIDs(excluding item: LibraryItem) -> Set<UUID>? {
-        var ids = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
-        ids.formUnion(clipboard?.heals.map(\.id) ?? [])
-        for other in items where other.id != item.id {
-            for url in [editURL(other), historyURL(other)] {
-                guard fm.fileExists(atPath: url.path) else { continue }
-                guard let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
-                ids.formUnion(HealStore.references(in: json))
-            }
-        }
-        return ids
-    }
-
     func delete(_ item: LibraryItem) {
         guard items.contains(where: { $0.id == item.id }) else { return }
-        // finish queued history writes first: they may name Heal patches, and must not recreate the file afterwards
-        historyQueue.sync { Self.writePendingHistory() }
-        var patches = HealStore.markDeleted(owner: fileURL(item))
-        for url in [editURL(item), historyURL(item)] {
-            if let data = try? Data(contentsOf: url), let json = try? JSONSerialization.jsonObject(with: data) {
-                patches.formUnion(HealStore.references(in: json))
+        // At once, on the main thread, everything that must hold the moment the user taps Remove (checklist A10: the
+        // overnight version of this left the photo "live" until its file work had finished, so a late save or a Heal
+        // result could recreate what was being deleted): the photo is marked deleted (late Heal results and saves are
+        // refused), leaves the list and the saved list, and its original file goes, so a kill from here on can't
+        // bring it back (unlisted photo files are adopted at launch). Only the slow file work runs in the background.
+        let fileURL = fileURL(item), historyURL = historyURL(item), thumbURL = thumbURL(item)
+        let owned = HealStore.markDeleted(owner: fileURL)
+        items.removeAll { $0.id == item.id }
+        failedSaves[item.id] = nil
+        loadNotices[item.id] = nil
+        saveIndex()
+        try? fm.removeItem(at: fileURL)
+        let presetHeals = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
+        let clipHeals = Set(clipboard?.settings.heals.map(\.id) ?? [])
+        let editsDir = editsDir, id = item.id.uuidString
+        deleteQueue.async { [weak self] in
+            let fm = FileManager.default
+            var patches = owned
+            // queued history writes first: they may name Heal patches, and must not recreate the file afterwards
+            historyQueue.sync { LibraryStore.writePendingHistory(historyURL) }
+            let names = (try? fm.contentsOfDirectory(atPath: editsDir.path))
+            let own = Set((names ?? []).filter { $0 == "\(id).json" || $0 == "\(id).history.json" || $0 == "\(id).damaged.json" || $0.hasPrefix("\(id).kept-") })
+            for name in own where name.hasSuffix(".json") {
+                if let data = try? Data(contentsOf: editsDir.appendingPathComponent(name)), let json = try? JSONSerialization.jsonObject(with: data) {
+                    patches.formUnion(HealStore.references(in: json))
+                }
+            }
+            // Patches another photo (or a preset, or the clipboard) still refers to stay. Every other edits and history
+            // file in the folder counts, not only listed photos' (so no list can be stale), and an unreadable one means
+            // nothing is removed: never delete pixels another photo may need. Deletes run one at a time, so a sidecar
+            // being removed by another delete is never half read.
+            var retained: Set<UUID>? = patches.isEmpty ? [] : presetHeals.union(clipHeals)
+            if !patches.isEmpty {
+                if let names {
+                    for name in names where name.hasSuffix(".json") && !own.contains(name) && retained != nil {
+                        guard let data = try? Data(contentsOf: editsDir.appendingPathComponent(name)),
+                              let json = try? JSONSerialization.jsonObject(with: data) else {
+                            if name.hasSuffix(".damaged.json") { continue }   // a copy of a file that didn't parse: nothing in it to keep
+                            retained = nil; break
+                        }
+                        retained?.formUnion(HealStore.references(in: json))
+                    }
+                } else {
+                    retained = nil
+                }
+            }
+            DenoiseStore.remove(fileURL)
+            for name in own { try? fm.removeItem(at: editsDir.appendingPathComponent(name)) }   // edits, history, kept copies
+            try? fm.removeItem(at: thumbURL)
+            // The thumbnail queue is serial: this runs after any render already in flight for this photo.
+            thumbQueue.async { try? FileManager.default.removeItem(at: thumbURL) }
+            if let retained { HealStore.remove(patches.subtracting(retained)) }
+            else {
+                Task { @MainActor [weak self] in
+                    self?.lastError = "Photo removed, but its Heal patches could not safely be cleaned up because another photo's edits are unreadable."
+                }
             }
         }
-        // reading every other photo's edits is only needed when this one has Heal patches to clean up
-        let retained = patches.isEmpty ? Set<UUID>() : retainedHealIDs(excluding: item)
-        DenoiseStore.remove(fileURL(item))
-        for u in [fileURL(item), thumbURL(item), editURL(item), historyURL(item)] { try? fm.removeItem(at: u) }
-        // The thumbnail queue is serial: this runs after any render already in flight for this photo.
-        let thumb = thumbURL(item)
-        thumbQueue.async { try? FileManager.default.removeItem(at: thumb) }
-        items.removeAll { $0.id == item.id }
-        saveIndex()
-        if let retained { HealStore.remove(patches.subtracting(retained)) }
-        else { lastError = "Photo removed, but its Heal patches could not safely be cleaned up because another photo's edits are unreadable." }
     }
+
+    /// Waits until every delete has finished its file work (the in-app checks; the app never needs to wait).
+    func waitForDeletes() { deleteQueue.sync {} }
 
     // MARK: Rating / flags
 
@@ -826,8 +1033,13 @@ final class LibraryStore: ObservableObject {
     }
 
     private func savePresets() {
-        if let data = try? JSONEncoder().encode(userPresets) {
-            try? data.write(to: root.appendingPathComponent("presets.json"), options: .atomic)
+        do {
+            try JSONEncoder().encode(userPresets).write(to: root.appendingPathComponent("presets.json"), options: .atomic)
+            presetsSaveFailed = false
+        } catch {
+            presetsSaveFailed = true
+            reportSaveFailure(error)
+            Diagnostics.shared.note("presets not saved: \(error.localizedDescription)")
         }
     }
 
@@ -886,12 +1098,17 @@ final class LibraryStore: ObservableObject {
         let ext = url.pathExtension.lowercased()
         let fileName = ext.isEmpty ? id.uuidString : "\(id.uuidString).\(ext)"
         let dst = dir.appendingPathComponent(fileName)
+        let partial = dir.appendingPathComponent(fileName + ".partial")
         var failure: Error?
         var coordError: NSError?
         NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordError) { readable in
-            do { try FileManager.default.copyItem(at: readable, to: dst) } catch { failure = error }
+            do {
+                try FileManager.default.copyItem(at: readable, to: partial)
+                try FileManager.default.moveItem(at: partial, to: dst)
+            } catch { failure = error }
         }
         if let error = failure ?? coordError {
+            try? FileManager.default.removeItem(at: partial)
             try? FileManager.default.removeItem(at: dst)
             return .failure(error)
         }
@@ -952,7 +1169,14 @@ final class LibraryStore: ObservableObject {
         let ext = src.pathExtension.lowercased()
         let fileName = ext.isEmpty ? id.uuidString : "\(id.uuidString).\(ext)"
         let dst = filesDir.appendingPathComponent(fileName)
-        try fm.copyItem(at: src, to: dst)
+        let partial = filesDir.appendingPathComponent(fileName + ".partial")   // see copyIn
+        do {
+            try fm.copyItem(at: src, to: partial)
+            try fm.moveItem(at: partial, to: dst)
+        } catch {
+            try? fm.removeItem(at: partial)
+            throw error
+        }
         let item = LibraryItem(id: id, displayName: name, fileName: fileName, added: Date(), taken: Self.dateTaken(dst))
         items.insert(item, at: 0)
         saveIndex()
@@ -960,8 +1184,15 @@ final class LibraryStore: ObservableObject {
     }
 
     private func saveIndex() {
-        if let data = try? JSONEncoder().encode(items) {
-            try? data.write(to: indexURL, options: .atomic)
+        do {
+            try JSONEncoder().encode(items).write(to: indexURL, options: .atomic)
+            indexSaveFailed = false
+        }
+        catch {
+            indexSaveFailed = true
+            // the photos and their edits are safe on disk; the next launch finds unlisted photos again (loadIndex)
+            reportSaveFailure(error)
+            Diagnostics.shared.note("photo list not saved: \(error.localizedDescription)")
         }
     }
 

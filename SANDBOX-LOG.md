@@ -298,3 +298,14 @@ currentEntitlements shows them; the app refreshes on Transaction.updates, so use
 version 1.0 build = run number, Increased Memory Limit entitlement), signs it in Apple's cloud with an App Store Connect
 API key and uploads to TestFlight. Needs secrets ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8, APPLE_TEAM_ID (Angelo adds them).
 `docs/appstore/RELEASE-CHECKLIST.md`: the submit bar, the 10-minute phone run-through, Angelo's steps. Feature freeze until 1.0.
+
+## 23 Oct 2026: sandbox rebuilt on main's quality work (main 0.1.516)
+The sandbox had drifted far behind main (a trial merge gave 20 conflicts), so this branch is main's code with the Store
+layer put back on top, not a merge. Everything main learned since 14 Oct is now here too: the tolerant edits file and
+history loading, Copy edits…/Paste (also from the library), delete that leaves the list at once, failed-save banner and
+retry, the HeavyWork fixes, AI mask memo, export and import fixes (see main's docs/QUALITY-CHECKLIST.md).
+Store code is only in: `Sources/Store/`, `PaywallView`, `LumenMark`, `AppPrivacyView`, and `#if APP_STORE` hooks in
+`EditorView` (export gate, paywall sheet, watermark, screenshot demos), `LibraryView` (batch export gate, paywall sheet),
+`LibraryStore` (batch export refuses Pro edits for free users; a never-opened RAW starts in HDR only for Pro) and `Demo.swift`
+(`paywall`, `proEdits`, `noWM`). Everything else is main's file unchanged. Checked by app-store-sandbox.yml (flag off and on,
+ProGate checks, StoreKit test, screenshots).
