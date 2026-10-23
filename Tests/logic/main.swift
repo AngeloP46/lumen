@@ -402,5 +402,18 @@ do {
     check((startedAt?.timeIntervalSince(started) ?? 0) >= 0.6, "background: it waited for the screen")
 }
 
+// ---- careful mode (23 Oct): two memory closures within a day
+do {
+    let now = Date(timeIntervalSince1970: 2_000_000)
+    let h = 3600.0
+    check(!CarefulMode.active(closures: [], now: now), "careful: not without closures")
+    check(!CarefulMode.active(closures: [now.addingTimeInterval(-h)], now: now), "careful: one closure is not enough")
+    check(CarefulMode.active(closures: [now.addingTimeInterval(-h), now.addingTimeInterval(-2 * h)], now: now), "careful: two within a day")
+    check(!CarefulMode.active(closures: [now.addingTimeInterval(-h), now.addingTimeInterval(-25 * h)], now: now), "careful: a closure older than a day does not count")
+    check(!CarefulMode.active(closures: [now.addingTimeInterval(-23 * h), now.addingTimeInterval(-25 * h)], now: now), "careful: back to normal once the older one is a day old")
+    check(CarefulMode.pruned([now.addingTimeInterval(-30 * h), now.addingTimeInterval(-h)], now: now).count == 1, "careful: old closures are forgotten")
+    check(CarefulMode.pruned((0..<50).map { now.addingTimeInterval(-Double($0)) }, now: now).count == 20, "careful: the list never grows past 20")
+}
+
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)

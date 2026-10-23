@@ -42,6 +42,7 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
             // "open <time> <MB>": written every 2 s while on screen (21 Oct review: the ended time used to be the last
             // logged line, and a dead battery or the phone turning off reads the same way, hence "or the phone went off")
             closedDuringLastRun = true
+            MemoryBudget.noteClosure()   // two in a day and Lumen asks less of the phone (CarefulMode)
             let parts = state.split(separator: " ")
             let seen = parts.count >= 3 ? " (last seen \(parts[1]) using \(parts[2]) MB)" : ""
             // what memory did in its last seconds (every 0.1 s while it was high): the 2 s samples miss a spike
