@@ -281,6 +281,11 @@ struct MaskPanel: View {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.orange)
             Text(why).font(.system(size: 12, weight: .medium)).lineLimit(2)
             Spacer(minLength: 4)
+            if !vm.autoMaskFailed.isEmpty {
+                Button("Try again") { vm.retryAI() }
+                    .font(.system(size: 12, weight: .semibold))
+                    .accessibilityIdentifier("mask-empty-retry")
+            }
             Button("Remove mask") { vm.deleteMask(m.id) }
                 .font(.system(size: 12, weight: .semibold))
                 .accessibilityIdentifier("mask-empty-remove")
