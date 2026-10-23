@@ -42,7 +42,7 @@
   broadcast parts (was 89 M stored values; identical output, 24 % faster on a PC CPU), GPU float16 sums
   (`allowLowPrecisionAccumulationOnGPU`), and the model is loaded + run once on a blank tile when Detail opens
   (`detailToolChanged`, `warmDenoise`), kept while Detail is open, released 30 s after leaving it or on a memory
-  warning. Tile prep is negligible (~1 s of 84), so pipelining would not help. NAFNet on the ANE did 0.08 s/tile.
+  warning (0.1.608: kept for the whole session, released only by a memory warning, see the checklist). Tile prep is negligible (~1 s of 84), so pipelining would not help. NAFNet on the ANE did 0.08 s/tile.
 - **Measured 0.1.394 (owner, 20 Oct): 57 s for 24 MP** (median 0.42 s/tile, first tile 0.4 s after Detail's warm-up
   of 2.7 s, peak 1.9 GB, no memory warnings, 0 tiles redone). Owner: "results were very good". Next idea to try:
   1024 px tiles (overlap work 31 % -> 14 %, estimate ~45 s; check memory).
@@ -283,7 +283,7 @@ Read this first. It records what exists, how it's built and shipped, and what to
 ## The user and their setup
 - Windows 11 PC, **no Mac** (may rent one later but doesn't want to spend until needed). Cannot compile iOS code locally; all builds happen on GitHub Actions.
 - Phone: **iPhone 17 Pro Max** (iOS 27). Camera: **Sony A9** (ARW RAW). Shoots ProRAW on the phone too.
-- Explicitly NOT wanted: lens corrections, AI denoise, Generative Remove/extend, cloud sync. (Heal was added at the owner's request on 2026-10-11; perspective sliders were ticked in the overnight report.)
+- Explicitly NOT wanted: lens corrections, Generative Remove/extend, cloud sync. (Heal was added at the owner's request on 2026-10-11, AI Denoise on 2026-10-20; perspective sliders were ticked in the overnight report.)
 - Explain things in plain steps. Never ask them to run terminal commands; do it for them. They must type their own passwords / 2FA codes and approve GitHub device-code logins themselves.
 - Priorities they stated: smooth editing (Lightroom-like), a Lightroom-mobile style UI that wastes no screen space, masks that really work (subject, sky, luminance range, colour range, brush, gradients, add/subtract/intersect), no red overlay once a mask is set up.
 
