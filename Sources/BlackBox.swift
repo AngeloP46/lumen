@@ -68,6 +68,12 @@ final class BlackBox: @unchecked Sendable {
         if crumbs.count > 6 { crumbs.removeFirst() }
     }
 
+    private var counts: [String: Int] = [:]
+    /// Counts something that happens often (a frame drawn, a render asked for); the next line says how many since the last.
+    func count(_ name: String) {
+        lock.lock(); counts[name, default: 0] += 1; lock.unlock()
+    }
+
     /// Whether a memory warning in the last second was Lumen's own.
     var warningIsOwn: Bool { lock.lock(); defer { lock.unlock() }; return Date().timeIntervalSince(ownWarningAt) < 1 }
 
@@ -77,10 +83,14 @@ final class BlackBox: @unchecked Sendable {
         guard mb >= Self.recordFromMB else { return }
         let now = Date()
         if abs(mb - lastMB) >= 100 || now.timeIntervalSince(lastWrite) >= 2 {
-            lock.lock(); let recent = crumbs.suffix(3).joined(separator: " > "); lock.unlock()
+            lock.lock()
+            let recent = crumbs.suffix(3).joined(separator: " > ")
+            let busy = counts.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
+            counts = [:]
+            lock.unlock()
             // in the diagnostics log's own format, so the next launch can copy the lines in as they are; they read as
             // routine memory samples ("memory ..."), and carry the time to a tenth of a second
-            append("\(stamp.string(from: now))  memory \(mb) MB used, \(Diagnostics.availableMB) MB left · at \(tenths.string(from: now)) · \(recent)")
+            append("\(stamp.string(from: now))  memory \(mb) MB used, \(Diagnostics.availableMB) MB left · at \(tenths.string(from: now)) · \(busy.isEmpty ? "" : busy + " · ")\(recent)")
             lastWrite = now
         }
         if mb >= Self.shedFromMB, now.timeIntervalSince(lastShed) > 3 {

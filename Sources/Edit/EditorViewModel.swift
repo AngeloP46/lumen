@@ -164,6 +164,7 @@ final class EditorViewModel: ObservableObject {
 
     /// When the photo was asked for (open → first frame, for diagnostics).
     private var openedAt: Date?
+    private var renderAfterWarning: DispatchWorkItem?
     /// On closing the photo: the library's thumbnail from the picture already decoded here (A13). It shows the AI masks that
     /// are worked out, and the photo is not decoded again (a 48 MP RAW decode for a thumbnail was ~2 GB at its peak).
     func updateLibraryThumbnail() {
@@ -236,7 +237,10 @@ final class EditorViewModel: ObservableObject {
                 // and no new try for a while: dropped, tried again at once, dropped again was how iOS closed Lumen (23 Oct)
                 self.detailRetry.hold(for: 30)
                 if !self.showOriginal { self.unhealedSource = nil }
-                self.requestRender()
+                self.renderAfterWarning?.cancel()
+                let again = DispatchWorkItem { [weak self] in self?.requestRender() }
+                self.renderAfterWarning = again
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: again)
             }
         }
         applyingHistory = true
@@ -704,6 +708,7 @@ final class EditorViewModel: ObservableObject {
     func requestRender() {
         guard let session, let source else { return }
         BlackBox.shared.crumb("render")
+        BlackBox.shared.count("render")
         let buildStart = CACurrentMediaTime()
         defer { if renderTimes.count < 5000 { renderTimes.append((CACurrentMediaTime() - buildStart) * 1000) } }
         if let opened = openedAt {
