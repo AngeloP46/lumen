@@ -334,6 +334,7 @@ extension EditSession {
                 if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
             }
             if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
+            return .failed(.encode)
         case .heic:
             if let hdrImg {
                 if #available(iOS 18.0, macOS 15.0, *) {
@@ -346,10 +347,11 @@ extension EditSession {
                 }
             }
             if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
+            return .failed(.encode)
         case .tiff:
             if let d = try? ctx.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:]) { return .data(d) }
+            return .failed(.encode)
         }
-        return .failed(.encode)
     }
 
     /// The original file's EXIF / TIFF / GPS / IPTC details, for an exported file. Orientation is dropped (the pixels
