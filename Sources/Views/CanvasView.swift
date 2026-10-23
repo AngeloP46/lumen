@@ -121,6 +121,7 @@ final class CanvasModel {
               img.extent.width <= 4096, img.extent.height <= 4096 else { return }
         let work = DispatchWorkItem { [weak self] in
             // not when memory is already tight: the draw that is going on is enough (the simulator reports none: no limit)
+            if self?.drawingPaused == true { return }   // a model load or a heal is using the memory
             let left = Diagnostics.availableMB
             if left > 0 && left < 700 { return }
             let e = img.extent.integral
