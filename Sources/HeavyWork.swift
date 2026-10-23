@@ -27,7 +27,7 @@ final class HeavyWork: @unchecked Sendable {
     /// full-size decode is ~50 MB per megapixel whatever is asked of it.
     static func needMB(_ kind: Kind, megapixels mp: Double) -> Int {
         switch kind {
-        case .fullSizeCopy: return Int(50 * mp) + 700
+        case .fullSizeCopy: return DetailCopy.needMB(megapixels: mp)   // measured on the phone, see CopyPlan.swift
         case .aiMasks: return 900
         case .heal: return Int(50 * mp) + 800
         case .findPeople: return Int(20 * mp) + 700
@@ -85,13 +85,14 @@ final class HeavyWork: @unchecked Sendable {
         // short of room even alone: what can be made again goes first
         if alone, Self.availableMB() < need + Self.marginMB {
             if optional {
-                // an optional job (the 100 % copy, the original copy) is not worth letting go of models for, or
-                // sleeping on the shared work queue for (it stalled the next photo's decode by 3 s): it starts if there
-                // is room, else it is skipped at once
+                // an optional job (the 100 % copy, the original copy) is not worth sleeping on the shared work queue for
+                // (it stalled the next photo's decode by 3 s): it starts if there is room for it AND the safety margin
+                // (without the margin a 4096 px copy started with 2477 MB free for ~2150 MB and iOS closed Lumen,
+                // 23 Oct), else it is skipped at once
                 let free = Self.availableMB()
-                if free < need {
+                if free < need + Self.marginMB {
                     finish(me)
-                    Self.note?("\(kind.rawValue): skipped, only \(free) MB free (~\(need) MB needed)")
+                    Self.note?("\(kind.rawValue): skipped, only \(free) MB free (~\(need) MB needed, plus \(Self.marginMB) MB to spare)")
                     return nil
                 }
             } else {
