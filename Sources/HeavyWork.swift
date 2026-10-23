@@ -130,6 +130,12 @@ final class HeavyWork: @unchecked Sendable {
         return work()
     }
 
+    /// Whether any job is running now.
+    var isBusy: Bool {
+        condition.lock(); defer { condition.unlock() }
+        return !running.isEmpty
+    }
+
     /// Whether a job of this kind is running now.
     func isRunning(_ kind: Kind) -> Bool {
         condition.lock(); defer { condition.unlock() }

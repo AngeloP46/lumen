@@ -745,7 +745,7 @@ final class LibraryStore: ObservableObject {
             if denoiseBatch != nil, !batchQueue.isEmpty { batchQueue.removeFirst(); saveBatch(); runBatch(); return }
             denoiseBatch = nil
             UIApplication.shared.isIdleTimerDisabled = false
-            batchDenoiseQueue.async { EditSession.releaseDenoiseModel() }
+            batchDenoiseQueue.async { EditSession.releaseDenoiseFallback() }
             return
         }
         batchRunning = true
@@ -793,7 +793,7 @@ final class LibraryStore: ObservableObject {
                 case .cancelled:
                     self.denoiseBatch = nil
                     UIApplication.shared.isIdleTimerDisabled = false
-                    self.batchDenoiseQueue.async { EditSession.releaseDenoiseModel() }
+                    self.batchDenoiseQueue.async { EditSession.releaseDenoiseFallback() }
                 case .failed:
                     Diagnostics.shared.note("denoise batch: \(item.displayName) failed, going on")
                     if self.batchQueue.first == id { self.batchQueue.removeFirst() }

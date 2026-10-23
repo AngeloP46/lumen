@@ -1,10 +1,13 @@
 #!/bin/bash
-# AI Denoise model: SCUNet (real noise) converted to Core ML at 512 px tiles in CI (cached), then compiled afresh.
+# AI Denoise model: SCUNet (real noise) converted to Core ML at 256 px tiles in CI (cached), then compiled afresh.
+# 256, not 512 (23 Oct): the GPU's working memory for the model grows with the tile's area. On the owner's phone one 512 px
+# model cost 0.6-1.2 GB the moment it was loaded and most of it stayed after it was let go (0.1.599 closures); a 256 px
+# tile needs a quarter of that, takes a quarter of the time per tile, and the overlap costs ~15 % more tiles.
 # Weights pinned by revision + SHA-256 (fetch.py). If anything fails, an empty Denoise.mlmodelc is left so the Xcode
 # project still builds; the app then treats Denoise as not available (no coremldata.bin) and hides the slider.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-out="$1"; tile=512
+out="$1"; tile=256
 key="$(cat "$here"/*.py "$here/requirements.txt" "$here/build-denoise.sh" | shasum -a 256 | cut -c1-16)-$tile"
 cache="$out/.verified-packages/denoise-convert/$key"
 pkg="$cache/Denoise.mlpackage"

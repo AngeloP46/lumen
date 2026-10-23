@@ -98,6 +98,13 @@ final class CanvasModel {
     }
     private var pauseWatchdog: DispatchWorkItem?
 
+    /// True for as long as a long job has the screen locked (AI Denoise): the photo behind its overlay need not be drawn
+    /// at all, and every frame of it is memory the clean needs. No time limit (unlike `drawingPaused`).
+    var busyHold = false {
+        didSet { if !busyHold { redrawAll() } }
+    }
+    var isHeld: Bool { drawingPaused || busyHold }
+
     /// Bumped by every `update`; a frozen picture is used only if no newer one has arrived.
     private var generation = 0
     private var freezeWork: DispatchWorkItem?
@@ -121,9 +128,14 @@ final class CanvasModel {
               img.extent.width <= 4096, img.extent.height <= 4096 else { return }
         let work = DispatchWorkItem { [weak self] in
             // not when memory is already tight: the draw that is going on is enough (the simulator reports none: no limit)
-            if self?.drawingPaused == true { return }   // a model load or a heal is using the memory
+            if self?.isHeld == true { return }   // a model load, a heal or a clean is using the memory
+            // Only with plenty of room (used under ~1.1 GB) and nothing heavy running: a freeze is a whole render of the
+            // picture, and on a 48 MP ProRAW the flight recorder saw them repeat at 2.4-2.9 GB just before the memory ran
+            // out (0.1.581, 17:14). The simulator reports no memory (0): no limit there.
             let left = Diagnostics.availableMB
-            if left > 0 && left < 700 { return }
+            if left > 0 && left < 2200 { return }
+            if HeavyWork.shared.isBusy { return }
+            BlackBox.shared.count("freeze")
             let e = img.extent.integral
             var buffer: CVPixelBuffer?
             let attributes: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](), kCVPixelBufferMetalCompatibilityKey: true]
@@ -131,7 +143,7 @@ final class CanvasModel {
                                       attributes as CFDictionary, &buffer) == kCVReturnSuccess, let buffer else { return }
             BlackBox.shared.crumb("freeze picture")
             // no colour conversion either way: the values are the working space's, exactly as the graph gives them
-            LumenGPU.context.render(img, to: buffer, bounds: e, colorSpace: nil)
+            LumenGPU.drawContext.render(img, to: buffer, bounds: e, colorSpace: nil)
             let frozen = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])
                 .transformed(by: CGAffineTransform(translationX: e.minX, y: e.minY))
             DispatchQueue.main.async {
@@ -203,7 +215,7 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
     private var redrawWaiting = false
 
     func draw(in view: MTKView) {
-        guard !model.drawingPaused else { return }
+        guard !model.isHeld else { return }
         guard inFlight < 1 else { redrawWaiting = true; return }
         BlackBox.shared.count("draw")
         guard let queue = LumenGPU.queue, let drawable = view.currentDrawable,
@@ -242,7 +254,7 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
             out = placed.composited(over: out)
         }
         let started = CACurrentMediaTime()
-        LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)
+        LumenGPU.drawContext.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)
         cb.present(drawable)
         inFlight += 1
         let photoShown = model.image != nil
