@@ -81,6 +81,16 @@ final class EditorViewModel: ObservableObject {
     private var detailBuilding = false
     private var zoomLevel: CGFloat = 1
     private var releaseTask: Task<Void, Never>?
+    /// The 100 % copy was decoded through this session, which keeps that decode (1-2 GB on a 48 MP photo) for as long as it
+    /// lives, whether the copy is kept or not. Dropping the copy therefore decodes the preview again with a new session
+    /// (quality checklist A8; 0.1.581, 17:14: 2.4-2.8 GB in use before an AI Denoise started, which then ran out).
+    private var sessionHoldsFullDecode = false
+
+    /// Drops the zoomed-in copy and, if it was built, lets go of the decode it left in the session.
+    private func releaseDetail() {
+        detailSource = nil
+        if sessionHoldsFullDecode { sessionHoldsFullDecode = false; reloadSource() }
+    }
 
     private var session: EditSession?
     private var source: ImageSource?
@@ -243,7 +253,7 @@ final class EditorViewModel: ObservableObject {
                 // phone, 23 Oct). Only when memory is truly critical does it go.
                 if !self.healBusy && !self.healPreparing && Diagnostics.availableMB < 500 { EditSession.releaseHealModel() }
                 // the 100 % copy goes even while zoomed in: a softer view is better than iOS closing Lumen
-                if self.detailSource != nil { self.detailSource = nil; Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
+                if self.detailSource != nil { self.releaseDetail(); Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
                 // and no new try for a while: dropped, tried again at once, dropped again was how iOS closed Lumen (23 Oct)
                 self.detailRetry.hold(for: 30)
                 if !self.showOriginal { self.unhealedSource = nil }
@@ -468,6 +478,7 @@ final class EditorViewModel: ObservableObject {
         denoiseResume = false
         denoisePausing = false
         denoiseProgress = 0
+        canvas.busyHold = true   // the locked screen covers the photo: nothing of it is drawn until the clean ends
         denoiseSecondsLeft = nil
         denoiseCancel = false
         denoiseUserCancelled = false
@@ -518,6 +529,7 @@ final class EditorViewModel: ObservableObject {
                 }
                 guard let self else { return }
                 self.denoiseProgress = nil
+                self.canvas.busyHold = false
                 self.denoiseSecondsLeft = nil
                 self.refreshDenoiseReady()
                 // back on screen before the stopped clean got to its next tile: start it again now
@@ -840,7 +852,7 @@ final class EditorViewModel: ObservableObject {
                 releaseTask = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 6_000_000_000)
                     guard let self, !Task.isCancelled else { return }
-                    if self.zoomLevel <= 1.05 { self.detailSource = nil }
+                    if self.zoomLevel <= 1.05 { self.releaseDetail() }
                     self.releaseTask = nil
                 }
             }
@@ -932,6 +944,7 @@ final class EditorViewModel: ObservableObject {
                     return
                 }
                 self.detailSource = src
+                if src != nil { self.sessionHoldsFullDecode = true }
                 self.syncDetailMasks()
                 self.requestRender()
                 // zoomed back out while it was building: start the usual release countdown
@@ -1503,7 +1516,7 @@ final class EditorViewModel: ObservableObject {
     /// again first (the 100 % view's full-resolution source, the heal-free "before" preview, GPU caches). With all of
     /// them alive iOS closed the app during big heals (owner, 18 Oct, Lumen at 3.3 GB in the JetsamEvent report).
     func freeMemoryForHeal() {
-        detailSource = nil
+        releaseDetail()
         unhealedSource = nil
         LumenGPU.context.clearCaches()
         // short of room: the mask models go too (masks already worked out are kept; they load again when needed)

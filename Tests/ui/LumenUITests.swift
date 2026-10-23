@@ -678,6 +678,21 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground)
     }
 
+    /// A8 (23 Oct): the zoomed-in copy is decoded through the editor's session, which keeps that decode as long as it lives. When
+    /// the copy is let go of (a few seconds after zooming back out) the preview is decoded again with a new session.
+    func testLeavingTheZoomedViewDecodesThePreviewAgain() {
+        launch(open: 2, tool: "Detail", extra: ["-lumenDemoMemoryMB", "4400"])
+        el("photo").pinch(withScale: 2.5, velocity: 2)
+        sleep(5)
+        XCTAssertGreaterThanOrEqual(events().filter { $0.contains("detail: building") }.count, 1, "the zoomed-in copy should have been built: \(events())")
+        let before = events().filter { $0.contains("reloaded hdr") }.count
+        el("photo").doubleTap()      // back to fit
+        sleep(10)                    // the copy is let go of after a few seconds
+        let after = events().filter { $0.contains("reloaded hdr") }.count
+        XCTAssertGreaterThan(after, before, "letting go of the zoomed-in copy should decode the preview again (\(before) -> \(after))")
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
     func testPinchZoomsAndDoubleTapToggles() {
         launch(open: 0, tool: "Detail")
         XCTAssertEqual(zoomLevel(), 1.0, accuracy: 0.05)
