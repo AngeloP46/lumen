@@ -231,6 +231,59 @@ func floatPixels(_ img: CIImage, width: Int = 64) -> [Float]? {
 
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
 
+// PROBE (23 Oct, not merged): does a RAW decode stay in memory after the context that rendered it is gone?
+if args.contains("--ctxprobe") {
+    func footprintMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+    guard let arw = files.first(where: { ["arw", "dng"].contains($0.pathExtension.lowercased()) }) else { print("PROBE no photo"); exit(1) }
+    func options(cache: Bool) -> [CIContextOption: Any] {
+        [.workingColorSpace: LumenGPU.workingSpace, .workingFormat: CIFormat.RGBAh, .cacheIntermediates: cache]
+    }
+    func decode(_ ctx: CIContext, scale: Float, hdr: Bool) {
+        autoreleasepool {
+            guard let f = CIRAWFilter(imageURL: arw) else { return }
+            f.scaleFactor = scale
+            f.extendedDynamicRangeAmount = hdr ? 2.0 : 1.0
+            guard let img = f.outputImage else { return }
+            let e = img.extent
+            let w = Int(e.width), h = Int(e.height)
+            var px = [UInt16](repeating: 0, count: w * h * 4)
+            px.withUnsafeMutableBytes { ctx.render(img, toBitmap: $0.baseAddress!, rowBytes: w * 8, bounds: e, format: .RGBAh, colorSpace: nil) }
+        }
+    }
+    let queue = LumenGPU.queue
+    func mk(_ cache: Bool) -> CIContext { queue.map { CIContext(mtlCommandQueue: $0, options: options(cache: cache)) } ?? CIContext(options: options(cache: cache)) }
+    let start = footprintMB()
+    print("PROBE start \(start) MB")
+    // A: the shared context, clearCaches after each
+    for (scale, hdr) in [(0.43, true), (0.43, false), (0.68, true), (0.43, true)] as [(Float, Bool)] {
+        let b = footprintMB()
+        decode(LumenGPU.context, scale: scale, hdr: hdr)
+        LumenGPU.context.clearCaches()
+        print("::notice::PROBE A shared ctx scale \(scale) hdr \(hdr): left behind \(footprintMB() - b) MB (now \(footprintMB()))")
+    }
+    // B: a fresh context for each decode, dropped straight after
+    for (scale, hdr) in [(0.43, true), (0.43, false), (0.68, true), (0.43, true)] as [(Float, Bool)] {
+        let b = footprintMB()
+        autoreleasepool { decode(mk(true), scale: scale, hdr: hdr) }
+        print("::notice::PROBE B fresh ctx scale \(scale) hdr \(hdr): left behind \(footprintMB() - b) MB (now \(footprintMB()))")
+    }
+    // C: a fresh context that does not cache intermediates
+    for (scale, hdr) in [(0.43, true), (0.43, false), (0.68, true), (0.43, true)] as [(Float, Bool)] {
+        let b = footprintMB()
+        autoreleasepool { decode(mk(false), scale: scale, hdr: hdr) }
+        print("::notice::PROBE C fresh no-cache ctx scale \(scale) hdr \(hdr): left behind \(footprintMB() - b) MB (now \(footprintMB()))")
+    }
+    sleep(3)
+    print("::notice::PROBE after 3 s: \(footprintMB()) MB")
+    exit(0)
+}
 // ---- Memory budget (`--memory`, its own process so nothing else is counted): the 24 MP Sony ARW opened the way
 // the phone opens it (HDR), the 100 % view's full-size copy, a subject mask, a big heal and a full-size export.
 // iOS closes Lumen at about 3.4 GB (owner's JetsamEvent, 18 Oct: killed at 3388 MB). The Mac counts GPU memory a
