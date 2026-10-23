@@ -282,6 +282,18 @@ if args.contains("--ctxprobe") {
     }
     sleep(3)
     print("::notice::PROBE after 3 s: \(footprintMB()) MB")
+    // D: give the allocator's unused memory back
+    let before = footprintMB()
+    let freed = malloc_zone_pressure_relief(nil, 0)
+    print("::notice::PROBE D malloc_zone_pressure_relief freed \(freed / 1_048_576) MB; footprint \(before) -> \(footprintMB()) MB")
+    // E: new decode keys, each followed by the relief
+    for (scale, hdr) in [(0.3, true), (0.55, false), (0.8, true), (1.0, false)] as [(Float, Bool)] {
+        let b = footprintMB()
+        decode(mk(false), scale: scale, hdr: hdr)
+        let mid = footprintMB()
+        let f = malloc_zone_pressure_relief(nil, 0)
+        print("::notice::PROBE E new key scale \(scale) hdr \(hdr): +\(mid - b) MB after the decode, relief freed \(f / 1_048_576) MB, now +\(footprintMB() - b) MB")
+    }
     exit(0)
 }
 // ---- Memory budget (`--memory`, its own process so nothing else is counted): the 24 MP Sony ARW opened the way
