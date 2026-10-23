@@ -45,6 +45,37 @@ submission is authorized. Rows below retain their original findings; this sectio
   `9d0e538` and pushed; PR #98 `quality-batch2 -> batch1` opened, left unmerged. `.scratch/` added to .gitignore.
   Verification: wait for PR #98 CI (logic, engine, UI).
 
+## 23 Oct: independent review of the overnight work (Claude) and the fixes on `quality-fixes`
+
+Reviewed `origin/quality-batch2` (94616bf) read-only (a separate reviewer plus the CI logs), then fixed on
+`quality-fixes` (branched from it). **The four UI failures the overnight brief called "suspected flakes" were not
+flakes:** the same counts (4 of 9, 2 of 7) repeated in every run. Causes: (1) real regression in the A10 async delete,
+(2) the A7 test could never pass, (3) the persistence check raced the demo library setup, (4) my Copy test tapped the
+wrong spot. The A14, A17 and A19 changes themselves hold up (`renderData` is behaviour-identical to before).
+
+| Finding | Evidence | Fix on `quality-fixes` |
+|---|---|---|
+| **A10 delete regression**: the photo stayed in `items` (and unmarked) until its file work ended, so a late save or heal could recreate it; `testHealDeletionPrivacy` 4 of 9 | CI 39880679715; LibraryStore.swift delete | marked deleted, off the list, list saved and original unlinked at once; only slow file work on one serial queue; retained-patch scan reads the edits folder (no stale list, no concurrent half-read); the photo's kept copies go with it |
+| A7 test never passed (swipe is off in Masks) | EditorView `canNavigate`; CI | test uses ⋯ → Next photo |
+| Persistence check raced the demo setup (setup deleted its files) | CI: only the first PASS logged, 2 of 7 | started after the demo setup |
+| `testCopyOnlyTheChosenTools` (mine) | CI 3 runs | taps the switch itself; waits for the sheet to close |
+| A5 test passed without the fix (mine) | review | `-lumenDemoSaveDelay 8`: only save-on-leaving can write |
+| `formatVersion` never normalised: an older Lumen re-saved a newer file still claiming the newer format (mine) | review | held in this version's format on load; logic tests |
+| Paste onto the photo it came from re-adapted its masks (mine) | review | `Clipboard.sourceID`, `samePhoto` rule; logic tests |
+| Editor Paste with AI Denoise started a locked 1–2 min clean without asking (mine) | review | confirmation first; memory-tier check; library batch also checks `denoiseFits` |
+| Library copy/paste used `settings(for:)`, the editor `editorSettings(for:)` (RAW HDR default) (mine) | review | library uses `editorSettings` |
+| Half-copied imports could be adopted as photos at launch (mine) | review | copy to `.partial`, rename; leftovers removed |
+| Heal-patch sweep failed open if the edits folder couldn't be listed (mine) | review | fails closed |
+| Stop shown (and doing nothing) for a single painted heal | HealViews | `removingPeople` flag |
+| A8: optional jobs released models and slept 3 s on the shared work queue | HeavyWork | optional jobs skip at once |
+| B7: a frame refused in the background was never redrawn | CanvasView | redraw on `didBecomeActive` |
+| Heal model read twice in `prepareHealModel` (second load after a release) | Heal.swift | read once |
+
+**Not fixed yet (known, recorded):** A4 reopen-while-healing race (heal added by `addHeals` can be overwritten by the
+reopened editor's next save); `LoadedModel` can start a second load for a waiter after a release; B1 (CI runs as a
+low-memory phone: a decision, default tier could be faked in demo mode); sandbox is still behind main on batches
+0–2 and Copy/Paste (merge main into it, never the other way); A13, A16, A18, A20, B2–B6, B8 as before.
+
 ## A. Confirmed bugs, ranked by user impact
 
 ### Work safety (R1)
@@ -184,4 +215,5 @@ are left **ready, not merged**: merging publishes to SideStore, and that waits f
 | testPinchZoomsAndDoubleTapToggles | now and then | simulator double-tap timing (suspected); B1 may add load | batch 0 |
 | StoreKit testAnnualUnlocksPro (no products in 10 s) | sandbox 22 Oct, first test only | suspected: products requested at app launch before the test session exists | batch 0 |
 | iPhone SE: testLandscapeEveryToolFitsInTheSideColumn | 22 Oct | real 2 pt overlap of Crop's side panel at 667 pt width (Angelo: low priority) | won't fix now |
+| testHealDeletionPrivacy (4 of 9), testFailedSavesRecover… (2 of 7), testNextPhotoDoesNotWaitForAIMasks, testCopyOnlyTheChosenTools | overnight full suite 23 Oct, repeatable | **not flakes**: A10 delete regression; check raced the demo setup; test swiped where swiping is off; test tapped the row not the switch | fixed on `quality-fixes`, verification below |
 | iPhone SE: testPhotoRestsOnThePanelAndGrowsUpwardsWhenZoomed | 22 Oct | the test assumes spare height above a landscape photo; the SE has none | test to adapt |
