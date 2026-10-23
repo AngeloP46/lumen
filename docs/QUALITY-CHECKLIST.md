@@ -93,6 +93,13 @@ is main's code with the Store layer put back on top (only `EditorView`, `Library
 hold `#if APP_STORE` hooks; all other shared files are main's). Checked with app-store-sandbox.yml: flag off and on,
 ProGate checks, StoreKit test, screenshots. Not yet merged into `sandbox`; nothing is submitted.
 
+**PR #91 (from the 0.1.465 diagnostics), ready, not merged:** rebased on main 0.1.521 and green (Build IPA, Release
+readiness, Engine, six targeted UI tests: hold-to-compare, export quality and size, batch export, before/after split, next
+photo). The original copy is made once at a time (diagnostics showed it made five times in 20 s); export works out AI masks
+on the 2560 px copy for every photo over 2700 px, not just over 30 MP (B6); the export memory estimate is 30 MB/MP + 700
+(a 48 MP export peaked at about 1.1 GB on the phone, the old 60 MB/MP + 800 asked for more than the limit). It waits
+for the phone results of 0.1.521.
+
 **Not fixed yet (known, recorded):** `LoadedModel` can start a second load for a waiter after a release; A13
 (thumbnails don't show AI masks: needs a design decision); A16; B1 (CI runs as a low-memory phone: a decision, the
 default tier could be faked in demo mode); B2–B6, B8; B3 (heal × denoise) after the engine measurement. Phone
