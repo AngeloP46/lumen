@@ -28,3 +28,21 @@ struct RetryGate {
         notBefore = max(notBefore, now.addingTimeInterval(seconds))
     }
 }
+
+/// "Careful mode" (23 Oct 2026): after iOS has closed Lumen for memory twice within a day, Lumen asks less of the phone for
+/// the rest of that day - a smaller preview, no zoomed-in copy, no Heal warm-up, an earlier let-go - and says so. It
+/// goes back to normal by itself after 24 hours without a closure. A phone that keeps closing the app should get a
+/// smaller app, not the same crash again.
+enum CarefulMode {
+    static let window: TimeInterval = 24 * 3600
+    static let closuresNeeded = 2
+
+    static func active(closures: [Date], now: Date = Date()) -> Bool {
+        closures.filter { $0 <= now && now.timeIntervalSince($0) < window }.count >= closuresNeeded
+    }
+
+    /// Only the closures that still count (a list that never grows).
+    static func pruned(_ closures: [Date], now: Date = Date()) -> [Date] {
+        Array(closures.filter { $0 <= now && now.timeIntervalSince($0) < window }.suffix(20))
+    }
+}
