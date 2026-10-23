@@ -1443,11 +1443,11 @@ final class EditorViewModel: ObservableObject {
         freeMemoryForHeal()
         let mp = megapixels
         let item = self.item
-        workQueue.async { [weak store = self.store] in
+        workQueue.async { [weak self, weak store = self.store] in
             var made: [HealSpot] = []
             var failures: [HealFailure] = []
             for (i, person) in chosen.enumerated() {
-                if removePeopleCancel { break }   // A19: stop between people; what's removed stays removed
+                if self?.removePeopleCancel == true { break }   // A19: stop between people; what's removed stays removed
                 if i > 0 {
                     let text = "Removing \(i + 1) of \(chosen.count)…"
                     Task { @MainActor [weak self] in self?.healBusyText = text }
@@ -1461,7 +1461,7 @@ final class EditorViewModel: ObservableObject {
                     failures.append(EditSession.healFailure ?? .failed)
                 }
             }
-            let done = made, failed = failures, stopped = removePeopleCancel
+            let done = made, failed = failures, stopped = self?.removePeopleCancel == true
             Task { @MainActor [weak self] in
                 guard let self else { store?.addHeals(done, to: item); return }
                 self.peopleFound = nil

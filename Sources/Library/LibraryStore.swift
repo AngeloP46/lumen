@@ -784,13 +784,13 @@ final class LibraryStore: ObservableObject {
         let patches = HealStore.retain(Set(jobs.flatMap { $0.edits.heals.map(\.id) }))
         let dir = fm.temporaryDirectory.appendingPathComponent("lumen-export-\(UUID().uuidString)", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        exportQueue.async {
+        exportQueue.async { [weak self] in
             defer { patches.close() }
             var urls: [URL] = []
             var used = Set<String>()
             var failures: [String] = []   // A17: what went wrong, not just how many
             for (n, job) in jobs.enumerated() {
-                if exportCancel { break }   // A19: stop between photos; what's done is kept
+                if self?.exportCancel == true { break }   // A19: stop between photos; what's done is kept
                 autoreleasepool {
                     // Decode the way the editor would (checklist A14): "Include HDR" only controls the gain map,
                     // not the decode. Decoding SDR for an HDR-edited photo changed the pixels, so the same SDR
