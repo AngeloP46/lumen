@@ -264,5 +264,43 @@ for brokenMasks in [["unexpected": "object"], "invalid", NSNull()] as [Any] {
     check(loaded.settings.exposure == rich.exposure, "malformed masks must not discard readable exposure")
 }
 
+// ---- The 100 % view's copy (checklist A21, 23 Oct): never started without room beside the safety margin, never retried in a loop
+do {
+    let margin = HeavyWork.marginMB
+    // the owner's phone: 24 MP, 2477 MB free, a 4096 px copy started and added ~2150 MB; iOS closed Lumen
+    check(DetailCopy.edge(freeMB: 2477, megapixels: 24, native: 6000, highTier: false, marginMB: margin) == 0,
+          "100 % copy: 2477 MB free is not enough for a 24 MP photo (needs ~\(DetailCopy.needMB(megapixels: 24)) + \(margin))")
+    check(DetailCopy.edge(freeMB: 3100, megapixels: 24, native: 6000, highTier: false, marginMB: margin) == 4096,
+          "100 % copy: with room it is 4096 px on a standard phone")
+    check(DetailCopy.edge(freeMB: 3100, megapixels: 24, native: 3000, highTier: false, marginMB: margin) == 3000,
+          "100 % copy: never bigger than the photo")
+    check(DetailCopy.edge(freeMB: 4500, megapixels: 24, native: 6000, highTier: true, marginMB: margin) == 6000,
+          "100 % copy: the increased memory limit gets the full-size photo")
+    check(DetailCopy.needMB(megapixels: 48) >= 2640 && DetailCopy.needMB(megapixels: 24) >= 2150,
+          "100 % copy: the estimate is not below what the phone measured (2150 MB at 24 MP, 2640 MB at 48 MP)")
+    check(DetailCopy.edge(freeMB: 3200, megapixels: 48, native: 8064, highTier: false, marginMB: margin) == 0,
+          "100 % copy: a 48 MP photo needs more room than 3200 MB free")
+
+    var gate = RetryGate()
+    let t0 = Date(timeIntervalSince1970: 1_000)
+    check(gate.allows(t0), "retry gate: open to begin with")
+    gate.hold(for: 12, from: t0)
+    check(!gate.allows(t0.addingTimeInterval(5)) && !gate.allows(t0.addingTimeInterval(11.9)), "retry gate: closed while held")
+    check(gate.allows(t0.addingTimeInterval(12.1)), "retry gate: open again after the hold")
+    gate.hold(for: 30, from: t0.addingTimeInterval(1))
+    gate.hold(for: 2, from: t0.addingTimeInterval(2))
+    check(!gate.allows(t0.addingTimeInterval(20)), "retry gate: a short hold never shortens a long one")
+
+    // the job coordinator: an optional job needs its room AND the margin, even when nothing else is running
+    HeavyWork.availableMB = { 2477 }
+    var ran = false
+    let mp24 = 24.0
+    check(HeavyWork.shared.run(.fullSizeCopy, megapixels: mp24, optional: true) { () -> Int in ran = true; return 1 } == nil && !ran,
+          "coordinator: an optional 100 % copy is skipped with 2477 MB free on a 24 MP photo")
+    HeavyWork.availableMB = { 3300 }
+    check(HeavyWork.shared.run(.fullSizeCopy, megapixels: mp24, optional: true) { () -> Int in ran = true; return 1 } == 1 && ran,
+          "coordinator: an optional 100 % copy runs with room and margin")
+}
+
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)

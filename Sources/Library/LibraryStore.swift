@@ -1205,7 +1205,13 @@ final class LibraryStore: ObservableObject {
         let patches = HealStore.retain(Set(settings.heals.map(\.id)))
         thumbQueue.async {
             defer { patches.close() }
-            guard let session = EditSession(url: src),
+            let began = Date()
+            let session = EditSession(url: src)
+            // big photos only (a 48 MP thumbnail is a whole RAW decode): in the log with the memory it ran at
+            let mp = session.map { Double($0.nativeSize.width * $0.nativeSize.height) / 1_000_000 } ?? 0
+            if mp > 20 { Diagnostics.shared.note(String(format: "thumbnail: making one for a %.0f MP photo", mp)) }
+            defer { if mp > 20 { Diagnostics.shared.note(String(format: "thumbnail: done in %.1f s", Date().timeIntervalSince(began))) } }
+            guard let session,
                   let cg = session.renderCGImage(settings, maxEdge: 640),
                   let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else {
                 // the file can't be decoded: say so on the thumbnail instead of spinning forever

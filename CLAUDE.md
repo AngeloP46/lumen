@@ -1,10 +1,14 @@
 # Lumen – project notes for Claude
 
 ## Quality work before the App Store (from 22 Oct 2026)
-- Codex continuation: batch1 `5deccec` passed IPA/readiness, Linux logic, and engine/ProRAW checks. Independent
-  review found five persistence defects, corrected on batch1 with recovery/no-op/malformed-mask regressions;
-  see `docs/QUALITY-CHECKLIST.md` continuation section for exact evidence and remaining work. All batches 0–6
-  remain in scope; later batches and sandbox ports are not yet complete. No merge/publication authorized.
+- **Status 23 Oct:** batches 0–2 and 4 and Copy/Paste are on main (PR #99, #100) and published: SideStore **0.1.521**
+  (0.1.516 had everything but batch 4). Angelo allowed publishing this verified build so he can test it on his phone
+  (23 Oct); his phone run (checklist section G, P1–P11) has **not** happened yet, so everything is verified on the
+  simulator/Mac only. The App Store version is rebuilt on main's code: branch `sandbox-on-main` (not yet merged
+  into `sandbox`). Still open: A13 (thumbnails lack AI masks, needs a design decision), A16, B1 (CI memory tier),
+  B2–B6, B8, `LoadedModel` second-load edge. PR #91 (original copy made once at a time, export masks from the small copy, export memory estimate 30 MB/MP + 700;
+  all three from his 0.1.465 diagnostics) is rebased on main and green (Build IPA, Engine, six targeted UI tests) but
+  **not merged**. Further main merges wait for Angelo's phone results.
 - `docs/QUALITY-CHECKLIST.md` is the durable record: findings (two independent reviews), fix batches, test results,
   baselines, phone tests. Update it with every batch. Angelo's rules for this work: fix batches only after he approves
   the plan; reproduce first, add regression coverage, run the checks, get an independent review of each batch; apply
