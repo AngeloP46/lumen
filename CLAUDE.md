@@ -1,15 +1,17 @@
 # Lumen – project notes for Claude
 
 ## Quality work before the App Store (from 22 Oct 2026)
-- **Status 24 Oct (night):** batches 0-2, 4-10, 13 and Copy/Paste are on main and published: SideStore **0.1.593**. Angelo
+- **Status 24 Oct (night):** batches 0-2, 4-10, 13-17 and Copy/Paste are on main and published: SideStore **0.1.608**. Angelo
   allowed publishing verified builds so he can test on his phone and is away from his phone on 24 Oct; his phone runs of
   0.1.521-0.1.552 had Lumen closed by iOS for memory many times. What was found and done is in the checklist ("23 Oct,
   evening and night"): the 100 % view loop (A21), reload storms (A23), frame pacing (A22 part), the flight recorder
   (`BlackBox`, lines "memory N MB used ... at HH:MM:SS.S . crumbs" in Send diagnostics before "previous run ended"). CI cannot
   see memory (B1: `uitest.yml -f memory=3400` runs the suite as a standard phone), so memory fixes are only proven by his
-  Send diagnostics. The App Store version is main plus the Store layer (branch `sandbox`, merged through 0.1.593).
+  Send diagnostics. The App Store version is main plus the Store layer (branch `sandbox`, merged through 0.1.608).
   Phone: his 0.1.581 log (heavy quick editing, 3 people removed, 4 heals) had no closure and peaked at 1932 MB; careful mode is in
-  0.1.589. Open: A22 (more days of use), A8 residual (~1 GB after AI Denoise). Further main merges follow
+  0.1.589. 0.1.599 logs (18:09, 19:00): closures when a second AI Denoise model load stacked on the first one's memory (a load costs
+  0.65-1.2 GB, a release gives back ~130 MB); 0.1.608 makes the model a quarter of the size (256 px tiles) and keeps it loaded.
+  Open: A22 (more days of use), A8 residual (confirm the AI Denoise model's memory on 0.1.608). Further main merges follow
   the release routine; nothing is submitted to the App Store.
 - `docs/QUALITY-CHECKLIST.md` is the durable record: findings (two independent reviews), fix batches, test results,
   baselines, phone tests. Update it with every batch. Angelo's rules for this work: fix batches only after he approves
@@ -28,7 +30,7 @@
 ## AI Denoise (0.1.360, 20 Oct; owner asked for it)
 - Model: **SCUNet** colour real-noise (cszn/SCUNet, Apache-2.0), run on the **GPU** (`.cpuAndGPU`; CI sets
   `LUMEN_DENOISE_UNITS=cpu`). Weights pinned: HF `WAS/was-node-suite-weights` revision dcc864ea…, SHA-256 fa78899b…
-  (`fetch.py`). Converted in CI to Core ML, float16, 512 x 512 tiles (`build-denoise.sh`, cached; on failure an empty
+  (`fetch.py`). Converted in CI to Core ML, float16, 256 x 256 tiles (512 until 0.1.608) (`build-denoise.sh`, cached; on failure an empty
   `Denoise.mlmodelc` keeps the project building). `scunet.py`: the shifted-window mask is built in NumPy.
 - 20 Oct history: SCUNet on the Neural Engine (0.1.371) never reached 25 % of 24 MP in 100 s (attention layers don't
   suit the ANE) and iOS closed Lumen once (that build also loaded the GPU copy for a probe). NAFNet-SIDD-width32
@@ -127,7 +129,7 @@
   Export makes it if missing. Detail → AI Denoise button; full-screen lock `denoise-busy` with progress, time left and
   Cancel; the job stops if Lumen leaves the screen. The diagnostics log gets "denoise model loaded in N s" and
   "denoise first tiles a / b / c s, N tiles in all" straight away, then 25 % steps and "denoise done in N s: …".
-- 24 MP ARW = 126 tiles of 512 px. Target < 30 s (owner's ideal).
+- 24 MP ARW = 117 tiles of 512 px (until 0.1.599; ~490 tiles of 256 px since 0.1.608, ~58 s expected). Target < 30 s (owner's ideal).
 - Send diagnostics now holds only the last 3 launches of the log and the 3 newest iOS reports from the past 3 days,
   as compact JSON (20 Oct: a report carried two days of log and every saved report).
 - Engine test: Gaussian noise std 0.04 on cat.jpg: error 0.039 → 0.011, edges 95 % kept, 50 % mixes between, 0 = off,
