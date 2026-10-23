@@ -45,9 +45,10 @@ final class HeavyWork: @unchecked Sendable {
         // the editor decoding the photo again after undo, HDR or a heal: ~170-300 MB net on the owner's phone, more
         // while the old and the new copy exist together (23 Oct)
         case .preview: return Int(8 * mp) + 600
-        // loading the Heal model: memory goes up ~2.2-2.8 GB for a second or two (owner's phone, 23 Oct: 533 -> 2769 MB;
-        // closed Lumen at 320 MB in use three times) and falls back to ~150-300 MB once it is loaded
-        case .healModel: return 2800
+        // loading the Heal model: with the Neural Engine it went up ~2.2-2.8 GB for a second or two (owner's phone, 23 Oct:
+        // 533 -> 2769 MB). On the GPU (0.1.581 on) it loads in about a second for ~150 MB (262 -> 413 MB); 2800 kept refusing
+        // Heal with 2.76 GB free (0.1.608, three failed heals in a row). 1200 leaves the GPU load plenty of room.
+        case .healModel: return 1200
         }
     }
 
