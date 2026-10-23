@@ -267,12 +267,21 @@ if args.contains("--lensmem") {
         for pass in 1...2 {
             var s = EditSettings(); s.hdr = true
             s.lensBlur.amount = amount; s.lensBlur.activated = true
+            s.lensBlur.focusDistance = 0.25; s.lensBlur.focusWidth = 0.08
             hi.lock.lock(); hi.mb = footprintMB(); hi.lock.unlock()
             let before = footprintMB()
             let t = now()
             var drawn = false
-            autoreleasepool { drawn = session.renderCGImage(s, source: preview) != nil }
+            var digest = 0
+            autoreleasepool {
+                if let cg = session.renderCGImage(s, source: preview), let d = cg.dataProvider?.data {
+                    drawn = true
+                    let bytes = CFDataGetBytePtr(d)!, n = CFDataGetLength(d)
+                    for i in stride(from: 0, to: n, by: 997) { digest = (digest &* 31) &+ Int(bytes[i]) }
+                }
+            }
             hi.lock.lock(); let p = hi.mb; hi.lock.unlock()
+            print("PROBE picture digest \(digest)")
             print("::notice::PROBE Lens Blur \(Int(amount)) render \(pass): peak +\(p - before) MB over \(before) MB, after +\(footprintMB() - before) MB, \(String(format: "%.2f", now() - t)) s, ok \(drawn)")
         }
         LumenGPU.context.clearCaches()
