@@ -126,7 +126,10 @@ struct LibraryView: View {
                 if DemoMode.value("-lumenDemoFresh") != nil {
                     // -lumenDemoRawHDR: no saved edits at all, like a photo never opened
                     for it in store.items {
-                        if DemoMode.value("-lumenDemoRawHDR") != nil { store.forgetEdits(it) } else { store.save(EditSettings(), for: it) }
+                        // the undo history goes too: the demo library lives on between launches, and a test that opened a photo
+                        // after another test's edits found Undo already enabled (found 23 Oct, tests run in a different order)
+                        store.forgetEdits(it)
+                        if DemoMode.value("-lumenDemoRawHDR") == nil { store.save(EditSettings(), for: it) }
                     }
                     store.clipboard = nil
                 }

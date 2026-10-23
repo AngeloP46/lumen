@@ -14,9 +14,11 @@ extension EditSession {
         if let p = ProcessInfo.processInfo.environment["LUMEN_HEAL_MODEL"] { return URL(fileURLWithPath: p) }
         return Bundle.main.url(forResource: "LaMa", withExtension: "mlmodelc")
     }()
-    /// `.all` is what the conversion was verified with. (0.1.137 used .cpuAndGPU: black. The dark fills on red
-    /// paint / yellow plates in 0.1.139-145 were not the compute units but the output's alpha channel, see run().)
-    private static let healStore = LoadedModel { loadHealModel(.all) }
+    /// The GPU, not `.all` (23 Oct): with the Neural Engine in the mix Core ML builds the model for it inside Lumen on the
+    /// first load after an update, and that took 2.2-3 GB for a second or two: it closed Lumen on the owner's phone at "heal
+    /// model loading" six times in an hour. The GPU path has no such step. (0.1.137 used .cpuAndGPU and gave black fills;
+    /// that was the output's alpha channel, fixed in 0.1.139-145, see run(), and a wrong fill is redone on the CPU.)
+    private static let healStore = LoadedModel { loadHealModel(.cpuAndGPU) }
     private static var healModel: MLModel? { healStore.model }
     /// Full precision, slower: tried when the first answer looks wrong, and let go of straight after.
     private static let healCPUStore = LoadedModel { loadHealModel(.cpuOnly) }

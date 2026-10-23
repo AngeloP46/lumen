@@ -81,9 +81,66 @@ final class CanvasModel {
         return (s.count, s[s.count / 2], s[min(s.count - 1, s.count * 95 / 100)], s.last ?? 0)
     }
 
+    /// While true the canvas keeps its last frame and draws nothing new: loading the Heal model or healing needs all the
+    /// memory it can get, and a redraw of a heavy picture holds up to a gigabyte while it goes (quality checklist A22).
+    /// It resumes by itself after 20 s in case something forgets to.
+    var drawingPaused = false {
+        didSet {
+            pauseWatchdog?.cancel(); pauseWatchdog = nil
+            if drawingPaused {
+                let w = DispatchWorkItem { [weak self] in self?.drawingPaused = false }
+                pauseWatchdog = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: w)
+            } else {
+                redrawAll()
+            }
+        }
+    }
+    private var pauseWatchdog: DispatchWorkItem?
+
+    /// Bumped by every `update`; a frozen picture is used only if no newer one has arrived.
+    private var generation = 0
+    private var freezeWork: DispatchWorkItem?
+    private let freezeQueue = DispatchQueue(label: "lumen.freeze", qos: .userInitiated)
+
     func update(_ img: CIImage?) {
+        generation += 1
         image = img
         redrawAll()
+        scheduleFreeze(img, generation)
+    }
+
+    /// The picture is a lazy graph: every redraw (a pinch step, a pan, a panel moving) runs all of it again, Lens Blur and
+    /// masks included, and each run holds up to a gigabyte of GPU memory while it goes (owner's phone, 0.1.546: the flight
+    /// recorder saw 1.4 to 2.9 GB swinging every 0.1 s while the picture was only being moved). Once an edit has rested for
+    /// a moment the finished picture is rendered ONCE into a bitmap of its own size (~25 MB) and drawn from that, so moving
+    /// it costs nothing. A newer edit simply replaces it.
+    private func scheduleFreeze(_ img: CIImage?, _ gen: Int) {
+        freezeWork?.cancel()
+        guard let img, !img.extent.isInfinite, !img.extent.isEmpty,
+              img.extent.width <= 4096, img.extent.height <= 4096 else { return }
+        let work = DispatchWorkItem { [weak self] in
+            // not when memory is already tight: the draw that is going on is enough (the simulator reports none: no limit)
+            if self?.drawingPaused == true { return }   // a model load or a heal is using the memory
+            let left = Diagnostics.availableMB
+            if left > 0 && left < 700 { return }
+            let e = img.extent.integral
+            var buffer: CVPixelBuffer?
+            let attributes: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](), kCVPixelBufferMetalCompatibilityKey: true]
+            guard CVPixelBufferCreate(kCFAllocatorDefault, Int(e.width), Int(e.height), kCVPixelFormatType_64RGBAHalf,
+                                      attributes as CFDictionary, &buffer) == kCVReturnSuccess, let buffer else { return }
+            BlackBox.shared.crumb("freeze picture")
+            // no colour conversion either way: the values are the working space's, exactly as the graph gives them
+            LumenGPU.context.render(img, to: buffer, bounds: e, colorSpace: nil)
+            let frozen = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])
+                .transformed(by: CGAffineTransform(translationX: e.minX, y: e.minY))
+            DispatchQueue.main.async {
+                guard let self, self.generation == gen else { return }
+                self.image = frozen   // the same picture: nothing to redraw
+            }
+        }
+        freezeWork = work
+        freezeQueue.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 }
 
@@ -138,13 +195,17 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
 
     /// Frames the GPU has not finished yet. A fast slider drag asks for a new frame on every finger movement; with
     /// heavy edits (Lens Blur) the GPU fell further and further behind until iOS closed the app (owner, 15 Oct).
-    /// Now at most two frames are queued; a request that arrives meanwhile is drawn when one finishes, always with
-    /// the newest edit, so nothing is lost and memory stays flat.
+    /// Now at most ONE frame is queued (two until 23 Oct); a request that arrives meanwhile is drawn when it finishes,
+    /// always with the newest edit, so nothing is lost and memory stays flat. Each frame of a heavy picture (Lens Blur,
+    /// several masks, HDR) holds 0.7-1.5 GB of GPU memory until it is done, and two together are what the flight
+    /// recorder saw reaching 2.9 GB on the owner's phone (0.1.546, 13:01).
     private var inFlight = 0
     private var redrawWaiting = false
 
     func draw(in view: MTKView) {
-        guard inFlight < 2 else { redrawWaiting = true; return }
+        guard !model.drawingPaused else { return }
+        guard inFlight < 1 else { redrawWaiting = true; return }
+        BlackBox.shared.count("draw")
         guard let queue = LumenGPU.queue, let drawable = view.currentDrawable,
               let cb = queue.makeCommandBuffer() else { return }
         let size = view.drawableSize

@@ -355,5 +355,52 @@ do {
           "coordinator: the Heal model loads with room for the spike")
 }
 
+// ---- B4 / B2 (23 Oct): long brush strokes keep their shape with far fewer points; heavy work waits for the screen
+do {
+    // a straight stroke of 400 points is two; a curve keeps the points that bend it
+    let line = BrushStroke(points: (0..<400).map { Pt(x: Double($0) / 400, y: 0.5) }, size: 0.05, erase: false, feather: 30)
+    let simple = line.simplified()
+    check(simple.points.count == 2, "stroke: a straight line needs only its two ends (\(simple.points.count))")
+    check(simple.size == 0.05 && simple.erase == false && simple.feather == 30, "stroke: size, erase and feather are kept")
+    let arc = BrushStroke(points: (0..<500).map { i in let t = Double(i) / 499 * Double.pi; return Pt(x: 0.5 - 0.4 * cos(t), y: 0.5 - 0.4 * sin(t)) },
+                          size: 0.03, erase: true, feather: nil)
+    let reduced = arc.simplified()
+    check(reduced.points.count < 120 && reduced.points.count > 10, "stroke: an arc of 500 points keeps its shape in far fewer (\(reduced.points.count))")
+    check(reduced.points.first == arc.points.first && reduced.points.last == arc.points.last, "stroke: both ends stay")
+    // no point of the original is farther from the reduced stroke than epsilon
+    func distance(_ p: Pt, _ a: Pt, _ b: Pt) -> Double {
+        let dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy
+        let t = l2 == 0 ? 0 : max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2))
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+    }
+    var worst = 0.0
+    for p in arc.points {
+        var best = Double.infinity
+        for i in 0..<(reduced.points.count - 1) { best = min(best, distance(p, reduced.points[i], reduced.points[i + 1])) }
+        worst = max(worst, best)
+    }
+    check(worst <= 0.0006 + 1e-9, "stroke: the shape stays within epsilon of the original (\(worst))")
+    let noisy = BrushStroke(points: (0..<2000).map { i in Pt(x: Double(i % 50) / 50, y: Double((i * 7) % 50) / 50) }, size: 0.03, erase: false, feather: nil)
+    check(noisy.simplified(limit: 300).points.count <= 300, "stroke: never more than the limit")
+    let few = BrushStroke(points: [Pt(x: 0.1, y: 0.1), Pt(x: 0.2, y: 0.3)], size: 0.03, erase: false, feather: nil)
+    check(few.simplified() == few, "stroke: two points stay as they are")
+
+    // heavy work waits while Lumen is in the background
+    HeavyWork.availableMB = { 3300 }
+    HeavyWork.isForeground = false
+    let started = Date()
+    var startedAt: Date?
+    let finished = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+        _ = HeavyWork.shared.run(.export, megapixels: 12) { () -> Int in startedAt = Date(); return 1 }
+        finished.signal()
+    }
+    usleep(700_000)
+    check(startedAt == nil, "background: an export does not start while Lumen is in the background")
+    HeavyWork.isForeground = true
+    check(finished.wait(timeout: .now() + 3) == .success, "background: and starts when Lumen is back on screen")
+    check((startedAt?.timeIntervalSince(started) ?? 0) >= 0.6, "background: it waited for the screen")
+}
+
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)

@@ -1,14 +1,15 @@
 # Lumen – project notes for Claude
 
 ## Quality work before the App Store (from 22 Oct 2026)
-- **Status 23 Oct (evening):** batches 0-2, 4, 5 and Copy/Paste are on main and published: SideStore **0.1.533**.
-  Angelo allowed publishing these verified builds so he can test on his phone. His first phone run of 0.1.521 had
-  Lumen closed by iOS twice in four minutes (memory): A21 (the 100 % view looping, fixed in 0.1.533) and A22 (spikes
-  right after AI Denoise on a 48 MP photo, cause not found, 0.1.533 logs it). CI cannot see memory (B1), so memory
-  fixes are only proven by his Send diagnostics. The App Store version is main plus the Store layer (branch
-  `sandbox`, merged through 0.1.533). Still open: A22, A13 (needs a design decision), A16, B1-B6, B8, `LoadedModel`
-  second-load edge. PR #91 (original copy once at a time, export masks from the small copy, export estimate) is
-  rebased and green but **not merged**. Further main merges wait for Angelo's phone results.
+- **Status 24 Oct (night):** batches 0-2, 4-10, 13 and Copy/Paste are on main and published: SideStore **0.1.581**. Angelo
+  allowed publishing verified builds so he can test on his phone and is away from his phone on 24 Oct; his phone runs of
+  0.1.521-0.1.552 had Lumen closed by iOS for memory many times. What was found and done is in the checklist ("23 Oct,
+  evening and night"): the 100 % view loop (A21), reload storms (A23), frame pacing (A22 part), the flight recorder
+  (`BlackBox`, lines "memory N MB used ... at HH:MM:SS.S . crumbs" in Send diagnostics before "previous run ended"). CI cannot
+  see memory (B1: `uitest.yml -f memory=3400` runs the suite as a standard phone), so memory fixes are only proven by his
+  Send diagnostics. The App Store version is main plus the Store layer (branch `sandbox`, merged through 0.1.574).
+  Open: A22 (proof from diagnostics), A8 residual, B6 (PR #91 / branch `quality-batch11`). Further main merges follow
+  the release routine; nothing is submitted to the App Store.
 - `docs/QUALITY-CHECKLIST.md` is the durable record: findings (two independent reviews), fix batches, test results,
   baselines, phone tests. Update it with every batch. Angelo's rules for this work: fix batches only after he approves
   the plan; reproduce first, add regression coverage, run the checks, get an independent review of each batch; apply

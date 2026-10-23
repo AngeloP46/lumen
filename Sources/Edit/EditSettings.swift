@@ -168,6 +168,48 @@ struct BrushStroke: Codable, Equatable, Hashable {
     /// Softness this stroke was painted with (0...100). nil = older strokes: they follow the component's feather.
     /// Changing the Feather slider only affects strokes painted afterwards.
     var feather: Double?
+
+    /// The same stroke with the points that do not change its shape taken out (Ramer-Douglas-Peucker). A finger stroke
+    /// across the photo had up to ~500 points; twenty of them made the edits file hundreds of KB, written on every save
+    /// and again for each of up to 200 undo steps (quality checklist B4). `epsilon` is a fraction of the long edge
+    /// (0.0006 = 1.5 px on the 2560 px preview, far less than the brush); never more than `limit` points.
+    func simplified(epsilon: Double = 0.0006, limit: Int = 300) -> BrushStroke {
+        var e = epsilon
+        var kept = Self.reduce(points, e)
+        while kept.count > limit && e < 0.05 { e *= 1.6; kept = Self.reduce(points, e) }
+        if kept.count > limit {
+            // a path that wild is not a finger stroke; keep evenly spaced points (and both ends) so the cap always holds
+            let step = Double(kept.count - 1) / Double(limit - 1)
+            kept = (0..<limit).map { kept[min(kept.count - 1, Int((Double($0) * step).rounded()))] }
+        }
+        var s = self
+        s.points = kept
+        return s
+    }
+
+    private static func reduce(_ pts: [Pt], _ epsilon: Double) -> [Pt] {
+        guard pts.count > 2 else { return pts }
+        var keep = [Bool](repeating: false, count: pts.count)
+        keep[0] = true; keep[pts.count - 1] = true
+        var stack = [(0, pts.count - 1)]
+        while let (a, b) = stack.popLast() {
+            guard b > a + 1 else { continue }
+            var far = 0.0, at = -1
+            let ax = pts[a].x, ay = pts[a].y, bx = pts[b].x, by = pts[b].y
+            let dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy
+            for i in (a + 1)..<b {
+                var d: Double
+                if len2 == 0 { d = hypot(pts[i].x - ax, pts[i].y - ay) }
+                else {
+                    let t = max(0, min(1, ((pts[i].x - ax) * dx + (pts[i].y - ay) * dy) / len2))
+                    d = hypot(pts[i].x - (ax + t * dx), pts[i].y - (ay + t * dy))
+                }
+                if d > far { far = d; at = i }
+            }
+            if far > epsilon, at > 0 { keep[at] = true; stack.append((a, at)); stack.append((at, b)) }
+        }
+        return zip(pts, keep).filter { $0.1 }.map { $0.0 }
+    }
 }
 
 struct ColorSample: Codable, Equatable, Hashable {

@@ -164,6 +164,7 @@ final class EditorViewModel: ObservableObject {
 
     /// When the photo was asked for (open → first frame, for diagnostics).
     private var openedAt: Date?
+    private var renderAfterWarning: DispatchWorkItem?
     /// On closing the photo: the library's thumbnail from the picture already decoded here (A13). It shows the AI masks that
     /// are worked out, and the photo is not decoded again (a 48 MP RAW decode for a thumbnail was ~2 GB at its peak).
     func updateLibraryThumbnail() {
@@ -238,7 +239,10 @@ final class EditorViewModel: ObservableObject {
                 // and no new try for a while: dropped, tried again at once, dropped again was how iOS closed Lumen (23 Oct)
                 self.detailRetry.hold(for: 30)
                 if !self.showOriginal { self.unhealedSource = nil }
-                self.requestRender()
+                self.renderAfterWarning?.cancel()
+                let again = DispatchWorkItem { [weak self] in self?.requestRender() }
+                self.renderAfterWarning = again
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: again)
             }
         }
         applyingHistory = true
@@ -651,7 +655,15 @@ final class EditorViewModel: ObservableObject {
                 self.prepareAutoMasksIfNeeded()
                 self.ensureDenoise()
                 self.refreshUnhealed()
-                if self.zoomLevel > 1.4 { self.buildDetail() }
+                if self.zoomLevel > 1.4 {
+                    // not at once: a decode after every pause of the AI Denoise slider, each followed by a 2 GB copy, is what
+                    // B5 describes; the copy is made once the changes have stopped
+                    self.detailRetry.hold(for: 2)
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 2_100_000_000)
+                        if let self, self.zoomLevel > 1.4, self.detailSource == nil { self.buildDetail() }
+                    }
+                }
                 // a new heal shows once the photo has been decoded with it
                 if self.healBusy && self.healWaitingForReload { self.healBusy = false; self.healStroke = []; self.healWaitingForReload = false }
             }
@@ -728,6 +740,7 @@ final class EditorViewModel: ObservableObject {
     func requestRender() {
         guard let session, let source else { return }
         BlackBox.shared.crumb("render")
+        BlackBox.shared.count("render")
         let buildStart = CACurrentMediaTime()
         defer { if renderTimes.count < 5000 { renderTimes.append((CACurrentMediaTime() - buildStart) * 1000) } }
         if let opened = openedAt {
@@ -873,6 +886,7 @@ final class EditorViewModel: ObservableObject {
             // zoom fires this on every pinch step: note it once, and don't ask again for a while
             if native > source.longEdge * 1.15 {
                 detailRetry.hold(for: 12)
+                if DemoMode.isOn { DemoMode.log("detail: no room (\(left) MB left, needs \(enough))") }
                 if !detailSkipNoted {
                     detailSkipNoted = true
                     Diagnostics.shared.note("100% view: no full-size copy, only \(left) MB left (needs ~\(enough))")
@@ -885,6 +899,7 @@ final class EditorViewModel: ObservableObject {
         detailLoading = true
         BlackBox.shared.crumb("100% view copy")
         Diagnostics.shared.note("100% view: building \(Int(edge)) px copy")
+        if DemoMode.isOn { DemoMode.log("detail: building \(Int(edge))") }
         let generation = loadGeneration
         let mp = megapixels
         workQueue.async {
@@ -1371,6 +1386,7 @@ final class EditorViewModel: ObservableObject {
                 self.freeMemoryForDetail()
                 try? await Task.sleep(nanoseconds: 700_000_000)
             }
+            self.canvas.drawingPaused = true   // no redraw of the picture while the model loads
             DispatchQueue.global(qos: .userInitiated).async {
                 // through the coordinator: nothing else heavy starts while the model loads, and it isn't loaded at all
                 // without room for the spike (it then loads with the first fix, which asks for room of its own)
@@ -1382,10 +1398,39 @@ final class EditorViewModel: ObservableObject {
                     return EditSession.healModelReady
                 }
                 if loaded == nil { Diagnostics.shared.note("heal model: not loaded yet, only \(Diagnostics.availableMB) MB left (it loads with the first fix)") }
-                Task { @MainActor [weak self] in self?.healPreparing = false }
+                Task { @MainActor [weak self] in self?.healPreparing = false; self?.canvas.drawingPaused = false }
             }
         }
     }
+
+    /// For a heal job, on the work queue: the Heal model loaded by itself (the picture is not redrawn, nothing else heavy
+    /// runs, and only with room for the load's spike). False = no room: the job says so instead of risking Lumen.
+    nonisolated private func loadHealModelAlone() -> Bool {
+        if EditSession.healModelReady { return true }
+        // the tool's own warm-up may be loading it right now: wait for that rather than start a second load
+        var waited = 0
+        while HeavyWork.shared.isRunning(.healModel) && waited < 24 { Thread.sleep(forTimeInterval: 0.25); waited += 1 }
+        if EditSession.healModelReady { return true }
+        Task { @MainActor [weak self] in self?.canvas.drawingPaused = true }
+        defer { Task { @MainActor [weak self] in self?.canvas.drawingPaused = false } }
+        BlackBox.shared.crumb("heal model load (alone)")
+        let need = HeavyWork.needMB(.healModel, megapixels: 0) + HeavyWork.marginMB(for: .healModel)
+        var tries = 0
+        while Diagnostics.availableMB < need && tries < 4 { LumenGPU.context.clearCaches(); Thread.sleep(forTimeInterval: 0.5); tries += 1 }
+        guard Diagnostics.availableMB >= need else {
+            Diagnostics.shared.note("heal: no room to load the model, \(Diagnostics.availableMB) MB left (needs ~\(need))")
+            return false
+        }
+        let loaded: Bool? = HeavyWork.shared.run(.healModel, megapixels: 0) { () -> Bool in
+            Diagnostics.shared.note("heal model loading")
+            EditSession.prepareHealModel()
+            Diagnostics.shared.note("heal model ready \(EditSession.healModelReady)")
+            return EditSession.healModelReady
+        }
+        return loaded == true
+    }
+
+    private static let healNoRoom = "Heal couldn't get enough memory to start. Close this photo, open it again and use Heal first."
     fileprivate var healWaitingForReload = false
     private var healRelease: Task<Void, Never>?
     /// The Heal model is kept once loaded, also after leaving the tool and the photo (it holds only ~150-300 MB; until
@@ -1420,18 +1465,21 @@ final class EditorViewModel: ObservableObject {
         Diagnostics.shared.note("heal start (model ready \(EditSession.healModelReady))")
         let mp = megapixels
         let item = self.item
-        workQueue.async { [weak store = self.store] in
-            let spot = HeavyWork.shared.run(.heal, megapixels: mp) { session.makeHeal(strokes: [stroke], earlier: earlier) } ?? nil
+        workQueue.async { [weak self, weak store = self.store] in
+            let roomForModel = self?.loadHealModelAlone() ?? false
+            Task { @MainActor [weak self] in self?.canvas.drawingPaused = true }   // the heal needs the memory more than a redraw does
+            let spot = roomForModel ? (HeavyWork.shared.run(.heal, megapixels: mp) { session.makeHeal(strokes: [stroke], earlier: earlier) } ?? nil) : nil
             LumenGPU.context.clearCaches()
             Diagnostics.shared.note(spot == nil ? "heal failed" : "heal done")
             let why = EditSession.healFailure ?? .failed
             Task { @MainActor [weak self] in
+                self?.canvas.drawingPaused = false
                 // the editor closed meanwhile: the fix still goes on the photo (checklist A4)
                 guard let self else { if let spot { store?.addHeals([spot], to: item) }; return }
                 guard let spot else {
                     self.healBusy = false
                     self.healStroke = []
-                    self.healMessage = why.message
+                    self.healMessage = roomForModel ? why.message : Self.healNoRoom
                     return
                 }
                 // keep the painted stroke up until the photo is decoded again with the fix
@@ -1590,9 +1638,11 @@ final class EditorViewModel: ObservableObject {
         let mp = megapixels
         let item = self.item
         workQueue.async { [weak self, weak store = self.store] in
+            let roomForModel = self?.loadHealModelAlone() ?? false
+            Task { @MainActor [weak self] in self?.canvas.drawingPaused = true }
             var made: [HealSpot] = []
             var failures: [HealFailure] = []
-            for (i, person) in chosen.enumerated() {
+            for (i, person) in chosen.enumerated() where roomForModel {
                 if self?.removePeopleCancel == true { break }   // A19: stop between people; what's removed stays removed
                 if i > 0 {
                     let text = "Removing \(i + 1) of \(chosen.count)…"
@@ -1609,7 +1659,9 @@ final class EditorViewModel: ObservableObject {
             }
             let done = made, failed = failures, stopped = self?.removePeopleCancel == true
             Task { @MainActor [weak self] in
+                self?.canvas.drawingPaused = false
                 guard let self else { store?.addHeals(done, to: item); return }
+                if !roomForModel { self.healMessage = Self.healNoRoom }
                 self.removingPeople = false
                 self.peopleFound = nil
                 self.peopleChosen = []
@@ -1868,8 +1920,17 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
-    /// The finger that was painting lifted.
-    func endStroke() { strokeOpen = false }
+    /// The finger that was painting lifted: the stroke keeps its shape with far fewer points (quality checklist B4).
+    func endStroke() {
+        let wasOpen = strokeOpen
+        strokeOpen = false
+        guard wasOpen, let c = selectedComponent, c.kind == .brush, let last = c.strokes.last, last.points.count > 16 else { return }
+        updateComponent(c.id) { comp in
+            guard var l = comp.strokes.popLast() else { return }
+            l = l.simplified()
+            comp.strokes.append(l)
+        }
+    }
 
     /// A pinch starts with one finger down, which paints a stray dab: take it back.
     func cancelRecentStroke() {
@@ -1935,7 +1996,11 @@ final class EditorViewModel: ObservableObject {
 
     // MARK: Export
 
-    func export(_ o: ExportOptions) {
+    /// Lens Blur is on but its depth estimate could not be made, so the export could not be: the user is asked whether to
+    /// export without the blur (the saved edit keeps it). Before, every such export just failed (quality checklist A17).
+    @Published var offerExportWithoutLens: ExportOptions?
+
+    func export(_ o: ExportOptions, withoutLensBlur: Bool = false) {
         guard let session, !isExporting else { return }
         // AI Denoise is on but its cleaned copy is gone: say so now, not after a hidden minute inside the export (A16)
         if settings.effective.aiDenoise > 0, !session.hasDenoised, EditSession.hasDenoiseModel {
@@ -1943,7 +2008,8 @@ final class EditorViewModel: ObservableObject {
             return
         }
         isExporting = true
-        let s = settings
+        var s = settings
+        if withoutLensBlur { s.lensBlur.amount = 0 }
         let name = item.displayName
         let patches = HealStore.retain(Set(s.heals.map(\.id)))
         // a full-size export decodes the whole photo again: let go of the copies that can be made again first
@@ -1961,9 +2027,10 @@ final class EditorViewModel: ObservableObject {
             }
             var data: Data?
             var failMessage: String?
+            var lensDepthFailed = false
             switch outcome {
             case .data(let d): data = d
-            case .failed(let f): failMessage = f.message
+            case .failed(let f): failMessage = f.message; lensDepthFailed = (f == .depthUnavailable)
             case nil: failMessage = "There isn't enough free memory to export this photo right now. Close other apps and try again."
             }
             Diagnostics.shared.note(String(format: "export %@ in %.1f s (%@)", data == nil ? "failed" : "done",
@@ -1977,7 +2044,12 @@ final class EditorViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.isExporting = false
                 self?.refreshUnhealed()
-                if let url { self?.exported = ExportResult(url: url) } else { self?.message = failMessage ?? "Export failed." }
+                // the export decoded the whole photo through this session, which keeps that decode for as long as it lives
+                // (quality checklist A8): a new session lets it go
+                if mp > 20 { self?.reloadSource() }
+                if let url { self?.exported = ExportResult(url: url) }
+                else if lensDepthFailed && !withoutLensBlur { self?.offerExportWithoutLens = o }
+                else { self?.message = failMessage ?? "Export failed." }
             }
         }
     }
