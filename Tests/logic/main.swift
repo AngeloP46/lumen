@@ -302,5 +302,58 @@ do {
           "coordinator: an optional 100 % copy runs with room and margin")
 }
 
+// ---- A9, the last edge (23 Oct): callers already waiting for a load that a release overtakes share its result
+do {
+    let entered = DispatchSemaphore(value: 0), go = DispatchSemaphore(value: 0)
+    let lock = NSLock()
+    var loads = 0
+    var got: [Int?] = []
+    let model = LoadedModel<Int> {
+        lock.lock(); loads += 1; lock.unlock()
+        entered.signal()
+        _ = go.wait(timeout: .now() + 3)
+        return 5
+    }
+    let both = DispatchGroup()
+    for i in 0..<2 {
+        both.enter()
+        DispatchQueue.global().async {
+            let r = model.model
+            lock.lock(); got.append(r); lock.unlock()
+            both.leave()
+        }
+        if i == 0 { _ = entered.wait(timeout: .now() + 2) }   // the first call is the one loading
+    }
+    usleep(300_000)           // the second call is waiting for it
+    model.release()           // memory warning in the middle of the load
+    go.signal()
+    check(both.wait(timeout: .now() + 3) == .success, "both callers finish")
+    check(loads == 1, "a waiter must not start a second load after a release (\(loads) loads)")
+    check(got.count == 2 && got.allSatisfy { $0 == 5 }, "both callers get the model (\(got))")
+}
+
+// ---- A23 (23 Oct): one decode at a time, only the newest settings; the Heal model's load waits for room
+do {
+    var f = SingleFlight()
+    check(f.request(), "single flight: the first request starts at once")
+    check(!f.request() && !f.request() && !f.request(), "single flight: requests during a run do not start more runs")
+    check(f.finish() && f.running, "single flight: after the run, one more for all the requests that came in")
+    check(!f.finish() && !f.running, "single flight: and then it is idle")
+    check(f.request(), "single flight: the next request starts at once again")
+    check(!f.finish() && !f.running, "single flight: nothing came in, nothing more to run")
+
+    HeavyWork.availableMB = { 0 }
+    var decoded = false
+    check(HeavyWork.shared.run(.preview, megapixels: 24) { () -> Int in decoded = true; return 1 } == 1 && decoded,
+          "coordinator: with no memory report (the simulator) a preview decode runs at once")
+    HeavyWork.availableMB = { 2475 }
+    var loaded = false
+    check(HeavyWork.shared.run(.healModel, megapixels: 0, optional: true) { () -> Int in loaded = true; return 1 } == nil && !loaded,
+          "coordinator: the Heal model is not loaded with 2475 MB free (the load takes ~2.8 GB for a moment)")
+    HeavyWork.availableMB = { 3200 }
+    check(HeavyWork.shared.run(.healModel, megapixels: 0, optional: true) { () -> Int in loaded = true; return 1 } == 1 && loaded,
+          "coordinator: the Heal model loads with room for the spike")
+}
+
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)

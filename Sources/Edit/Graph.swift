@@ -231,6 +231,17 @@ extension EditSession {
         return renderCGImage(s, source: src)
     }
 
+    /// A thumbnail from a source that is already decoded (the editor's preview): the photo is not decoded again, and the AI
+    /// masks the editor has worked out show on it (quality checklist A13; before, a thumbnail was a fresh RAW decode,
+    /// ~2 GB at its peak on a 48 MP photo, and showed none of the AI masks).
+    func renderThumbnail(_ s: EditSettings, source: ImageSource, maxEdge: CGFloat) -> CGImage? {
+        var img = develop(s, source: source, geometry: true)
+        let e = img.extent
+        let k = min(1, maxEdge / max(e.width, e.height))
+        if k < 1 { img = img.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0]) }
+        return ctx.createCGImage(img, from: img.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+    }
+
     func renderCGImage(_ s: EditSettings, source: ImageSource, geometry: Bool = true) -> CGImage? {
         let img = develop(s, source: source, geometry: geometry)
         return ctx.createCGImage(img, from: img.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
@@ -251,7 +262,7 @@ extension EditSession {
         var message: String {
             switch self {
             case .denoiseMissing:
-                return "The cleaned copy could not be made (AI Denoise). Turn AI Denoise off to export, or reopen the photo and try again."
+                return "AI Denoise has to clean this photo again before it can be exported (about a minute; the cleaned copy is not kept in backups). Open it, tap AI Denoise in Detail, then export. Or switch AI Denoise off."
             case .decode:
                 return "The photo could not be read (the file may be missing)."
             case .depthUnavailable:
@@ -278,12 +289,16 @@ extension EditSession {
         }
     }
 
+    /// `allowClean`: make the cleaned copy here when AI Denoise is on and it is missing (the engine tests do). The app does
+    /// not: a clean is 1-2 minutes inside an export with no progress and no Cancel (quality checklist A16), so it asks the
+    /// user to clean the photo first (`.denoiseMissing`).
     func renderDataOutcome(_ s: EditSettings, format: ExportFormat, quality: Double, maxEdge: CGFloat? = nil,
-                           includeHDR: Bool = true) -> ExportOutcome {
+                           includeHDR: Bool = true, allowClean: Bool = true) -> ExportOutcome {
         heals = s.effective.heals
         denoiseAmount = s.effective.aiDenoise / 100
         // an export must show the AI Denoise it was asked for: make the cleaned copy now if it isn't there yet
         if denoiseAmount > 0, !hasDenoised, Self.hasDenoiseModel {
+            guard allowClean else { return .failed(.denoiseMissing) }
             let ok = makeDenoised() == .done
             Self.releaseDenoiseModel()
             // never quietly export without the AI Denoise that was asked for
