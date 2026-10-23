@@ -502,13 +502,13 @@ extension EditSession {
         let k = min(1, 1024 / max(ext.width, ext.height))
         let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
         guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
-        else { return nil }
+        else { source.noteFailure(Self.aiPeople); return nil }
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
         let request = VNGeneratePersonSegmentationRequest()
         request.qualityLevel = .accurate
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
-        do { try handler.perform([request]) } catch { return nil }
-        guard let buffer = request.results?.first?.pixelBuffer else { return nil }
+        do { try handler.perform([request]) } catch { source.noteFailure(Self.aiPeople); Self.stepNote?("AI masks: people failed (\(error.localizedDescription))"); return nil }
+        guard let buffer = request.results?.first?.pixelBuffer else { source.noteFailure(Self.aiPeople); return nil }
         var ci = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
         // nobody there: the mask is (almost) all black
         let probe = ci.applyingFilter("CIAreaMaximum", parameters: [kCIInputExtentKey: CIVector(cgRect: ci.extent)])
@@ -589,12 +589,15 @@ extension EditSession {
     /// Labels every part of the photo (sky, water, trees, buildings, road, ...) with Apple's on-device DETR
     /// segmentation model (448 x 448, the photo stretched to fit).
     func computeScene(_ source: ImageSource) -> SceneField? {
-        guard let model = Self.sceneModel else { return nil }
+        guard let model = Self.sceneModel else {
+            if Self.hasSceneModel { source.noteFailure(Self.aiScene); Self.stepNote?("AI masks: the scene model wouldn't load") }   // here, but failed to load
+            return nil
+        }
         let ext = source.extent
         let k = min(1, 1024 / max(ext.width, ext.height))
         let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
         guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace),
-              let run = Self.runScene(model, cg) else { return nil }
+              let run = Self.runScene(model, cg) else { source.noteFailure(Self.aiScene); Self.stepNote?("AI masks: scene failed"); return nil }
         let (w, h, labels) = run
         var counts: [Int32: Int] = [:]
         for l in labels { counts[l, default: 0] += 1 }
@@ -805,18 +808,21 @@ extension EditSession {
     /// Estimates how far away every part of the photo is (on-device, any photo, no depth data needed).
     /// The model sees a landscape frame, so portrait photos are turned a quarter for it and the result turned back.
     func computeDepth(_ source: ImageSource) -> DepthField? {
-        guard let model = Self.depthModel else { return nil }
+        guard let model = Self.depthModel else {
+            if Self.hasDepthModel { source.noteFailure(Self.aiDepth); Self.stepNote?("AI masks: the depth model wouldn't load") }
+            return nil
+        }
         let ext = source.extent
         let k = min(1, 1024 / max(ext.width, ext.height))
         var small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
         let portrait = ext.height > ext.width
         if portrait { small = Self.normalized(small.transformed(by: CGAffineTransform(rotationAngle: -.pi / 2))) }
         guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
-        else { return nil }
+        else { source.noteFailure(Self.aiDepth); return nil }
         let request = VNCoreMLRequest(model: model)
         request.imageCropAndScaleOption = .scaleFill
-        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { return nil }
-        guard let obs = request.results?.first as? VNPixelBufferObservation else { return nil }
+        do { try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request]) } catch { source.noteFailure(Self.aiDepth); Self.stepNote?("AI masks: depth failed (\(error.localizedDescription))"); return nil }
+        guard let obs = request.results?.first as? VNPixelBufferObservation else { source.noteFailure(Self.aiDepth); return nil }
         var out = CIImage(cvPixelBuffer: obs.pixelBuffer, options: [.colorSpace: NSNull()])
         if portrait { out = Self.normalized(out.transformed(by: CGAffineTransform(rotationAngle: .pi / 2))) }
         let w = Int(out.extent.width.rounded()), h = Int(out.extent.height.rounded())
@@ -879,12 +885,13 @@ extension EditSession {
         let ext = source.extent
         let k = min(1, 1024 / max(ext.width, ext.height))
         let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
+        let key = Self.subjectKey(point)
         guard let cg = ctx.createCGImage(small, from: small.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
-        else { return nil }
+        else { source.noteFailure(key); return nil }
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
         let request = VNGenerateForegroundInstanceMaskRequest()
-        do { try handler.perform([request]) } catch { return nil }
-        guard let obs = request.results?.first else { return nil }
+        do { try handler.perform([request]) } catch { source.noteFailure(key); Self.stepNote?("AI masks: subject failed (\(error.localizedDescription))"); return nil }
+        guard let obs = request.results?.first else { return nil }   // ran, found nothing
         var instances = obs.allInstances
         if let point {
             let labels = obs.instanceMask
@@ -902,9 +909,8 @@ extension EditSession {
             guard label > 0, instances.contains(label) else { return nil }
             instances = IndexSet(integer: label)
         }
-        guard !instances.isEmpty,
-              let buffer = try? obs.generateScaledMaskForImage(forInstances: instances, from: handler)
-        else { return nil }
+        guard !instances.isEmpty else { return nil }   // ran, found nothing
+        guard let buffer = try? obs.generateScaledMaskForImage(forInstances: instances, from: handler) else { source.noteFailure(key); return nil }
         var ci = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
         ci = Self.blur(ci, 1.2, ci.extent)
         if let m = Self.materialized(ci) { ci = m }

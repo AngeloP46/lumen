@@ -21,6 +21,11 @@ struct BatchResult: Identifiable {
     let urls: [URL]
 }
 
+extension Notification.Name {
+    /// Heals added to a photo whose editor had closed (`LibraryStore.addHeals`); an editor open on it adopts them.
+    static let lumenHealsAdded = Notification.Name("lumenHealsAdded")
+}
+
 private let thumbQueue = DispatchQueue(label: "lumen.thumbs", qos: .utility)
 private let exportQueue = DispatchQueue(label: "lumen.batch-export", qos: .userInitiated)
 /// Serial: undo-history writes for every photo, in order (see `LibraryStore.save`).
@@ -615,6 +620,8 @@ final class LibraryStore: ObservableObject {
         save(s, for: item)
         refreshThumbnail(item)
         Diagnostics.shared.note("heal finished after the editor closed: kept (\(spots.count))")
+        // the photo may have been opened again meanwhile: that editor read its edits before these heals existed
+        NotificationCenter.default.post(name: .lumenHealsAdded, object: nil, userInfo: ["photo": item.id, "spots": spots])
     }
 
     /// At launch: Heal patches nothing refers to any more (a heal whose undo step fell off the 100-step history, a heal
@@ -759,6 +766,8 @@ final class LibraryStore: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.batchRunning = false
+                // the photo was removed while it was being cleaned: what the clean wrote belongs to nobody (checklist A20)
+                if self.item(id) == nil { DenoiseStore.remove(url) }
                 switch outcome {
                 case .done:
                     var s = self.settings(for: item)   // as it is now (it may have been edited meanwhile)
@@ -772,6 +781,9 @@ final class LibraryStore: ObservableObject {
                     self.batchPausedByBackground = true
                     self.denoiseBatch?.paused = true
                     UIApplication.shared.isIdleTimerDisabled = false
+                    // Lumen came back before the job reached its next tile and stopped: the return-to-screen check had
+                    // already run (it saw the job still running), so nothing would ever carry on (checklist A20)
+                    if UIApplication.shared.applicationState == .active, !self.batchCancel { self.continueDenoiseBatch() }
                 case .cancelled:
                     self.denoiseBatch = nil
                     UIApplication.shared.isIdleTimerDisabled = false
