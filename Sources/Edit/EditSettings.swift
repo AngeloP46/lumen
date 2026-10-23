@@ -177,6 +177,11 @@ struct BrushStroke: Codable, Equatable, Hashable {
         var e = epsilon
         var kept = Self.reduce(points, e)
         while kept.count > limit && e < 0.05 { e *= 1.6; kept = Self.reduce(points, e) }
+        if kept.count > limit {
+            // a path that wild is not a finger stroke; keep evenly spaced points (and both ends) so the cap always holds
+            let step = Double(kept.count - 1) / Double(limit - 1)
+            kept = (0..<limit).map { kept[min(kept.count - 1, Int((Double($0) * step).rounded()))] }
+        }
         var s = self
         s.points = kept
         return s
