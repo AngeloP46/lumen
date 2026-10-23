@@ -248,16 +248,20 @@ if args.contains("--rawprobe-url") || args.contains("--rawprobe-bytes") {
         autoreleasepool {
             var filter: CIRAWFilter?
             if useBytes {
-                if let data = try? Data(contentsOf: arw, options: .alwaysMapped) { filter = CIRAWFilter(imageData: data, identifierHint: arw.pathExtension) }
+                let hint = UTType(filenameExtension: arw.pathExtension.lowercased())?.identifier ?? arw.pathExtension
+                if let data = try? Data(contentsOf: arw, options: .alwaysMapped) { filter = CIRAWFilter(imageData: data, identifierHint: hint) }
             } else { filter = CIRAWFilter(imageURL: arw) }
-            guard let f = filter else { return }
+            guard let f = filter else { print("::notice::RAWPROBE no filter"); return }
             f.scaleFactor = scale
             f.extendedDynamicRangeAmount = hdr ? 2.0 : 1.0
-            guard let img = f.outputImage else { return }
+            guard let img = f.outputImage else { print("::notice::RAWPROBE no image"); return }
             let e = img.extent
             let w = Int(e.width), h = Int(e.height)
             var px = [UInt16](repeating: 0, count: w * h * 4)
             px.withUnsafeMutableBytes { ctx.render(img, toBitmap: $0.baseAddress!, rowBytes: w * 8, bounds: e, format: .RGBAh, colorSpace: nil) }
+            var sum = 0
+            for i in stride(from: 0, to: px.count, by: 4099) { sum = sum &+ Int(px[i]) }
+            print("::notice::RAWPROBE decoded \(w)x\(h), checksum \(sum)")
         }
     }
     let mode = useBytes ? "BYTES" : "URL"
