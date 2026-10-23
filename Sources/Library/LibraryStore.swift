@@ -842,7 +842,8 @@ final class LibraryStore: ObservableObject {
                     let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
                     let started = Date()
                     let outcome: EditSession.ExportOutcome? = HeavyWork.shared.run(.export, megapixels: mp) {
-                        session.renderDataOutcome(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+                        session.renderDataOutcome(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr,
+                                                  allowClean: false)
                     }
                     let state: String
                     switch outcome {
@@ -1197,6 +1198,22 @@ final class LibraryStore: ObservableObject {
     }
 
     // MARK: Thumbnails
+
+    /// Writes a thumbnail that has already been rendered (the editor's, from its own preview: quality checklist A13).
+    func saveThumbnail(_ cg: CGImage, for item: LibraryItem) {
+        guard items.contains(where: { $0.id == item.id }) else { return }
+        let src = fileURL(item), dst = thumbURL(item), id = item.id
+        thumbQueue.async {
+            guard FileManager.default.fileExists(atPath: src.path),
+                  let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else { return }
+            try? jpg.write(to: dst, options: .atomic)
+            Task { @MainActor [weak self] in
+                self?.unreadable.remove(id)
+                self?.thumbVersions[id, default: 0] += 1
+                self?.thumbVersion += 1
+            }
+        }
+    }
 
     func refreshThumbnail(_ item: LibraryItem) {
         guard items.contains(where: { $0.id == item.id }) else { return }

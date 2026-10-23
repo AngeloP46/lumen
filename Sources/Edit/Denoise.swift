@@ -115,6 +115,9 @@ enum DenoiseStore {
         var previewWidth: Int? = nil
         var previewHeight: Int? = nil
         var kind: String? = nil
+        /// The RAW decoder the photo was read with when this was made (`EditSession.decoderTag`); nil for results from
+        /// before 23 Oct, which are taken as right.
+        var decoder: String? = nil
     }
 
     /// A clean that paused (Lumen left the screen or was swiped away): its rows so far are in `file`.
@@ -142,9 +145,11 @@ enum DenoiseStore {
     }
 
     /// The result for this photo: the noise kind (any HDR mode), else an older cleaned copy for this mode.
-    static func info(_ photo: URL, hdr: Bool, size: CGSize) -> Info? {
+    static func info(_ photo: URL, hdr: Bool, size: CGSize, decoder: String? = nil) -> Info? {
         func valid(_ i: Info?) -> Info? {
             guard let i, i.model == modelVersion, i.width == Int(size.width.rounded()), i.height == Int(size.height.rounded()),
+                  // made with another RAW decoder (an iOS update): the noise no longer fits the picture exactly
+                  decoder == nil || i.decoder == nil || i.decoder == decoder,
                   FileManager.default.fileExists(atPath: directory.appendingPathComponent(i.file).path) else { return nil }
             return i
         }
@@ -154,8 +159,8 @@ enum DenoiseStore {
     /// The stored image (the noise, or an older cleaned copy) in the working space; nil when there is none. `maxEdge` =
     /// the size the caller needs: the small copy is used when it is big enough. Raw files are read memory-mapped (no
     /// decoding; iOS can drop the pages again); results made before 21 Oct may be 16-bit PNGs.
-    static func image(_ photo: URL, hdr: Bool, size: CGSize, maxEdge: CGFloat? = nil) -> (CIImage, Info)? {
-        guard var i = info(photo, hdr: hdr, size: size) else { return nil }
+    static func image(_ photo: URL, hdr: Bool, size: CGSize, maxEdge: CGFloat? = nil, decoder: String? = nil) -> (CIImage, Info)? {
+        guard var i = info(photo, hdr: hdr, size: size, decoder: decoder) else { return nil }
         if i.kind == nil, let maxEdge, maxEdge <= CGFloat(previewEdge) + 1,
            maxEdge > CGFloat(max(i.previewWidth ?? 0, i.previewHeight ?? 0)) + 1, let bigger = upgradePreview(photo, hdr: hdr, info: i) {
             i = bigger
@@ -268,6 +273,9 @@ enum DenoiseStore {
                 if age > 14 * 86_400 { try? fm.removeItem(at: url); continue }
                 if let p: Partial = read(url) { used.insert(p.file) }
             } else if let i: Info = read(url) {
+                // a result from an older model or way of running it is never read again: it goes, with its files
+                // (300-500 MB each; before 23 Oct they stayed for ever)
+                if i.model != modelVersion { try? fm.removeItem(at: url); continue }
                 used.insert(i.file); if let p = i.preview { used.insert(p) }
             }
         }
@@ -345,7 +353,7 @@ extension EditSession {
     static func releaseDenoiseModel() { denoiseModel.release(); denoiseCPU.release() }
 
     /// Whether this photo has been cleaned (any HDR mode since 21 Oct).
-    var hasDenoised: Bool { DenoiseStore.info(originalURL, hdr: hdrDecode, size: nativeSize) != nil }
+    var hasDenoised: Bool { DenoiseStore.info(originalURL, hdr: hdrDecode, size: nativeSize, decoder: decoderTag) != nil }
 
     /// sRGB / Display P3 encoded value to linear light (a table for 0...1, the formula outside it).
     private static let linearTable: [Float] = (0...4096).map { i in
@@ -625,7 +633,8 @@ extension EditSession {
         let info = DenoiseStore.Info(model: DenoiseStore.modelVersion, scale: scale, width: W, height: H, file: fileName,
                                      preview: previewWritten ? previewName : nil,
                                      previewWidth: previewWritten ? shrinker.smallWidth : nil,
-                                     previewHeight: previewWritten ? shrinker.smallHeight : nil, kind: DenoiseStore.noiseKind)
+                                     previewHeight: previewWritten ? shrinker.smallHeight : nil, kind: DenoiseStore.noiseKind,
+                                     decoder: decoderTag)
         guard let data = try? JSONEncoder().encode(info),
               (try? data.write(to: DenoiseStore.noiseInfoURL(originalURL), options: .atomic)) != nil else { return .failed }
         try? fm.removeItem(at: DenoiseStore.partialURL(originalURL))
@@ -655,7 +664,7 @@ extension EditSession {
     func withDenoise(_ decoded: CIImage, amount: Double) -> CIImage {
         guard amount > 0.001,
               let found = DenoiseStore.image(originalURL, hdr: hdrDecode, size: nativeSize,
-                                             maxEdge: max(decoded.extent.width, decoded.extent.height)) else { return decoded }
+                                             maxEdge: max(decoded.extent.width, decoded.extent.height), decoder: decoderTag) else { return decoded }
         let (stored, info) = found
         let e = decoded.extent, d = stored.extent
         var r = stored
