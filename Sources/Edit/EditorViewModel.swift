@@ -164,6 +164,10 @@ final class EditorViewModel: ObservableObject {
 
     /// When the photo was asked for (open → first frame, for diagnostics).
     private var openedAt: Date?
+    /// The edits the photo was opened with: the library's thumbnail is made again on closing only if they changed (a
+    /// peek at a 48 MP photo used to decode it whole again, on top of everything else the editor had just freed).
+    private var settingsAtOpen = EditSettings()
+    var changedSinceOpen: Bool { settings != settingsAtOpen }
 
     /// The editor is closing: what this session's frames cost, and memory at that moment (checklist F, A8).
     func reportSession() {
@@ -202,6 +206,8 @@ final class EditorViewModel: ObservableObject {
                 if !self.healBusy && !self.healPreparing { EditSession.releaseHealModel() }
                 // the 100 % copy goes even while zoomed in: a softer view is better than iOS closing Lumen
                 if self.detailSource != nil { self.detailSource = nil; Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
+                // and no new try for a while: dropped, tried again at once, dropped again was how iOS closed Lumen (23 Oct)
+                self.detailRetry.hold(for: 30)
                 if !self.showOriginal { self.unhealedSource = nil }
                 self.requestRender()
             }
@@ -251,6 +257,7 @@ final class EditorViewModel: ObservableObject {
         // undo history arrives a moment later (read in the background, not while the photo is opening); edits made
         // meanwhile go on top of it
         let opened = loaded
+        settingsAtOpen = loaded
         store.loadHistory(for: item, current: opened) { [weak self] history in
             guard let self else { return }
             self.undoStack = Array((history.undo + self.undoStack).suffix(100))
@@ -544,11 +551,16 @@ final class EditorViewModel: ObservableObject {
         let denoise = settings.effective.aiDenoise / 100
         let previous = source
         let sameHeals = heals.map(\.id) == sourceHeals || DemoMode.value("-lumenDemoLensDepth") != nil
+        // every decode is in the log with the memory it ran at: 23 Oct, the 48 MP photo's memory went 1.4 → 2.8 → 3.1 GB in
+        // the seconds after a clean and nothing said which step it was
+        Diagnostics.shared.note("preview decode: start (HDR \(wantsHDR), heals \(heals.count), AI Denoise \(Int(denoise * 100)))")
+        let reloadBegan = Date()
         workQueue.async {
             let s = EditSession(url: url, expandHDR: wantsHDR)
             s?.heals = heals
             s?.denoiseAmount = denoise
             let src = s?.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true)
+            Diagnostics.shared.note(String(format: "preview decode: done in %.1f s", Date().timeIntervalSince(reloadBegan)))
             Task { @MainActor [weak self] in
                 guard let self, generation == self.loadGeneration else { return }
                 guard let s, let src else {
@@ -754,30 +766,58 @@ final class EditorViewModel: ObservableObject {
     }
 
     private var detailSkipNoted = false
+    /// A try that found no room, or a copy dropped on a memory warning, is not repeated for a while: zooming asks on
+    /// every pinch step, and 13 builds in a minute (about 2.1 GB each) is how iOS closed Lumen twice (23 Oct, A21).
+    private var detailRetry = RetryGate()
+    private var detailRechecking = false
 
-    private func buildDetail() {
+    /// Zooming in asks for the 100 % view, so what can be made again goes first: the original copy, the mask and Heal
+    /// models and the GPU caches (a few hundred MB to a gigabyte after a heal or the AI masks).
+    private func freeMemoryForDetail() {
+        unhealedSource = nil
+        LumenGPU.context.clearCaches()
+        EditSession.releaseMaskModels()
+        if !healBusy && !healPreparing { EditSession.releaseHealModel() }
+        if denoiseProgress == nil { denoiseQueue.async { EditSession.releaseDenoiseModel() } }
+    }
+
+    private func buildDetail(afterRelease: Bool = false) {
         // not while AI Denoise is cleaning the full-size photo: both together are too much memory (diagnostics 20 Oct)
-        guard let session, let source, !detailBuilding, denoiseProgress == nil else { return }
+        guard let session, let source, !detailBuilding, denoiseProgress == nil, detailRetry.allows() else { return }
         let native = max(session.nativeSize.width, session.nativeSize.height)
-        // 4096 (was 6000): a 24 MP full-size source plus its layers pushed Lumen past iOS's 3.4 GB per-app limit
-        // while zoomed in (owner's JetsamEvent, 18 Oct: killed at 3388 MB, per-process-limit).
-        // A 4096 px copy with its layers needs roughly 700 MB: with less room left than that allows, build a
-        // smaller one, or none (the preview stays, a little softer, instead of iOS closing the app).
-        // Bigger photos cost more to make the copy from (owner's phone, 21 Oct: a 48 MP ProRAW's 4096 px copy went from
-        // 214 MB to 2851 MB in a second and iOS closed Lumen): the room asked for grows with the photo past 24 MP.
-        let left = Diagnostics.availableMB
+        // The copy needs ~2.1 GB at its peak on a 24 MP photo (owner's phone, 23 Oct; 48 MP: 2.6 GB, 21 Oct): mostly the
+        // RAW engine's decode, whatever the copy's size. It is built only with that much free AND the safety margin
+        // beside it; with less room the preview stays, a little softer, instead of iOS closing the app.
         let megapixels = session.nativeSize.width * session.nativeSize.height / 1_000_000
-        let f = max(1, Double(megapixels) / 24)
-        var edge = Double(left) > 2000 * f ? min(native, 4096) : Double(left) > 1300 * f ? min(native, 3072) : 0
-        // the increased memory limit (about 6 GB): the full-size photo, up to 6000 px, when there is plenty left
-        if MemoryBudget.tier == .high, Double(left) > 3500 * f { edge = min(native, 6000) }
-        // past 30 MP the RAW engine's decode itself takes ~50 MB per megapixel whatever the copy's size (21 Oct review)
-        if megapixels > 30 && Double(left) < 50 * Double(megapixels) + 700 { edge = 0 }
+        var left = Diagnostics.availableMB
+        let enough = DetailCopy.needMB(megapixels: Double(megapixels)) + HeavyWork.marginMB
+        if left < enough, native > source.longEdge * 1.15 {
+            freeMemoryForDetail()
+            if !afterRelease {
+                // what was let go of takes a moment to come back: look again, once
+                if !detailRechecking {
+                    detailRechecking = true
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        guard let self else { return }
+                        self.detailRechecking = false
+                        if self.zoomLevel > 1.4, self.detailSource == nil { self.buildDetail(afterRelease: true) }
+                    }
+                }
+                return
+            }
+            left = Diagnostics.availableMB
+        }
+        let edge = CGFloat(DetailCopy.edge(freeMB: left, megapixels: Double(megapixels), native: Double(native),
+                                           highTier: MemoryBudget.tier == .high, marginMB: HeavyWork.marginMB))
         guard edge > source.longEdge * 1.15 else {
-            // zoom fires this on every pinch step: note it once
-            if native > source.longEdge * 1.15 && !detailSkipNoted {
-                detailSkipNoted = true
-                Diagnostics.shared.note("100% view: no full-size copy, only \(left) MB left")
+            // zoom fires this on every pinch step: note it once, and don't ask again for a while
+            if native > source.longEdge * 1.15 {
+                detailRetry.hold(for: 12)
+                if !detailSkipNoted {
+                    detailSkipNoted = true
+                    Diagnostics.shared.note("100% view: no full-size copy, only \(left) MB left (needs ~\(enough))")
+                }
             }
             return
         }
@@ -795,6 +835,7 @@ final class EditorViewModel: ObservableObject {
                 guard let self else { return }
                 self.detailBuilding = false
                 self.detailLoading = false
+                if src == nil { self.detailRetry.hold(for: 12) }
                 // the photo was decoded again meanwhile (HDR, a heal): this copy shows the old version
                 guard generation == self.loadGeneration else {
                     if self.zoomLevel > 1.4 { self.buildDetail() }
