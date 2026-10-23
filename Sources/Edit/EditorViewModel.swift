@@ -164,6 +164,33 @@ final class EditorViewModel: ObservableObject {
 
     /// When the photo was asked for (open → first frame, for diagnostics).
     private var openedAt: Date?
+    /// On closing the photo: the library's thumbnail from the picture already decoded here (A13). It shows the AI masks that
+    /// are worked out, and the photo is not decoded again (a 48 MP RAW decode for a thumbnail was ~2 GB at its peak).
+    func updateLibraryThumbnail() {
+        guard changedSinceOpen, let store else { return }
+        guard let session, let source else { store.refreshThumbnail(item); return }
+        let s = settings, item = item
+        workQueue.async {
+            guard let cg = session.renderThumbnail(s, source: source, maxEdge: 640) else {
+                Task { @MainActor in store.refreshThumbnail(item) }
+                return
+            }
+            Task { @MainActor in store.saveThumbnail(cg, for: item) }
+        }
+    }
+
+    /// AI Denoise is on, but the cleaned copy is not on the phone (it is not in backups, an iOS update can retire it):
+    /// say so once instead of quietly showing the photo without it (A16, B8).
+    private var missingDenoiseNoted = false
+    private func noteMissingDenoise() {
+        guard !missingDenoiseNoted, settings.effective.aiDenoise > 0, let session, !session.hasDenoised,
+              denoiseProgress == nil, !denoiseRequested, EditSession.hasDenoiseModel,
+              DenoiseStore.pausedFraction(session.originalURL) == nil else { return }
+        missingDenoiseNoted = true
+        message = "AI Denoise is on, but this photo's cleaned copy is no longer on the phone. Tap AI Denoise in Detail to clean it again."
+        Diagnostics.shared.note("AI Denoise is on but its cleaned copy is missing")
+    }
+
     /// The edits the photo was opened with: the library's thumbnail is made again on closing only if they changed (a
     /// peek at a 48 MP photo used to decode it whole again, on top of everything else the editor had just freed).
     private var settingsAtOpen = EditSettings()
@@ -316,6 +343,7 @@ final class EditorViewModel: ObservableObject {
                     }
                 }
                 self.ensureDenoise()
+                self.noteMissingDenoise()
                 self.warmDenoiseIfNeeded()
                 self.refreshUnhealed()
                 // HDR was switched while the photo was still loading: decode it again the other way
@@ -1883,6 +1911,11 @@ final class EditorViewModel: ObservableObject {
 
     func export(_ o: ExportOptions) {
         guard let session, !isExporting else { return }
+        // AI Denoise is on but its cleaned copy is gone: say so now, not after a hidden minute inside the export (A16)
+        if settings.effective.aiDenoise > 0, !session.hasDenoised, EditSession.hasDenoiseModel {
+            message = EditSession.ExportFailure.denoiseMissing.message
+            return
+        }
         isExporting = true
         let s = settings
         let name = item.displayName
@@ -1897,7 +1930,8 @@ final class EditorViewModel: ObservableObject {
             Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
             let exportStart = Date()
             let outcome = HeavyWork.shared.run(.export, megapixels: mp) {
-                session.renderDataOutcome(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+                session.renderDataOutcome(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr,
+                                          allowClean: false)
             }
             var data: Data?
             var failMessage: String?

@@ -302,5 +302,35 @@ do {
           "coordinator: an optional 100 % copy runs with room and margin")
 }
 
+// ---- A9, the last edge (23 Oct): callers already waiting for a load that a release overtakes share its result
+do {
+    let entered = DispatchSemaphore(value: 0), go = DispatchSemaphore(value: 0)
+    let lock = NSLock()
+    var loads = 0
+    var got: [Int?] = []
+    let model = LoadedModel<Int> {
+        lock.lock(); loads += 1; lock.unlock()
+        entered.signal()
+        _ = go.wait(timeout: .now() + 3)
+        return 5
+    }
+    let both = DispatchGroup()
+    for i in 0..<2 {
+        both.enter()
+        DispatchQueue.global().async {
+            let r = model.model
+            lock.lock(); got.append(r); lock.unlock()
+            both.leave()
+        }
+        if i == 0 { _ = entered.wait(timeout: .now() + 2) }   // the first call is the one loading
+    }
+    usleep(300_000)           // the second call is waiting for it
+    model.release()           // memory warning in the middle of the load
+    go.signal()
+    check(both.wait(timeout: .now() + 3) == .success, "both callers finish")
+    check(loads == 1, "a waiter must not start a second load after a release (\(loads) loads)")
+    check(got.count == 2 && got.allSatisfy { $0 == 5 }, "both callers get the model (\(got))")
+}
+
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)
