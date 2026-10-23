@@ -1386,6 +1386,7 @@ final class EditorViewModel: ObservableObject {
                 self.freeMemoryForDetail()
                 try? await Task.sleep(nanoseconds: 700_000_000)
             }
+            self.canvas.drawingPaused = true   // no redraw of the picture while the model loads
             DispatchQueue.global(qos: .userInitiated).async {
                 // through the coordinator: nothing else heavy starts while the model loads, and it isn't loaded at all
                 // without room for the spike (it then loads with the first fix, which asks for room of its own)
@@ -1397,10 +1398,39 @@ final class EditorViewModel: ObservableObject {
                     return EditSession.healModelReady
                 }
                 if loaded == nil { Diagnostics.shared.note("heal model: not loaded yet, only \(Diagnostics.availableMB) MB left (it loads with the first fix)") }
-                Task { @MainActor [weak self] in self?.healPreparing = false }
+                Task { @MainActor [weak self] in self?.healPreparing = false; self?.canvas.drawingPaused = false }
             }
         }
     }
+
+    /// For a heal job, on the work queue: the Heal model loaded by itself (the picture is not redrawn, nothing else heavy
+    /// runs, and only with room for the load's spike). False = no room: the job says so instead of risking Lumen.
+    nonisolated private func loadHealModelAlone() -> Bool {
+        if EditSession.healModelReady { return true }
+        // the tool's own warm-up may be loading it right now: wait for that rather than start a second load
+        var waited = 0
+        while HeavyWork.shared.isRunning(.healModel) && waited < 24 { Thread.sleep(forTimeInterval: 0.25); waited += 1 }
+        if EditSession.healModelReady { return true }
+        Task { @MainActor [weak self] in self?.canvas.drawingPaused = true }
+        defer { Task { @MainActor [weak self] in self?.canvas.drawingPaused = false } }
+        BlackBox.shared.crumb("heal model load (alone)")
+        let need = HeavyWork.needMB(.healModel, megapixels: 0) + HeavyWork.marginMB(for: .healModel)
+        var tries = 0
+        while Diagnostics.availableMB < need && tries < 4 { LumenGPU.context.clearCaches(); Thread.sleep(forTimeInterval: 0.5); tries += 1 }
+        guard Diagnostics.availableMB >= need else {
+            Diagnostics.shared.note("heal: no room to load the model, \(Diagnostics.availableMB) MB left (needs ~\(need))")
+            return false
+        }
+        let loaded: Bool? = HeavyWork.shared.run(.healModel, megapixels: 0) { () -> Bool in
+            Diagnostics.shared.note("heal model loading")
+            EditSession.prepareHealModel()
+            Diagnostics.shared.note("heal model ready \(EditSession.healModelReady)")
+            return EditSession.healModelReady
+        }
+        return loaded == true
+    }
+
+    private static let healNoRoom = "Heal couldn't get enough memory to start. Close this photo, open it again and use Heal first."
     fileprivate var healWaitingForReload = false
     private var healRelease: Task<Void, Never>?
     /// The Heal model is kept once loaded, also after leaving the tool and the photo (it holds only ~150-300 MB; until
@@ -1435,18 +1465,21 @@ final class EditorViewModel: ObservableObject {
         Diagnostics.shared.note("heal start (model ready \(EditSession.healModelReady))")
         let mp = megapixels
         let item = self.item
-        workQueue.async { [weak store = self.store] in
-            let spot = HeavyWork.shared.run(.heal, megapixels: mp) { session.makeHeal(strokes: [stroke], earlier: earlier) } ?? nil
+        workQueue.async { [weak self, weak store = self.store] in
+            let roomForModel = self?.loadHealModelAlone() ?? false
+            Task { @MainActor [weak self] in self?.canvas.drawingPaused = true }   // the heal needs the memory more than a redraw does
+            let spot = roomForModel ? (HeavyWork.shared.run(.heal, megapixels: mp) { session.makeHeal(strokes: [stroke], earlier: earlier) } ?? nil) : nil
             LumenGPU.context.clearCaches()
             Diagnostics.shared.note(spot == nil ? "heal failed" : "heal done")
             let why = EditSession.healFailure ?? .failed
             Task { @MainActor [weak self] in
+                self?.canvas.drawingPaused = false
                 // the editor closed meanwhile: the fix still goes on the photo (checklist A4)
                 guard let self else { if let spot { store?.addHeals([spot], to: item) }; return }
                 guard let spot else {
                     self.healBusy = false
                     self.healStroke = []
-                    self.healMessage = why.message
+                    self.healMessage = roomForModel ? why.message : Self.healNoRoom
                     return
                 }
                 // keep the painted stroke up until the photo is decoded again with the fix
@@ -1596,9 +1629,11 @@ final class EditorViewModel: ObservableObject {
         let mp = megapixels
         let item = self.item
         workQueue.async { [weak self, weak store = self.store] in
+            let roomForModel = self?.loadHealModelAlone() ?? false
+            Task { @MainActor [weak self] in self?.canvas.drawingPaused = true }
             var made: [HealSpot] = []
             var failures: [HealFailure] = []
-            for (i, person) in chosen.enumerated() {
+            for (i, person) in chosen.enumerated() where roomForModel {
                 if self?.removePeopleCancel == true { break }   // A19: stop between people; what's removed stays removed
                 if i > 0 {
                     let text = "Removing \(i + 1) of \(chosen.count)…"
@@ -1615,7 +1650,9 @@ final class EditorViewModel: ObservableObject {
             }
             let done = made, failed = failures, stopped = self?.removePeopleCancel == true
             Task { @MainActor [weak self] in
+                self?.canvas.drawingPaused = false
                 guard let self else { store?.addHeals(done, to: item); return }
+                if !roomForModel { self.healMessage = Self.healNoRoom }
                 self.removingPeople = false
                 self.peopleFound = nil
                 self.peopleChosen = []
