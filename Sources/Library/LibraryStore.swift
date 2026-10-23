@@ -84,6 +84,8 @@ final class LibraryStore: ObservableObject {
     private var batchRunning = false
     nonisolated(unsafe) private var batchPausing = false
     nonisolated(unsafe) private var batchCancel = false
+    /// A batch export can be cancelled (A19: only AI Denoise could be). The photos already done are kept.
+    nonisolated(unsafe) private var exportCancel = false
     private let batchDenoiseQueue = DispatchQueue(label: "lumen.denoise.batch", qos: .userInitiated)
     private var batchObservers: [NSObjectProtocol] = []
     /// Cleans that paused in the editor (Lumen left the screen or was swiped away): photo and how far it got.
@@ -768,9 +770,13 @@ final class LibraryStore: ObservableObject {
 
     // MARK: Batch export
 
+    /// Stops a running batch export after the current photo; what has already been exported is kept (A19).
+    func cancelExport() { exportCancel = true }
+
     /// Exports every photo in `list` one after another in the background, then offers them in `batchResult`.
     func export(_ list: [LibraryItem], options o: ExportOptions) {
         guard batchProgress == nil, !list.isEmpty else { return }
+        exportCancel = false
         batchProgress = (0, list.count)
         // editorSettings: a RAW never opened exports as the editor would show it (HDR on)
         let jobs = list.map { (url: fileURL($0), edits: editorSettings(for: $0), name: $0.displayName) }
@@ -784,6 +790,7 @@ final class LibraryStore: ObservableObject {
             var used = Set<String>()
             var failures: [String] = []   // A17: what went wrong, not just how many
             for (n, job) in jobs.enumerated() {
+                if exportCancel { break }   // A19: stop between photos; what's done is kept
                 autoreleasepool {
                     // Decode the way the editor would (checklist A14): "Include HDR" only controls the gain map,
                     // not the decode. Decoding SDR for an HDR-edited photo changed the pixels, so the same SDR
@@ -826,7 +833,8 @@ final class LibraryStore: ObservableObject {
                 guard let self else { return }
                 self.batchProgress = nil
                 if DemoMode.isOn { DemoMode.log("batch exported \(done.count) of \(jobs.count)") }
-                if done.count < jobs.count {
+                if exportCancel { self.lastError = "Export stopped after \(done.count) of \(jobs.count)." }
+                else if done.count < jobs.count {
                     let why = Array(Set(failures)).sorted()
                     self.lastError = "\(jobs.count - done.count) of \(jobs.count) photos could not be exported.\(why.isEmpty ? "" : "\n" + why.joined(separator: "\n"))"
                 }

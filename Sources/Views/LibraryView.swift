@@ -463,6 +463,10 @@ struct LibraryView: View {
             VStack(spacing: 10) {
                 ProgressView(value: Double(p.done), total: Double(max(p.total, 1))).frame(width: 160)
                 Text("Exporting \(min(p.done + 1, p.total)) of \(p.total)…").font(.footnote)
+                // A19: a batch export can now be stopped; the photos already done are kept.
+                Button("Stop") { store.cancelExport() }
+                    .font(.footnote.weight(.semibold))
+                    .accessibilityIdentifier("export-cancel")
             }
             .padding(22)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))

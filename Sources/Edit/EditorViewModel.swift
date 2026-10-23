@@ -1358,6 +1358,8 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var peopleChosen: Set<Int> = []
     /// Bumped by Cancel (or leaving Heal) so a search still running is ignored when it finishes.
     private var peopleSearch = 0
+    /// A running multi-person removal can be stopped (A19: only AI Denoise could). What is removed so far is kept.
+    nonisolated(unsafe) private var removePeopleCancel = false
 
     func findPeople() {
         guard !healBusy, let session else { return }
@@ -1426,6 +1428,9 @@ final class EditorViewModel: ObservableObject {
         requestRender()
     }
 
+    /// Stops a running multi-person removal between people (A19); the people already removed stay removed.
+    func cancelRemovingPeople() { removePeopleCancel = true }
+
     /// Removes the people picked, one heal each (each built on the ones before), all added as one undo step.
     func removeChosenPeople() {
         guard !healBusy, let session, let people = peopleFound else { return }
@@ -1434,6 +1439,7 @@ final class EditorViewModel: ObservableObject {
         let earlier = settings.effective.heals
         healBusy = true
         healBusyText = chosen.count == 1 ? "Removing…" : "Removing 1 of \(chosen.count)…"
+        removePeopleCancel = false
         freeMemoryForHeal()
         let mp = megapixels
         let item = self.item
@@ -1441,6 +1447,7 @@ final class EditorViewModel: ObservableObject {
             var made: [HealSpot] = []
             var failures: [HealFailure] = []
             for (i, person) in chosen.enumerated() {
+                if removePeopleCancel { break }   // A19: stop between people; what's removed stays removed
                 if i > 0 {
                     let text = "Removing \(i + 1) of \(chosen.count)…"
                     Task { @MainActor [weak self] in self?.healBusyText = text }
@@ -1454,12 +1461,13 @@ final class EditorViewModel: ObservableObject {
                     failures.append(EditSession.healFailure ?? .failed)
                 }
             }
-            let done = made, failed = failures
+            let done = made, failed = failures, stopped = removePeopleCancel
             Task { @MainActor [weak self] in
                 guard let self else { store?.addHeals(done, to: item); return }
                 self.peopleFound = nil
                 self.peopleChosen = []
-                if let first = failed.first {
+                if stopped { self.healMessage = "Stopped after \(done.count) of \(chosen.count)." }
+                else if let first = failed.first {
                     self.healMessage = done.isEmpty ? first.message
                         : "\(failed.count) of \(chosen.count) couldn't be removed. Paint over what's left to try again."
                 }
