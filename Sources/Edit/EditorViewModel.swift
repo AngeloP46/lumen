@@ -253,14 +253,19 @@ final class EditorViewModel: ObservableObject {
                 // phone, 23 Oct). Only when memory is truly critical does it go.
                 if !self.healBusy && !self.healPreparing && Diagnostics.availableMB < 500 { EditSession.releaseHealModel() }
                 // the 100 % copy goes even while zoomed in: a softer view is better than iOS closing Lumen
-                if self.detailSource != nil { self.releaseDetail(); Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
+                let droppedDetail = self.detailSource != nil
+                if droppedDetail { self.releaseDetail(); Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
                 // and no new try for a while: dropped, tried again at once, dropped again was how iOS closed Lumen (23 Oct)
                 self.detailRetry.hold(for: 30)
                 if !self.showOriginal { self.unhealedSource = nil }
-                self.renderAfterWarning?.cancel()
-                let again = DispatchWorkItem { [weak self] in self?.requestRender() }
-                self.renderAfterWarning = again
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: again)
+                // only for the pictures that changed with what was let go of (the zoomed-in copy, the original copy); Lumen's own
+                // let-go at 2.4 GB changes nothing on screen, and a redraw with the caches just cleared is the costliest one
+                if !BlackBox.shared.warningIsOwn || droppedDetail {
+                    self.renderAfterWarning?.cancel()
+                    let again = DispatchWorkItem { [weak self] in self?.requestRender() }
+                    self.renderAfterWarning = again
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: again)
+                }
             }
         }
         applyingHistory = true

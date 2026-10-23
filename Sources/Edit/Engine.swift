@@ -17,6 +17,18 @@ enum LumenGPU {
         return CIContext(options: opts)
     }()
 
+    /// The context the canvas draws and freezes with. Like `context`, but it does not keep the intermediate results of a
+    /// render: the shared one holds on to them (until `clearCaches`) so that the next render of the same graph is quicker,
+    /// and for a picture with Lens Blur, masks and HDR that is a gigabyte or more standing between frames (owner's phone,
+    /// 0.1.599, 18:09: 2.5 GB in use before a render storm ran out). Drawing is edit-by-edit anyway: the layers an edit
+    /// reads are bitmaps already, so there is little to reuse.
+    static let drawContext: CIContext = {
+        let opts: [CIContextOption: Any] = [.workingColorSpace: workingSpace, .workingFormat: CIFormat.RGBAh,
+                                            .cacheIntermediates: false]
+        if let q = queue { return CIContext(mtlCommandQueue: q, options: opts) }
+        return CIContext(options: opts)
+    }()
+
     /// Tests point this at a metallib built from Kernels.metal; the app finds default.metallib in its bundle.
     nonisolated(unsafe) static var libraryURL: URL?
 }

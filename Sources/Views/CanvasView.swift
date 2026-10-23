@@ -143,7 +143,7 @@ final class CanvasModel {
                                       attributes as CFDictionary, &buffer) == kCVReturnSuccess, let buffer else { return }
             BlackBox.shared.crumb("freeze picture")
             // no colour conversion either way: the values are the working space's, exactly as the graph gives them
-            LumenGPU.context.render(img, to: buffer, bounds: e, colorSpace: nil)
+            LumenGPU.drawContext.render(img, to: buffer, bounds: e, colorSpace: nil)
             let frozen = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])
                 .transformed(by: CGAffineTransform(translationX: e.minX, y: e.minY))
             DispatchQueue.main.async {
@@ -254,7 +254,7 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
             out = placed.composited(over: out)
         }
         let started = CACurrentMediaTime()
-        LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)
+        LumenGPU.drawContext.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)
         cb.present(drawable)
         inFlight += 1
         let photoShown = model.image != nil
