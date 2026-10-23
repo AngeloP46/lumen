@@ -43,7 +43,7 @@ jobs:
           xcrun -sdk macosx metallib -cikernel out/k.air -o out/k.metallib
           swiftc -Onone -g -o out/raw-matrix \
             Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift \
-            Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift Sources/Edit/Denoise.swift \
+            Sources/Edit/Engine.swift Sources/Edit/LoadedModel.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift Sources/Edit/Denoise.swift \
             Sources/Edit/Histogram.swift \
             Tests/rawmatrix/main.swift
       - name: Run
