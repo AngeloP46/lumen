@@ -128,6 +128,12 @@ final class HeavyWork: @unchecked Sendable {
         return work()
     }
 
+    /// Whether a job of this kind is running now.
+    func isRunning(_ kind: Kind) -> Bool {
+        condition.lock(); defer { condition.unlock() }
+        return running.contains { $0.kind == kind }
+    }
+
     private var runningNames: String {
         running.isEmpty ? "nothing" : running.map(\.kind.rawValue).joined(separator: ", ")
     }
