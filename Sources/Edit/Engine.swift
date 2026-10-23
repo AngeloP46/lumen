@@ -404,6 +404,9 @@ final class EditSession: @unchecked Sendable {
     private var denoiseValue: Double = 0
     /// Decoded in HDR mode (RAW with extended range, gain-map photos expanded): AI Denoise keeps one copy per mode.
     let hdrDecode: Bool
+    /// Which RAW decoder reads this photo (an iOS update can bring a new one, and the noise AI Denoise stored is only
+    /// right for the decoder it was made with; quality checklist B8). "plain" for JPEG, HEIC and the like.
+    let decoderTag: String
 
     // Look table cache
     private let cubeLock = NSLock()
@@ -431,6 +434,7 @@ final class EditSession: @unchecked Sendable {
             }
             raw = f
             plain = nil
+            decoderTag = f.decoderVersion.rawValue
             // the size AS SHOWN: CIRAWFilter.nativeSize is the sensor's (landscape) size even for a portrait photo,
             // which made Heal measure portrait RAWs sideways (wrong spot, black fills off the edge). The output's
             // extent at full scale has the orientation applied (nothing is rendered to read it).
@@ -439,6 +443,7 @@ final class EditSession: @unchecked Sendable {
         } else if let img = Self.loadPlain(url, expandHDR: expandHDR) {
             raw = nil
             plain = img
+            decoderTag = "plain"
             nativeSize = img.extent.size
         } else {
             return nil
