@@ -1338,12 +1338,12 @@ final class EditorViewModel: ObservableObject {
         if Diagnostics.availableMB < 1500 { EditSession.releaseMaskModels() }
     }
 
-    /// Keeps a preview of the original (no heals, no AI Denoise) while the photo has either, for hold-to-compare and
-    /// the split's before half (21 Oct review: with AI Denoise on they showed the cleaned photo). Built in the
-    /// background, not while a clean or the AI masks are running, dropped when neither is on.
     /// HDR mode of the original copy being made (nil = none).
     private var unhealedBuilding: Bool?
 
+    /// Keeps a preview of the original (no heals, no AI Denoise) while the photo has either, for hold-to-compare and
+    /// the split's before half (21 Oct review: with AI Denoise on they showed the cleaned photo). Built in the
+    /// background, not while a clean or the AI masks are running, dropped when neither is on.
     func refreshUnhealed() {
         let heals = settings.effective.heals
         let denoised = settings.effective.aiDenoise > 0 && denoiseReady
