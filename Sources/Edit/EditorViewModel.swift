@@ -69,6 +69,8 @@ final class EditorViewModel: ObservableObject {
     private var strokeOpen = false
     @Published private(set) var autoMaskBusy = false
     @Published private(set) var autoMaskMissing: Set<String> = []
+    /// AI steps that failed (as against ran and found nothing): the banner says so and offers "Try again" (A18).
+    @Published private(set) var autoMaskFailed: Set<String> = []
 
     // Crop editing: the whole straightened picture is shown with a frame on top
     @Published var cropEditing = false { didSet { requestRender() } }
@@ -225,6 +227,19 @@ final class EditorViewModel: ObservableObject {
         loadingSettings = false
         applyingHistory = false
         if let notice = store.takeLoadNotice(item) { message = notice }
+        // a heal that finished after an earlier editor of this photo closed is added to the file by the store; this
+        // editor read the file before that, so it takes the heals over (else its next save would overwrite them)
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: .lumenHealsAdded, object: nil, queue: .main) { [weak self] note in
+            guard let self, note.userInfo?["photo"] as? UUID == self.item.id, let spots = note.userInfo?["spots"] as? [HealSpot] else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let known = Set(self.settings.heals.map(\.id))
+                let fresh = spots.filter { !known.contains($0.id) }
+                guard !fresh.isEmpty else { return }
+                self.settings.heals.append(contentsOf: fresh)
+                self.settings.setOn(.heal, true)
+            }
+        })
         // Lumen leaving the screen may be the last chance to write: the edit waiting its 0.5 s goes now (checklist A5)
         lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
                                                                          object: nil, queue: .main) { [weak self] _ in
@@ -1042,6 +1057,7 @@ final class EditorViewModel: ObservableObject {
                 // new one is analysed now (it was skipped while this job was busy)
                 guard self.source === source else { self.prepareAutoMasksIfNeeded(); return }
                 self.autoMaskMissing = missing
+                self.autoMaskFailed = source.failures
                 if self.lensFocusPending, self.settings.lensBlur == askedBlur { self.finishLensFocus() }
                 self.syncDetailMasks()
                 self.requestRender()
@@ -1575,6 +1591,7 @@ final class EditorViewModel: ObservableObject {
     /// Why an AI mask part selects nothing on this photo (nil = it found something, is still looking, or isn't AI).
     func emptyReason(_ c: MaskComponent) -> String? {
         guard !autoMaskBusy else { return nil }
+        if let failed = failureReason(c) { return failed }
         let missing = autoMaskMissing
         switch c.kind {
         case .subject: return missing.contains(EditSession.aiSubject) ? "No subject found in this photo" : nil
@@ -1594,6 +1611,30 @@ final class EditorViewModel: ObservableObject {
             return "No \(ListFormatter.localizedString(byJoining: names)) found in this photo"
         default: return nil
         }
+    }
+
+    /// This mask part's AI step failed (not "found nothing"): says so, so the user knows trying again can help.
+    private func failureReason(_ c: MaskComponent) -> String? {
+        let keys: [String]
+        switch c.kind {
+        case .subject, .background: keys = [EditSession.aiSubject, EditSession.subjectKey(c.subjectPoint)]
+        case .sky: keys = [EditSession.aiSky, EditSession.aiScene]
+        case .people: keys = [EditSession.aiPeople]
+        case .depth: keys = [EditSession.aiDepth]
+        case .landscape: keys = [EditSession.aiScene]
+        default: return nil
+        }
+        guard keys.contains(where: { autoMaskFailed.contains($0) }) else { return nil }
+        return "The AI couldn't run on this photo (usually not enough memory). That isn't the same as finding nothing: try again."
+    }
+
+    /// Banner's "Try again": everything that failed is attempted once more.
+    func retryAI() {
+        source?.clearFailures()
+        autoMaskFailed = []
+        autoMaskMissing = []
+        Diagnostics.shared.note("AI masks: trying again after a failure")
+        prepareAutoMasksIfNeeded()
     }
 
     /// What the AI is still working out for `m`, shown on the photo so a tap on an automatic mask type never looks

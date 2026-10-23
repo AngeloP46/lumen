@@ -137,6 +137,20 @@ final class ImageSource: @unchecked Sendable {
     }
     func hasTried(_ key: String) -> Bool { lock.lock(); defer { lock.unlock() }; return tried.contains(key) }
 
+    /// An AI step that failed (the request threw, the model wouldn't load, no memory) as opposed to one that ran and found
+    /// nothing. Before, both came back as nil and were remembered as "tried", so a failure read "No people found in this
+    /// photo" and could never be retried (quality checklist A18).
+    private var failedKeys: Set<String> = []
+    func noteFailure(_ key: String) { lock.lock(); failedKeys.insert(key); lock.unlock() }
+    var failures: Set<String> { lock.lock(); defer { lock.unlock() }; return failedKeys }
+    /// Lets the AI try again for everything that failed.
+    func clearFailures() {
+        lock.lock(); defer { lock.unlock() }
+        tried.subtract(failedKeys)
+        for k in failedKeys { masks[k] = nil }
+        failedKeys = []
+    }
+
     /// Estimated depth (see Masks.swift computeDepth), kept for picking a depth by tapping and for the range graph.
     var depthField: DepthField? { lock.lock(); defer { lock.unlock() }; return depth }
     func storeDepth(_ d: DepthField?) { lock.lock(); defer { lock.unlock() }; if let d { depth = d } }

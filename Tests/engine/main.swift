@@ -598,6 +598,16 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         continue
     }
     opened += 1
+    // A failed AI step is told apart from one that found nothing, and can be tried again (quality checklist A18)
+    do {
+        source.storeMask(EditSession.aiPeople, nil)           // "ran, found nothing"
+        check(source.hasTried(EditSession.aiPeople) && source.failures.isEmpty, "\(stem): a step that found nothing is tried, not failed")
+        source.noteFailure(EditSession.aiPeople)               // "failed"
+        check(source.failures == [EditSession.aiPeople], "\(stem): a failure is recorded")
+        source.clearFailures()
+        check(!source.hasTried(EditSession.aiPeople) && source.failures.isEmpty, "\(stem): clearing failures lets the step run again")
+        check(source.snapshotMasks().masks[EditSession.aiPeople] == nil, "\(stem): a cleared failure leaves no stale mask")
+    }
     let t2 = now()
     print("\(stem): native \(session.nativeSize) preview \(source.size) open \(Int((t1 - t0) * 1000))ms source \(Int((t2 - t1) * 1000))ms air \(source.air) dn \(source.darkNorm)")
 
