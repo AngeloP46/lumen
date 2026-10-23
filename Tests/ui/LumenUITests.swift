@@ -641,7 +641,7 @@ final class LumenUITests: XCTestCase {
     /// pinching. Every pinch step used to ask again, and 13 builds in a minute is how iOS closed Lumen on the owner's
     /// phone. Now: no build at all, and the question is asked once, not on every step.
     func testZoomWithoutRoomForTheFullSizeCopyDoesNotKeepTrying() {
-        launch(open: 0, tool: "Detail", extra: ["-lumenDemoMemoryMB", "2500"])
+        launch(open: 2, tool: "Detail", extra: ["-lumenDemoMemoryMB", "2500"])   // the sample ARW (24 MP)
         for _ in 0..<3 {
             el("photo").pinch(withScale: 2.5, velocity: 2)
             el("photo").pinch(withScale: 0.5, velocity: -2)
@@ -658,7 +658,7 @@ final class LumenUITests: XCTestCase {
 
     /// With room for it, the 100 % copy is built once and kept while the user stays zoomed in.
     func testZoomWithRoomBuildsTheFullSizeCopyOnce() {
-        launch(open: 0, tool: "Detail", extra: ["-lumenDemoMemoryMB", "4400"])
+        launch(open: 2, tool: "Detail", extra: ["-lumenDemoMemoryMB", "4400"])   // the sample ARW (24 MP)
         el("photo").pinch(withScale: 2.5, velocity: 2)
         sleep(4)
         el("photo").pinch(withScale: 1.3, velocity: 1)
