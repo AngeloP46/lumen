@@ -14,7 +14,7 @@ final class BlackBox: @unchecked Sendable {
 
     /// Memory (MB) from which lines are recorded, and from which Lumen sheds by itself.
     static let recordFromMB = 1400
-    static let shedFromMB = 2400
+    static var shedFromMB: Int { MemoryBudget.careful ? 2000 : 2400 }
 
     private let queue = DispatchQueue(label: "lumen.blackbox", qos: .utility)
     private let lock = NSLock()
