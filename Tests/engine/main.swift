@@ -254,6 +254,7 @@ if args.contains("--rawprobe-url") || args.contains("--rawprobe-bytes") {
             guard let f = filter else { print("::notice::RAWPROBE no filter"); return }
             f.scaleFactor = scale
             f.extendedDynamicRangeAmount = hdr ? 2.0 : 1.0
+            if args.contains("--draft") { f.isDraftModeEnabled = true }
             guard let img = f.outputImage else { print("::notice::RAWPROBE no image"); return }
             let e = img.extent
             let w = Int(e.width), h = Int(e.height)
@@ -264,11 +265,13 @@ if args.contains("--rawprobe-url") || args.contains("--rawprobe-bytes") {
             print("::notice::RAWPROBE decoded \(w)x\(h), checksum \(sum)")
         }
     }
-    let mode = useBytes ? "BYTES" : "URL"
+    let mode = (useBytes ? "BYTES" : "URL") + (args.contains("--draft") ? " DRAFT" : "")
     let start = footprintMB()
     for (scale, hdr) in [(0.43, true), (0.43, false), (0.68, true), (1.0, false), (0.43, true)] as [(Float, Bool)] {
         let b = footprintMB()
+        let t0 = Date()
         decode(scale: scale, hdr: hdr)
+        print("::notice::RAWPROBE took \(String(format: "%.2f", Date().timeIntervalSince(t0))) s")
         ctx.clearCaches()
         print("::notice::RAWPROBE \(mode) scale \(scale) hdr \(hdr): left behind \(footprintMB() - b) MB (total over start \(footprintMB() - start))")
     }

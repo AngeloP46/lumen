@@ -83,8 +83,7 @@ jobs:
           export LUMEN_TREES_SAMPLE="$PWD/people/building.jpg"
           EXTRA=""
           if [ "$ENGINE_TEST_ONLY" = "lens-blur" ]; then EXTRA="--lens-blur"; fi
-          ./out/engine-test out/k.metallib samples out/render --rawprobe-url
-          ./out/engine-test out/k.metallib samples out/render --rawprobe-bytes
+          ./out/engine-test out/k.metallib samples out/render --rawprobe-url --draft
           exit 0
           code=$?
           echo "engine-test exit code: $code"
