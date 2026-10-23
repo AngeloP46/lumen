@@ -5,7 +5,7 @@ import os
 import ImageIO
 
 /// AI Denoise: SCUNet's real-noise model (cszn/SCUNet, Apache-2.0), converted to Core ML in CI
-/// (.github/ci/denoise-convert, 512 x 512 tiles, float16), run on the GPU. History (20 Oct): SCUNet on the Neural
+/// (.github/ci/denoise-convert, 256 x 256 tiles since 23 Oct (512 before), float16), run on the GPU. History (20 Oct): SCUNet on the Neural
 /// Engine never got a quarter through a 24 MP photo in 100 s (its attention layers don't suit it); NAFNet-SIDD was
 /// quick there but left half the noise and wrecked bright tiles (float16 overflow). The owner wants one model that
 /// is good and quick, using the phone's chips to the full: SCUNet's quality on the GPU.
@@ -313,10 +313,14 @@ extension EditSession {
         cfg.allowLowPrecisionAccumulationOnGPU = true
         return try? MLModel(contentsOf: url, configuration: cfg)
     }
+    /// True while the model is loaded and has run one tile.
+    nonisolated(unsafe) static var denoiseWarm = false
     /// Loads the model and runs one blank tile, so the GPU's one-off setup (owner's phone, 0.1.388: 10 s load + 10 s
-    /// first tile) happens while Detail is open, before the button is tapped. Returns the seconds it took.
+    /// first tile) happens while Detail is open, before the button is tapped. Returns the seconds it took (0: it was
+    /// ready already).
     @discardableResult
     static func warmDenoise() -> Double {
+        if denoiseWarm { return 0 }
         let t0 = Date()
         guard let model = denoiseModel.model,
               let shape = model.modelDescription.inputDescriptionsByName["image"]?.multiArrayConstraint?.shape,
@@ -324,6 +328,7 @@ extension EditSession {
               let features = try? MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(multiArray: blank)]) else { return 0 }
         memset(blank.dataPointer, 0, blank.count * 2)
         _ = try? model.prediction(from: features)
+        denoiseWarm = true
         return Date().timeIntervalSince(t0)
     }
     /// The same model on the CPU (full precision), for a tile the GPU got wrong.
@@ -349,8 +354,12 @@ extension EditSession {
     nonisolated(unsafe) static var denoiseTimings = ""
     /// Only looks for the model's files (the Detail panel asks while drawing).
     static var hasDenoiseModel: Bool { modelFilesExist(denoiseModelURL) }
-    /// Lets go of the model (it is only needed while photos are being cleaned).
-    static func releaseDenoiseModel() { denoiseModel.release(); denoiseCPU.release() }
+    /// Lets go of the model. Only for a memory warning: Core ML does not give the model's memory back when it is let go
+    /// (owner's phone, 0.1.599: ~130 MB of ~1 GB came back, and loading the model again took another ~1.1 GB on top, so
+    /// two loads in a session closed Lumen), so the loaded model is kept for the session and used again.
+    static func releaseDenoiseModel() { denoiseModel.release(); denoiseCPU.release(); denoiseWarm = false }
+    /// The CPU copy only needs to live as long as the tiles it redoes.
+    static func releaseDenoiseFallback() { denoiseCPU.release() }
 
     /// Whether this photo has been cleaned (any HDR mode since 21 Oct).
     var hasDenoised: Bool { DenoiseStore.info(originalURL, hdr: hdrDecode, size: nativeSize, decoder: decoderTag) != nil }

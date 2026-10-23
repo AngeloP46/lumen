@@ -300,7 +300,7 @@ extension EditSession {
         if denoiseAmount > 0, !hasDenoised, Self.hasDenoiseModel {
             guard allowClean else { return .failed(.denoiseMissing) }
             let ok = makeDenoised() == .done
-            Self.releaseDenoiseModel()
+            Self.releaseDenoiseFallback()
             // never quietly export without the AI Denoise that was asked for
             guard ok else { return .failed(.denoiseMissing) }
         }
