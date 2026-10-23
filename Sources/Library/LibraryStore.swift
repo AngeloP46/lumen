@@ -794,8 +794,14 @@ final class LibraryStore: ObservableObject {
                     let outcome: EditSession.ExportOutcome? = HeavyWork.shared.run(.export, megapixels: mp) {
                         session.renderDataOutcome(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
                     }
+                    let state: String
+                    switch outcome {
+                    case .data: state = "done"
+                    case .failed: state = "failed"
+                    case nil: state = "out of memory"
+                    }
                     Diagnostics.shared.note(String(format: "batch export %d of %d %@ in %.1f s (%.0f MP)", n + 1, jobs.count,
-                                                   outcome == nil ? "out of memory" : (outcome?.data != nil ? "done" : "failed"), Date().timeIntervalSince(started), mp))
+                                                   state, Date().timeIntervalSince(started), mp))
                     var data: Data?
                     switch outcome {
                     case .data(let d): data = d
