@@ -144,7 +144,7 @@ final class LumenUITests: XCTestCase {
         let dir = env["DEMO_DIR"] ?? "/tmp/demo"
         logPath = (env["OUT_DIR"] ?? NSTemporaryDirectory()) + "/events-\(UUID().uuidString).log"
         app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoOpen", "\(open)", "-lumenDemoTool", tool,
-                               "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra
+                               "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra + memoryArguments(extra)
         app.launch()
         XCTAssertTrue(el("photo").waitForExistence(timeout: 60), "editor did not open")
         sleep(3)   // let the photo load
@@ -161,13 +161,22 @@ final class LumenUITests: XCTestCase {
         shot("tester-expired")
     }
 
+    /// B1: the simulator reports no memory limit, so every test runs as a low-memory phone and the standard-phone paths
+    /// (the 100 % copy, the memory gates) are never exercised. A run with `memory=3400` (uitest.yml input) pretends the phone
+    /// gives Lumen that many MB, unless the test sets its own.
+    func memoryArguments(_ extra: [String]) -> [String] {
+        guard !extra.contains("-lumenDemoMemoryMB"),
+              let mb = ProcessInfo.processInfo.environment["MEMORY_MB"], !mb.isEmpty else { return [] }
+        return ["-lumenDemoMemoryMB", mb]
+    }
+
     /// Opens the app on the library (no photo open). The demo library always holds exactly the sample photos.
     func launchLibrary(extra: [String] = []) {
         app = XCUIApplication()
         let env = ProcessInfo.processInfo.environment
         let dir = env["DEMO_DIR"] ?? "/tmp/demo"
         logPath = (env["OUT_DIR"] ?? NSTemporaryDirectory()) + "/events-\(UUID().uuidString).log"
-        app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra
+        app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra + memoryArguments(extra)
         app.launch()
         XCTAssertTrue(el("library-item").waitForExistence(timeout: 60), "library did not show any photos")
         sleep(3)
@@ -635,6 +644,38 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground)
         XCTAssertTrue(el("photo").exists)
         shot("low-memory-zoom")
+    }
+
+    /// A21 (23 Oct): too little room for the 100 % copy (it costs ~2.1 GB at 24 MP on the phone) and the user keeps
+    /// pinching. Every pinch step used to ask again, and 13 builds in a minute is how iOS closed Lumen on the owner's
+    /// phone. Now: no build at all, and the question is asked once, not on every step.
+    func testZoomWithoutRoomForTheFullSizeCopyDoesNotKeepTrying() {
+        launch(open: 2, tool: "Detail", extra: ["-lumenDemoMemoryMB", "2500"])   // the sample ARW (24 MP)
+        for _ in 0..<3 {
+            el("photo").pinch(withScale: 2.5, velocity: 2)
+            el("photo").pinch(withScale: 0.5, velocity: -2)
+        }
+        sleep(2)
+        let log = events()
+        let building = log.filter { $0.contains("detail: building") }.count
+        let noRoom = log.filter { $0.contains("detail: no room") }.count
+        XCTAssertEqual(building, 0, "no 100 % copy should be built without room for it: \(log)")
+        XCTAssertGreaterThanOrEqual(noRoom, 1, "zooming in should have asked for the copy and found no room: \(log)")
+        XCTAssertLessThanOrEqual(noRoom, 2, "a failed try must not be repeated on every pinch step (\(noRoom) tries): \(log)")
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    /// With room for it, the 100 % copy is built once and kept while the user stays zoomed in.
+    func testZoomWithRoomBuildsTheFullSizeCopyOnce() {
+        launch(open: 2, tool: "Detail", extra: ["-lumenDemoMemoryMB", "4400"])   // the sample ARW (24 MP)
+        el("photo").pinch(withScale: 2.5, velocity: 2)
+        sleep(4)
+        el("photo").pinch(withScale: 1.3, velocity: 1)
+        sleep(3)
+        let building = events().filter { $0.contains("detail: building") }.count
+        XCTAssertEqual(building, 1, "the 100 % copy should be built once, not on every pinch step: \(events())")
+        XCTAssertGreaterThan(zoomLevel(), 1.5)
+        XCTAssertEqual(app.state, .runningForeground)
     }
 
     func testPinchZoomsAndDoubleTapToggles() {
