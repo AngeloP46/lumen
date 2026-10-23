@@ -447,6 +447,7 @@ struct EditorView: View {
 
     private var canvas: some View {
         photoArea
+        .modifier(ExportWithoutLensDialog(vm: vm))
         .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
         .overlay(alignment: .topLeading) {
             if showHistogram && !chromeHidden {
@@ -1067,5 +1068,24 @@ struct ExportSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
         }
         .presentationDetents([.medium])
+    }
+}
+
+/// Lens Blur is on but its depth estimate could not be made, so the export could not be: offer to export without the blur
+/// (the saved edit keeps it). A modifier of its own so the editor's body stays quick to type-check.
+private struct ExportWithoutLensDialog: ViewModifier {
+    @ObservedObject var vm: EditorViewModel
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Lens Blur couldn't be prepared",
+                                   isPresented: Binding(get: { vm.offerExportWithoutLens != nil }, set: { if !$0 { vm.offerExportWithoutLens = nil } }),
+                                   titleVisibility: .visible) {
+            if let o = vm.offerExportWithoutLens {
+                Button("Export without Lens Blur") { vm.offerExportWithoutLens = nil; vm.export(o, withoutLensBlur: true) }
+                    .accessibilityIdentifier("export-without-lens")
+            }
+            Button("Cancel", role: .cancel) { vm.offerExportWithoutLens = nil }
+        } message: {
+            Text("The depth estimate Lens Blur needs couldn't be made for this photo. The edit keeps Lens Blur on; only this export leaves it out.")
+        }
     }
 }
