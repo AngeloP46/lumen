@@ -873,6 +873,7 @@ final class EditorViewModel: ObservableObject {
             // zoom fires this on every pinch step: note it once, and don't ask again for a while
             if native > source.longEdge * 1.15 {
                 detailRetry.hold(for: 12)
+                if DemoMode.isOn { DemoMode.log("detail: no room (\(left) MB left, needs \(enough))") }
                 if !detailSkipNoted {
                     detailSkipNoted = true
                     Diagnostics.shared.note("100% view: no full-size copy, only \(left) MB left (needs ~\(enough))")
@@ -885,6 +886,7 @@ final class EditorViewModel: ObservableObject {
         detailLoading = true
         BlackBox.shared.crumb("100% view copy")
         Diagnostics.shared.note("100% view: building \(Int(edge)) px copy")
+        if DemoMode.isOn { DemoMode.log("detail: building \(Int(edge))") }
         let generation = loadGeneration
         let mp = megapixels
         workQueue.async {
