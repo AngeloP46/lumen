@@ -34,6 +34,9 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
     func start() {
         guard !started else { return }
         started = true
+        // the flight recorder's lines from the previous run (read before this run starts its own)
+        let blackBoxLines = BlackBox.shared.previousLines(in: dir)
+        BlackBox.shared.start(in: dir)
         // the previous run never reached the background: iOS (or a crash) closed it while it was on screen
         if let state = try? String(contentsOf: stateURL, encoding: .utf8), state.hasPrefix("open") {
             // "open <time> <MB>": written every 2 s while on screen (21 Oct review: the ended time used to be the last
@@ -41,6 +44,8 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
             closedDuringLastRun = true
             let parts = state.split(separator: " ")
             let seen = parts.count >= 3 ? " (last seen \(parts[1]) using \(parts[2]) MB)" : ""
+            // what memory did in its last seconds (every 0.1 s while it was high): the 2 s samples miss a spike
+            if !blackBoxLines.isEmpty { queue.async { [self] in for l in blackBoxLines { writeRaw(l) } } }
             note("previous run ended while Lumen was open\(seen): closed by iOS for memory, a crash, or the phone went off")
         }
         let info = Bundle.main.infoDictionary
@@ -60,7 +65,8 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
             self?.note("foreground"); self?.setState("open")
         }
         nc.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.note("iOS memory warning")
+            // Lumen makes one itself when memory passes 2.4 GB (BlackBox): iOS' own comes later, often too late
+            self?.note(BlackBox.shared.warningIsOwn ? "Lumen's own memory check" : "iOS memory warning")
         }
         // Cheap: one system call every 2 s, a line only when memory moved by 150 MB or is running low.
         sampler = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.sample() }
@@ -120,7 +126,12 @@ final class Diagnostics: NSObject, MXMetricManagerSubscriber, @unchecked Sendabl
     /// On `queue` only.
     private func write(_ line: String) {
         lastLoggedMB = Self.footprintMB
-        let text = "\(Self.stamp.string(from: Date()))  \(line)\n"
+        writeRaw("\(Self.stamp.string(from: Date()))  \(line)")
+    }
+
+    /// On `queue` only: a line that already carries its time stamp.
+    private func writeRaw(_ line: String) {
+        let text = line + "\n"
         guard let data = text.data(using: .utf8) else { return }
         if let h = try? FileHandle(forWritingTo: logURL) {
             defer { try? h.close() }

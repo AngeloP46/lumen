@@ -463,6 +463,12 @@ final class EditorViewModel: ObservableObject {
                 // open held ~600 MB, and iOS closed Lumen when it came back to the screen)
                 EditSession.releaseDenoiseModel()
                 UIApplication.shared.isIdleTimerDisabled = false   // even if the editor has gone
+                // where memory settles after a clean (0.1.533: ~1 GB stayed in use with the model gone, then a Lens Blur
+                // redraw or the Heal model on top went past the limit)
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    Diagnostics.shared.note("4 s after AI Denoise ended: memory has settled")
+                }
                 guard let self else { return }
                 self.denoiseProgress = nil
                 self.denoiseSecondsLeft = nil
@@ -553,6 +559,7 @@ final class EditorViewModel: ObservableObject {
         let sameHeals = heals.map(\.id) == sourceHeals || DemoMode.value("-lumenDemoLensDepth") != nil
         // every decode is in the log with the memory it ran at: 23 Oct, the 48 MP photo's memory went 1.4 → 2.8 → 3.1 GB in
         // the seconds after a clean and nothing said which step it was
+        BlackBox.shared.crumb("preview decode")
         Diagnostics.shared.note("preview decode: start (HDR \(wantsHDR), heals \(heals.count), AI Denoise \(Int(denoise * 100)))")
         let reloadBegan = Date()
         workQueue.async {
@@ -668,6 +675,7 @@ final class EditorViewModel: ObservableObject {
     /// Rebuilds the (lazy) graph and hands it to the Metal view. Cheap enough to call on every slider tick.
     func requestRender() {
         guard let session, let source else { return }
+        BlackBox.shared.crumb("render")
         let buildStart = CACurrentMediaTime()
         defer { if renderTimes.count < 5000 { renderTimes.append((CACurrentMediaTime() - buildStart) * 1000) } }
         if let opened = openedAt {
@@ -773,7 +781,7 @@ final class EditorViewModel: ObservableObject {
 
     /// Zooming in asks for the 100 % view, so what can be made again goes first: the original copy, the mask and Heal
     /// models and the GPU caches (a few hundred MB to a gigabyte after a heal or the AI masks).
-    private func freeMemoryForDetail() {
+    fileprivate func freeMemoryForDetail() {
         unhealedSource = nil
         LumenGPU.context.clearCaches()
         EditSession.releaseMaskModels()
@@ -824,6 +832,7 @@ final class EditorViewModel: ObservableObject {
         detailSkipNoted = false
         detailBuilding = true
         detailLoading = true
+        BlackBox.shared.crumb("100% view copy")
         Diagnostics.shared.note("100% view: building \(Int(edge)) px copy")
         let generation = loadGeneration
         let mp = megapixels
@@ -1298,11 +1307,31 @@ final class EditorViewModel: ObservableObject {
     func prepareHeal() {
         guard !healPreparing, !EditSession.healModelReady, EditSession.hasHealModel else { return }
         healPreparing = true
-        DispatchQueue.global(qos: .userInitiated).async {
-            Diagnostics.shared.note("heal model loading")
-            EditSession.prepareHealModel()
-            Diagnostics.shared.note("heal model ready \(EditSession.healModelReady)")
-            Task { @MainActor [weak self] in self?.healPreparing = false }
+        BlackBox.shared.crumb("Heal tool opened")
+        // Not at the very moment the tool opens, and not without room: the panel appearing redraws the photo, loading the
+        // model is itself a spike of 2 GB or more, and on 23 Oct Lumen was closed three times in 20 s right at "heal
+        // model loading". With less room than it needs the model loads when the first fix is made instead, inside the
+        // heavy-work coordinator (which lets go of what it can first).
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let self else { return }
+            let enough = 2600
+            if Diagnostics.availableMB < enough {
+                self.freeMemoryForDetail()
+                try? await Task.sleep(nanoseconds: 700_000_000)
+            }
+            guard Diagnostics.availableMB >= enough - 300 else {
+                Diagnostics.shared.note("heal model: not loaded yet, only \(Diagnostics.availableMB) MB left (it loads with the first fix)")
+                self.healPreparing = false
+                return
+            }
+            DispatchQueue.global(qos: .userInitiated).async {
+                BlackBox.shared.crumb("heal model load")
+                Diagnostics.shared.note("heal model loading")
+                EditSession.prepareHealModel()
+                Diagnostics.shared.note("heal model ready \(EditSession.healModelReady)")
+                Task { @MainActor [weak self] in self?.healPreparing = false }
+            }
         }
     }
     fileprivate var healWaitingForReload = false
@@ -1392,6 +1421,7 @@ final class EditorViewModel: ObservableObject {
         unhealedSource = nil
         let hdr = settings.hdr
         let generation = loadGeneration
+        BlackBox.shared.crumb("original copy")
         Diagnostics.shared.note("original copy (no heals, no AI Denoise): making it")
         let mp = megapixels
         workQueue.async {
