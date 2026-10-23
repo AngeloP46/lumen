@@ -131,6 +131,15 @@ struct HealOverlay: View {
             .allowsHitTesting(false)
             .accessibilityIdentifier("heal-busy")
         }
+        // A19: while people are being removed, a Stop button goes below the badge (what's removed stays removed).
+        if vm.healBusy, vm.removingPeople {
+            Button("Stop") { vm.cancelRemovingPeople() }
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 14).padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: Capsule())
+                .position(x: xform.canvas.width / 2, y: max(xform.rect.minY, 0) + 192)
+                .accessibilityIdentifier("people-remove-cancel")
+        }
     }
 
     /// Screen points per source pixel.

@@ -56,10 +56,34 @@ final class CanvasModel {
     /// Called on the main thread with the screen's (current, potential) EDR headroom when either changes by more than
     /// 5% (HDR mode only).
     var onHeadroom: ((CGFloat, CGFloat) -> Void)?
+    private var activeObserver: NSObjectProtocol?
+    init() {
+        // iOS refuses GPU work in the background: a frame asked for then is lost, so the picture is drawn again when
+        // the app is back on screen (nothing else would ask: SwiftUI updates no longer redraw it)
+        activeObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.redrawAll()
+        }
+    }
+    deinit { if let o = activeObserver { NotificationCenter.default.removeObserver(o) } }
+    func redrawAll() { for v in views.allObjects where v.window != nil { v.setNeedsDisplay() } }
+    /// Called once, after the next frame has been drawn (diagnostics: open → first frame).
+    var onFirstFrame: (() -> Void)?
+
+    /// How long each frame took from asking the GPU to drawn (milliseconds), for diagnostics (checklist F).
+    private var frameTimes: [Double] = []
+    func recordFrame(_ ms: Double) {
+        if frameTimes.count < 5000 { frameTimes.append(ms) }
+        if let f = onFirstFrame { onFirstFrame = nil; f() }
+    }
+    func frameStats() -> (count: Int, median: Double, p95: Double, max: Double) {
+        let s = frameTimes.sorted()
+        guard !s.isEmpty else { return (0, 0, 0, 0) }
+        return (s.count, s[s.count / 2], s[min(s.count - 1, s.count * 95 / 100)], s.last ?? 0)
+    }
 
     func update(_ img: CIImage?) {
         image = img
-        for v in views.allObjects where v.window != nil { v.setNeedsDisplay() }
+        redrawAll()
     }
 }
 
@@ -156,12 +180,16 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
             }
             out = placed.composited(over: out)
         }
+        let started = CACurrentMediaTime()
         LumenGPU.context.render(out, to: drawable.texture, commandBuffer: cb, bounds: bounds, colorSpace: colorSpace)
         cb.present(drawable)
         inFlight += 1
+        let photoShown = model.image != nil
         cb.addCompletedHandler { [weak self, weak view] _ in
+            let ms = (CACurrentMediaTime() - started) * 1000
             DispatchQueue.main.async {
                 guard let self else { return }
+                if photoShown { self.model.recordFrame(ms) }
                 self.inFlight -= 1
                 if self.redrawWaiting { self.redrawWaiting = false; view?.setNeedsDisplay() }
             }
@@ -223,13 +251,20 @@ struct CanvasView: UIViewRepresentable {
         // thrown away along the way could leave the model with no view (it is weak), so edits rendered into nothing
         // until something else redrew the screen (owner's bug report 2026-10-11).
         model.view = v
+        // B7: ask for a redraw only when the layout actually changed (zoom / pan / size / HDR). Unrelated SwiftUI
+        // updates (a slider elsewhere, a label, the progress ring) used to redraw the whole photo on the GPU here
+        // on every pass, competing with AI Denoise for the frame. Image changes and view resizes already trigger
+        // their own redraws (CanvasModel.update, drawableSizeWillChange), so skipping this one is safe.
+        let layoutChanged = context.coordinator.xform != xform
         context.coordinator.xform = xform
         if context.coordinator.hdrOn != hdr {
             context.coordinator.hdrOn = hdr
             CanvasView.configure(v, renderer: context.coordinator, hdr: hdr)
             context.coordinator.trackHeadroom(hdr, view: v)
+            v.setNeedsDisplay()
+        } else if layoutChanged {
+            v.setNeedsDisplay()
         }
         model.view = v
-        v.setNeedsDisplay()
     }
 }

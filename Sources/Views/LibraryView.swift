@@ -43,13 +43,15 @@ struct LibraryView: View {
     @State private var selecting = false
     @State private var selection: Set<UUID> = []
     @State private var confirmDelete = false
+    /// Long-press → Remove asks first too (it removed the photo at once before 22 Oct: checklist A3).
+    @State private var confirmRemove: LibraryItem?
     @State private var showBatchExport = false
     @State private var showDiagnostics = false
     @State private var notice: String?
     /// Pasting edits that include AI Denoise asks first (it needs a clean of each photo).
-    @State private var denoisePaste: (list: [LibraryItem], keepOwn: Bool, masks: Bool)?
-    /// Photos "Choose…" pastes onto (shows the Paste some edits sheet).
-    @State private var choosePaste: [LibraryItem]?
+    @State private var denoisePaste: [LibraryItem]?
+    /// The photo Copy edits… is choosing from (shows the Copy edits sheet).
+    @State private var copyFrom: LibraryItem?
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
 
@@ -128,6 +130,7 @@ struct LibraryView: View {
                     }
                     store.clipboard = nil
                 }
+                store.runPersistenceChecksIfRequested()
                 if let n = DemoMode.value("-lumenDemoOpen"), let i = Int(n), store.items.indices.contains(i) {
                     path = [store.items[i]]
                 }
@@ -140,36 +143,33 @@ struct LibraryView: View {
             .overlay { progressOverlay }
             .overlay(alignment: .bottom) { denoiseBanner }
             .onAppear { store.refreshPausedCleans() }
-            .sheet(isPresented: Binding(get: { choosePaste != nil }, set: { if !$0 { choosePaste = nil } })) {
-                if let list = choosePaste, let clip = store.clipboard {
-                    PasteSomeSheet(clip: clip, photos: list.count) { sections, denoise in
-                        store.apply(sections, from: clip, to: list)
-                        if denoise { store.cleanWithAIDenoise(list, strength: clip.aiDenoise) }
-                        show("Edits pasted onto \(list.count) photo\(list.count == 1 ? "" : "s").")
-                    }
+            .sheet(item: $copyFrom) { item in
+                CopyEditsSheet(settings: store.editorSettings(for: item), sourceName: item.displayName, sourceID: item.id) { clip in
+                    store.clipboard = clip
+                    show("Copied \(clip.summary). Select photos and tap Paste.")
                 }
             }
             .confirmationDialog("Paste AI Denoise too?", isPresented: Binding(get: { denoisePaste != nil }, set: { if !$0 { denoisePaste = nil } }),
                                 titleVisibility: .visible) {
-                if let d = denoisePaste, let clip = store.clipboard {
-                    let n = min(d.list.count, LibraryStore.denoiseBatchCap)
+                if let list = denoisePaste, let clip = store.clipboard {
+                    let n = min(list.count, LibraryStore.denoiseBatchCap)
                     Button("Paste and clean \(n == 1 ? "it" : "\(n) photos") (\(denoiseMinutes(n)))") {
-                        store.apply(clip, to: d.list, keepOwn: d.keepOwn, masks: d.masks)
-                        store.cleanWithAIDenoise(d.list, strength: clip.aiDenoise)
+                        store.paste(clip, to: list)
+                        store.cleanWithAIDenoise(list, strength: clip.settings.aiDenoise)
                         denoisePaste = nil
                     }
                     Button("Paste without AI Denoise") {
-                        store.apply(clip, to: d.list, keepOwn: d.keepOwn, masks: d.masks)
-                        show("Edits pasted onto \(d.list.count) photo\(d.list.count == 1 ? "" : "s"), without AI Denoise.")
+                        store.paste(clip, to: list)
+                        show("Pasted onto \(list.count) photo\(list.count == 1 ? "" : "s"), without AI Denoise.")
                         denoisePaste = nil
                     }
                     Button("Cancel", role: .cancel) { denoisePaste = nil }
                 }
             } message: {
-                if let d = denoisePaste {
-                    let n = min(d.list.count, LibraryStore.denoiseBatchCap)
+                if let list = denoisePaste {
+                    let n = min(list.count, LibraryStore.denoiseBatchCap)
                     Text("AI Denoise cleans each photo on its own: \(denoiseMinutes(n)). "
-                         + (d.list.count > LibraryStore.denoiseBatchCap ? "At most \(LibraryStore.denoiseBatchCap) photos at a time: the first \(n) of the \(d.list.count) selected get it. " : "")
+                         + (list.count > LibraryStore.denoiseBatchCap ? "At most \(LibraryStore.denoiseBatchCap) photos at a time: the first \(n) of the \(list.count) selected get it. " : "")
                          + "Progress shows here; leaving Lumen pauses it and it carries on when you're back.")
                 }
             }
@@ -207,6 +207,17 @@ struct LibraryView: View {
             } message: {
                 Text("Their edits are removed too. The originals in Photos or Files are not touched.")
             }
+            .confirmationDialog("Remove this photo from Lumen?", isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } }),
+                                titleVisibility: .visible) {
+                if let item = confirmRemove {
+                    Button("Remove photo", role: .destructive) { store.delete(item); confirmRemove = nil }
+                        .accessibilityIdentifier("confirm-remove")
+                }
+                Button("Cancel", role: .cancel) { confirmRemove = nil }
+            } message: {
+                Text("Its edits are removed too. The original in Photos or Files is not touched.")
+            }
+            .overlay(alignment: .top) { SaveProblemBanner() }
             .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
             .sheet(isPresented: $showBatchExport) {
                 let list = selectedItems
@@ -281,21 +292,18 @@ struct LibraryView: View {
             NavigationLink(value: item) { ThumbnailView(item: item) }
                 .accessibilityIdentifier("library-item")
                 .contextMenu {
-                    Button { store.clipboard = store.settings(for: item); show("Edits copied. Select photos to paste them onto.") } label: {
-                        Label("Copy edits", systemImage: "doc.on.doc")
+                    Button { copyFrom = item } label: {
+                        Label("Copy edits…", systemImage: "doc.on.doc")
                     }
                     if let clip = store.clipboard {
-                        Button { paste(clip, to: [item], keepOwn: true) } label: {
-                            Label("Paste the look", systemImage: "doc.on.clipboard")
-                        }
-                        Button { choosePaste = [item] } label: {
-                            Label("Choose edits to paste…", systemImage: "checklist")
+                        Button { paste(clip, to: [item]) } label: {
+                            Label { Text("Paste edits"); Text(clip.summary) } icon: { Image(systemName: "doc.on.clipboard") }
                         }
                     }
                     Button { selecting = true; selection = [item.id] } label: {
                         Label("Select", systemImage: "checkmark.circle")
                     }
-                    Button(role: .destructive) { store.delete(item) } label: {
+                    Button(role: .destructive) { confirmRemove = item } label: {
                         Label("Remove from Lumen", systemImage: "trash")
                     }
                 }
@@ -338,36 +346,27 @@ struct LibraryView: View {
 
     private var selectionBar: some View {
         VStack(spacing: 4) {
-            if store.clipboard == nil {
-                Text("To paste edits onto many photos, first copy them: ⋯ menu in a photo, or long-press one here.")
-                    .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal, 12)
+            // what Paste will do, or how to get something to paste
+            Group {
+                if let clip = store.clipboard {
+                    Text("Paste: \(clip.summary) (from \(clip.sourceName))")
+                } else {
+                    Text("Select one photo and tap Copy to choose edits to paste onto others.")
+                }
             }
+            .font(.caption2).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.center).padding(.horizontal, 12)
+            .accessibilityIdentifier("lib-clipboard")
             HStack(spacing: 0) {
                 let all = Set(visible.map(\.id))
                 barButton(all.isSubset(of: selection) ? "None" : "All", "checkmark.circle", id: "lib-select-all") {
                     selection = all.isSubset(of: selection) ? [] : all
                 }
-                Menu {
-                    Button { paste(keepOwn: true) } label: {
-                        Label { Text("Look only"); Text("Keeps each photo's crop and masks") } icon: { Image(systemName: "wand.and.stars") }
-                    }
-                    .accessibilityIdentifier("paste-look")
-                    Button { paste(keepOwn: true, masks: true) } label: {
-                        Label { Text("Look and masks"); Text("Keeps each photo's crop") } icon: { Image(systemName: "circle.dashed.inset.filled") }
-                    }
-                    .accessibilityIdentifier("paste-look-masks")
-                    .disabled(store.clipboard?.masks.isEmpty ?? true)
-                    Button { paste(keepOwn: false) } label: {
-                        Label { Text("Everything"); Text("Crop and masks too") } icon: { Image(systemName: "doc.on.clipboard") }
-                    }
-                    .accessibilityIdentifier("paste-all")
-                    Button { choosePaste = selectedItems } label: {
-                        Label { Text("Choose…"); Text("Pick which tools") } icon: { Image(systemName: "checklist") }
-                    }
-                    .accessibilityIdentifier("paste-choose")
-                } label: { barLabel("Paste edits", "doc.on.clipboard") }
+                barButton("Copy", "doc.on.doc", id: "lib-copy") { copyFrom = selectedItems.first }
+                    .disabled(selection.count != 1)
+                barButton("Paste", "doc.on.clipboard", id: "lib-paste") {
+                    if let clip = store.clipboard { paste(clip, to: selectedItems) }
+                }
                 .disabled(store.clipboard == nil || selection.isEmpty)
-                .accessibilityIdentifier("lib-paste")
                 barButton("Export", "square.and.arrow.up", id: "lib-export") { showBatchExport = true }
                     .disabled(selection.isEmpty)
                 barButton("Delete", "trash", id: "lib-delete") { confirmDelete = true }
@@ -391,15 +390,11 @@ struct LibraryView: View {
         Button(action: action) { barLabel(title, system) }.accessibilityIdentifier(id)
     }
 
-    private func paste(keepOwn: Bool, masks: Bool = false) {
-        guard let clip = store.clipboard else { return }
-        paste(clip, to: selectedItems, keepOwn: keepOwn, masks: masks)
-    }
-
-    private func paste(_ clip: EditSettings, to list: [LibraryItem], keepOwn: Bool, masks: Bool = false) {
-        if clip.aiDenoise > 0, EditSession.hasDenoiseModel { denoisePaste = (list, keepOwn, masks); return }
-        store.apply(clip, to: list, keepOwn: keepOwn, masks: masks)
-        show("Edits pasted onto \(list.count) photo\(list.count == 1 ? "" : "s").")
+    private func paste(_ clip: Clipboard, to list: [LibraryItem]) {
+        guard !list.isEmpty else { return }
+        if clip.bringsDenoise, EditSession.hasDenoiseModel { denoisePaste = list; return }
+        store.paste(clip, to: list)
+        show("Pasted \(clip.summary) onto \(list.count) photo\(list.count == 1 ? "" : "s").")
     }
 
     /// About a minute per 24 MP photo on an iPhone 17 Pro Max (owner's phone, 21 Oct: 57 s), twice that at 48 MP.
@@ -469,6 +464,10 @@ struct LibraryView: View {
             VStack(spacing: 10) {
                 ProgressView(value: Double(p.done), total: Double(max(p.total, 1))).frame(width: 160)
                 Text("Exporting \(min(p.done + 1, p.total)) of \(p.total)…").font(.footnote)
+                // A19: a batch export can now be stopped; the photos already done are kept.
+                Button("Stop") { store.cancelExport() }
+                    .font(.footnote.weight(.semibold))
+                    .accessibilityIdentifier("export-cancel")
             }
             .padding(22)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))

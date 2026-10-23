@@ -1,6 +1,10 @@
 # Lumen – project notes for Claude
 
 ## Quality work before the App Store (from 22 Oct 2026)
+- Codex continuation: batch1 `5deccec` passed IPA/readiness, Linux logic, and engine/ProRAW checks. Independent
+  review found five persistence defects, corrected on batch1 with recovery/no-op/malformed-mask regressions;
+  see `docs/QUALITY-CHECKLIST.md` continuation section for exact evidence and remaining work. All batches 0–6
+  remain in scope; later batches and sandbox ports are not yet complete. No merge/publication authorized.
 - `docs/QUALITY-CHECKLIST.md` is the durable record: findings (two independent reviews), fix batches, test results,
   baselines, phone tests. Update it with every batch. Angelo's rules for this work: fix batches only after he approves
   the plan; reproduce first, add regression coverage, run the checks, get an independent review of each batch; apply

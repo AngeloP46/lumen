@@ -31,12 +31,15 @@ final class LumenUITests: XCTestCase {
             sleep(1)
             return Double(valueOf("reset-Blur amount")) ?? -1
         }
-        let first = drag(0.4, 0.7)
+        _ = drag(0.4, 0.7)
         for other in ["Detail", "Masks", "Curve"] {
+            // the amount just before leaving, not the very first one: each round's drag back lands a few points from
+            // where it started, so comparing with the first value made every round after the first drift
+            let leaving = Double(valueOf("reset-Blur amount")) ?? -1
             tapTool(other); sleep(1)
             tapTool("Lens Blur"); sleep(2)
             let before = Double(valueOf("reset-Blur amount")) ?? -1
-            XCTAssertEqual(before, first, accuracy: 0.6, "amount must be kept after visiting \(other)")
+            XCTAssertEqual(before, leaving, accuracy: 0.6, "amount must be kept after visiting \(other)")
             let after = drag(0.6, 0.3)
             XCTAssertLessThan(after, before - 3, "Blur amount must still move after visiting \(other)")
             _ = drag(0.3, 0.6)
@@ -101,7 +104,10 @@ final class LumenUITests: XCTestCase {
         amount.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
             .press(forDuration: 0.1, thenDragTo: amount.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
         XCTAssertTrue(events().contains { $0.contains("lens preview true") })
-        XCTAssertTrue(events().last(where: { $0.contains("lens preview ") })?.contains("false") == true,
+        // the app writes "lens preview false" when the finger lifts; under a loaded simulator that can land a moment
+        // after the drag call returns (21 Oct full suite: read too early). Wait up to 3 s: if it never comes, the red
+        // preview really stayed on (quality checklist H)
+        XCTAssertTrue(waitForEvent(timeout: 3) { $0.last(where: { $0.contains("lens preview ") })?.contains("false") == true },
                       "Selection preview must clear on slider release")
         el("lens-blur-preview").tap()
         let before = events().filter { $0.contains("lens preview true") }.count
@@ -184,6 +190,16 @@ final class LumenUITests: XCTestCase {
             usleep(400_000)
         }
         b.tap()
+    }
+
+    /// Polls the app's event log until `ok` holds (the app writes it a moment after a gesture ends).
+    func waitForEvent(timeout: TimeInterval, _ ok: ([String]) -> Bool) -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        repeat {
+            if ok(events()) { return true }
+            usleep(100_000)
+        } while Date() < end
+        return ok(events())
     }
 
     func waitGone(_ e: XCUIElement, timeout: TimeInterval) -> Bool {
@@ -840,6 +856,35 @@ final class LumenUITests: XCTestCase {
         shot("after-swipe")
     }
 
+    /// The next photo's decode does not wait behind the previous photo's AI masks (checklist A7; phone 0.1.465:
+    /// 5 s to "photo ready"). CI slows the AI down by 4 s; while the serial work queue held both, the swiped-to
+    /// photo's "queued" time in the demo log was ~4 s. The masks now run on their own queue, so the decode goes
+    /// straight ahead.
+    func testNextPhotoDoesNotWaitForAIMasks() {
+        launch(open: 0, tool: "Masks", extra: ["-lumenDemoSlowAI", "1"])
+        if !el("kind-subject").waitForExistence(timeout: 10) { el("mask-add").tap() }
+        el("kind-subject").tap()
+        XCTAssertTrue(el("mask-busy").waitForExistence(timeout: 2), "the slow AI mask job should be running")
+        let first = el("photo").label
+        // swiping is switched off while the Masks tool is open (a finger places the mask), so go on by the menu
+        el("btn-menu").tap()
+        XCTAssertTrue(app.buttons["Next photo"].waitForExistence(timeout: 5))
+        app.buttons["Next photo"].tap()
+        XCTAssertTrue(waitForEvent(timeout: 45) { evs in
+            guard el("photo").label != first else { return false }
+            return Self.queuedSeconds(evs).map { $0 < 2.0 } ?? false
+        }, "the swiped-to photo waited behind the AI masks (its 'queued' time): \(events().suffix(4))")
+        shot("next-photo-after-aimask")
+    }
+
+    /// The last "loaded … queued X s" line of the demo log (the editor's notePhotoReady), as seconds.
+    static func queuedSeconds(_ evs: [String]) -> Double? {
+        guard let last = evs.last(where: { $0.contains("queued") }) else { return nil }
+        let parts = last.split(separator: " ")
+        guard let i = parts.firstIndex(of: "queued"), i + 1 < parts.count else { return nil }
+        return Double(parts[i + 1].replacingOccurrences(of: "s", with: ""))
+    }
+
     func testSwipeAwayAndBackKeepsEachPhotosOwnEdit() {
         launch(open: 1, tool: "Light", extra: ["-lumenDemoSlider", "list"])
         let first = el("photo").label
@@ -1063,21 +1108,16 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         let edited = valueOf("reset-Shadows")
         XCTAssertNotEqual(edited, "0", "dragging should raise Shadows")
-        el("btn-menu").tap()
-        app.buttons["Copy edits"].tap()
-        sleep(1)
+        copyEdits { el("copy-modified").tap() }   // Modified: Light was edited, so it is ticked
         el("btn-back").tap()
         XCTAssertTrue(el("btn-select").waitForExistence(timeout: 20))
         el("btn-select").tap()
+        XCTAssertTrue(el("lib-clipboard").label.contains("Light"), "the bar says what Paste will apply (\(el("lib-clipboard").label))")
         items().element(boundBy: 1).tap()
         items().element(boundBy: 2).tap()
+        XCTAssertFalse(el("lib-copy").isEnabled, "Copy needs exactly one photo selected")
         el("lib-paste").tap()
-        let look = app.buttons["paste-look"]
-        XCTAssertTrue(look.waitForExistence(timeout: 5), "Paste edits should offer pasting the look")
-        XCTAssertTrue(app.buttons["paste-look-masks"].exists, "Paste edits should offer pasting the look and masks")
-        XCTAssertTrue(app.buttons["paste-choose"].exists, "Paste edits should offer choosing the tools")
-        look.tap()
-        XCTAssertTrue(el("library-notice").waitForExistence(timeout: 5), "pasting should confirm")
+        XCTAssertTrue(el("library-notice").waitForExistence(timeout: 5), "pasting should confirm what went where")
         el("btn-select-done").tap()
         sleep(1)
         items().element(boundBy: 1).tap()
@@ -1085,6 +1125,100 @@ final class LumenUITests: XCTestCase {
         sleep(2)
         if !el("reset-Shadows").exists, el("tool-Light").exists { tapTool("Light"); sleep(1) }
         XCTAssertEqual(valueOf("reset-Shadows"), edited, "the pasted Shadows edit should be on the second photo")
+    }
+
+    // MARK: Batch 1: your work is safe (docs/QUALITY-CHECKLIST.md)
+
+    func testFailedSavesRecoverWithoutLosingPendingEdits() {
+        launchLibrary(extra: ["-lumenDemoPersistenceChecks", "1", "-lumenDemoRawHDR", "1"])
+        for _ in 0..<20 {
+            if events().contains(where: { $0.contains("save recovery DONE") }) { break }
+            sleep(1)
+        }
+        let log = events().filter { $0.contains("save recovery") }.joined(separator: "\n")
+        XCTAssertTrue(log.contains("save recovery DONE"), log)
+        XCTAssertFalse(log.contains("save recovery FAIL"), log)
+        XCTAssertEqual(log.components(separatedBy: "save recovery PASS").count - 1, 7, log)
+    }
+
+    /// A3: long-press → Remove from Lumen asks first; Cancel keeps the photo.
+    func testRemoveOnePhotoAsksFirst() {
+        launchLibrary()
+        let before = items().count
+        items().element(boundBy: 0).press(forDuration: 1.2)
+        XCTAssertTrue(app.buttons["Remove from Lumen"].waitForExistence(timeout: 5))
+        app.buttons["Remove from Lumen"].tap()
+        XCTAssertTrue(el("confirm-remove").waitForExistence(timeout: 5), "removing a photo should ask first")
+        shot("remove-asks")
+        app.buttons["Cancel"].firstMatch.tap()
+        sleep(1)
+        XCTAssertEqual(items().count, before, "Cancel must keep the photo")
+    }
+
+    /// A2: when edits can't be written, the editor says so (and keeps trying).
+    func testFailedSaveIsShown() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoFailSaves", "1", "-lumenDemoSlider", "list"])
+        let s = el("slider-Shadows")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+        XCTAssertTrue(el("save-problem").waitForExistence(timeout: 5), "a failed save must be shown")
+        shot("save-problem")
+    }
+
+    /// A1: opening a photo writes nothing (it used to save 0.5 s after opening, writing back whatever this version
+    /// could read). A RAW never opened before (no edits file), left alone for 3 s.
+    func testOpeningAPhotoDoesNotSaveIt() {
+        launch(open: 2, tool: "Light", extra: ["-lumenDemoRawHDR", "1"])
+        sleep(3)
+        let saves = events().filter { $0.contains("saved edits") }
+        XCTAssertTrue(saves.isEmpty, "opening a photo must not save it: \(saves)")
+        el("btn-back").tap()
+        sleep(1)
+        XCTAssertFalse(events().contains { $0.contains("saved edits") }, "closing an untouched photo must not rewrite its edits")
+    }
+
+    /// A5: an edit made just before Lumen leaves the screen is kept. The save normally waits 0.5 s; here it waits 8 s,
+    /// so only the save-on-leaving can have written it (the test used to pass with the fix removed).
+    func testEditKeptWhenLeavingStraightAway() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "list", "-lumenDemoSaveDelay", "8"])
+        let s = el("slider-Shadows")
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)))
+        XCUIDevice.shared.press(.home)   // straight away: the 8 s save has not run
+        sleep(2)
+        XCTAssertTrue(events().contains { $0.contains("saved edits") }, "leaving the app should have saved the edit at once")
+    }
+
+    /// ⋯ → Copy edits…: the Copy sheet opens; `choose` picks what to copy; Copy closes it.
+    func copyEdits(_ choose: () -> Void) {
+        el("btn-menu").tap()
+        XCTAssertTrue(el("menu-copy").waitForExistence(timeout: 10), "the menu should offer Copy edits…")
+        el("menu-copy").tap()
+        XCTAssertTrue(el("copy-go").waitForExistence(timeout: 10), "the Copy edits sheet should open")
+        choose()
+        shot("copy-edits")
+        el("copy-go").tap()
+        sleep(1)
+    }
+
+    /// Which memory tier the app thinks the simulator is (checklist B1): printed for the CI log.
+    func testReportsMemoryBudget() {
+        launchLibrary()
+        let line = events().first { $0.contains("memory budget") }
+        print("MEMORY BUDGET IN SIMULATOR: \(line ?? "not logged")")
+        XCTAssertNotNil(line, "the app should log its memory budget at launch in demo mode")
+    }
+
+    /// ⋯ → Send diagnostics shows the Findings (or "No problems spotted") and a share button.
+    func testDiagnosticsShowsFindings() {
+        launchLibrary()
+        el("btn-library-filter").tap()
+        let send = app.buttons["Send diagnostics…"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        send.tap()
+        XCTAssertTrue(el("diagnostics-findings").waitForExistence(timeout: 20), "the Diagnostics screen should show its findings")
+        XCTAssertTrue(el("diagnostics-share").waitForExistence(timeout: 20), "the report should be ready to share")
+        shot("diagnostics")
     }
 
     func testBatchExportOfSelectedPhotos() {
@@ -1105,10 +1239,10 @@ final class LumenUITests: XCTestCase {
         launch(open: 0, tool: "Light")
         XCTAssertTrue(el("btn-menu").waitForExistence(timeout: 10))
         el("btn-menu").tap()
-        XCTAssertTrue(app.buttons["Copy edits"].waitForExistence(timeout: 10), "the menu should open with Copy edits")
+        XCTAssertTrue(el("menu-copy").waitForExistence(timeout: 10), "the menu should open with Copy edits…")
         shot("more-menu")
         let screen = app.windows.firstMatch.frame
-        for name in ["Copy edits", "Paste edits", "Reset all edits", "Previous photo", "Next photo", "Rating and flags", "View"] {
+        for name in ["menu-copy", "menu-paste", "Reset all edits", "Previous photo", "Next photo", "Rating and flags", "View"] {
             let b = app.buttons[name]
             XCTAssertTrue(b.exists, "menu item \(name) is missing")
             if b.exists {
@@ -1494,28 +1628,38 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(h.waitForExistence(timeout: 5), "the split line should show")
         h.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.1, thenDragTo: el("photo").coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
         sleep(1)
-        XCTAssertGreaterThan(Double(valueOf("split-handle")) ?? 0, 0.6, "dragging moves the split line")
+        // The line must land where the finger went (0.8 of the photo), not merely "move" (checklist A15: the handle
+        // read its own 30 pt frame, so it read ~0.53 and the test flapped).
+        let pos = Double(valueOf("split-handle")) ?? 0
+        XCTAssertTrue(pos > 0.7 && pos < 0.9, "the split line follows the finger to the drag point (got \(pos))")
         shot("before-after")
         el("split-close").tap()
         sleep(1)
         XCTAssertFalse(el("split-handle").exists, "× ends the split")
     }
 
-    func testPasteSomeEditsOnlyTakesTheChosenTools() {
-        launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])
-        el("btn-menu").tap()
-        app.buttons["Copy edits"].tap()
-        sleep(1)
+    /// Copy edits… with only Light ticked: Paste brings Light back and leaves Colour alone (Lightroom's Copy Settings).
+    func testCopyOnlyTheChosenTools() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoEdit", "1"])   // exposure 0.3 (Light), vibrance 25 (Colour)
+        copyEdits {
+            el("copy-none").tap()
+            // the switch sits at the right end of its row; the row's centre is its label
+            app.switches["copy-Light"].coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(waitGone(el("copy-go"), timeout: 10), "Copy should have closed the sheet (was anything ticked?)")
         el("pill-Reset").tap()   // Light back to 0 on this photo
         sleep(1)
         XCTAssertEqual(valueOf("reset-Exposure"), "0.00")
-        el("btn-menu").tap()
-        XCTAssertTrue(app.buttons["Paste some edits…"].waitForExistence(timeout: 5))
-        app.buttons["Paste some edits…"].tap()
-        XCTAssertTrue(el("paste-go").waitForExistence(timeout: 5), "the Paste some sheet should open")
-        shot("paste-some")
-        el("paste-go").tap()
+        tapTool("Color"); sleep(1)
+        el("pill-Reset").tap()   // Colour back to 0 too
         sleep(1)
+        let colourReset = valueOf("reset-Vibrance")
+        el("btn-menu").tap()
+        XCTAssertTrue(el("menu-paste").waitForExistence(timeout: 5))
+        el("menu-paste").tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("reset-Vibrance"), colourReset, "Colour (not ticked) must not be pasted")
+        tapTool("Light"); sleep(1)
         XCTAssertEqual(valueOf("reset-Exposure"), "0.30", "Light (ticked) should come back from the copy")
     }
 

@@ -33,7 +33,11 @@ final class HeavyWork: @unchecked Sendable {
         case .findPeople: return Int(20 * mp) + 700
         case .denoise: return 1400            // the model and one strip; it reads the photo whole only with room to spare
         case .export: return Int(60 * mp) + 800
-        case .original: return 450
+        // The preview is small, but the RAW engine's full-size decode still costs ~50 MB per source megapixel (the
+        // same as the 100 % copy, without its buffer). A flat 450 MB underestimated a 48 MP photo ~5x, so the
+        // original copy started when it really couldn't fit (checklist A8; phone 0.1.465: 892-1001 MB between
+        // photos after a clean).
+        case .original: return Int(50 * mp) + 100
         }
     }
 
@@ -80,17 +84,22 @@ final class HeavyWork: @unchecked Sendable {
         condition.unlock()
         // short of room even alone: what can be made again goes first
         if alone, Self.availableMB() < need + Self.marginMB {
-            Self.release?(kind)
-            // what the app just let go of (the 100 % copy, GPU caches) can take a moment to come back
-            for _ in 0..<6 where Self.availableMB() < need { Thread.sleep(forTimeInterval: 0.5) }
-            let free = Self.availableMB()
-            if free < need {
-                if optional {
+            if optional {
+                // an optional job (the 100 % copy, the original copy) is not worth letting go of models for, or
+                // sleeping on the shared work queue for (it stalled the next photo's decode by 3 s): it starts if there
+                // is room, else it is skipped at once
+                let free = Self.availableMB()
+                if free < need {
                     finish(me)
                     Self.note?("\(kind.rawValue): skipped, only \(free) MB free (~\(need) MB needed)")
                     return nil
                 }
-                Self.note?("\(kind.rawValue): starting with only \(free) MB free (~\(need) MB needed)")
+            } else {
+                Self.release?(kind)
+                // what the app just let go of (the 100 % copy, GPU caches) can take a moment to come back
+                for _ in 0..<6 where Self.availableMB() < need { Thread.sleep(forTimeInterval: 0.5) }
+                let free = Self.availableMB()
+                if free < need { Self.note?("\(kind.rawValue): starting with only \(free) MB free (~\(need) MB needed)") }
             }
         }
         defer { finish(me) }
