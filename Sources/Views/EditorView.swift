@@ -58,6 +58,12 @@ struct EditorView: View {
     @State private var tool: Tool? = Tool(rawValue: DemoMode.value("-lumenDemoTool") ?? "") ?? .light
     @State private var chromeHidden = false
     @State private var showExportChoices = false
+    // DRAFT — sandbox: App Store export gate (plan §4.1). Flag-off builds never see this.
+#if APP_STORE
+    @State private var showProPaywall = false
+    @ObservedObject private var proStore = LumenStore.shared
+    @Environment(\.scenePhase) private var scenePhase
+#endif
     @State private var showEdits = false
     @State private var showPhotoInfo = false
     @State private var showDiagnostics = false
@@ -203,8 +209,30 @@ struct EditorView: View {
             }
         }
         .sheet(isPresented: $showExportChoices) {
-            ExportOptionsSheet(count: 1, hdrAvailable: vm.settings.hdr) { vm.export($0) }
+            ExportOptionsSheet(count: 1, hdrAvailable: vm.settings.hdr) { options in
+#if APP_STORE
+                Task {
+                    await proStore.refreshStatus()
+                    if vm.settings.usesProFeatures && !proStore.isPro {
+                        showExportChoices = false
+                        showProPaywall = true
+                    } else { vm.export(options) }
+                }
+#else
+                vm.export(options)
+#endif
+            }
         }
+        // DRAFT — sandbox: paywall sheet for the export gate (App Store builds only)
+#if APP_STORE
+        .sheet(isPresented: $showProPaywall) {
+            PaywallView(store: proStore)
+        }
+        .task { await proStore.refreshStatus() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await proStore.refreshStatus() } }
+        }
+#endif
         .sheet(item: $vm.exported) { result in ExportSheet(vm: vm, url: result.url) }
         .sheet(isPresented: $showEdits) { EditsSheet(vm: vm) }
         .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
@@ -424,6 +452,11 @@ struct EditorView: View {
             vm.settings.grading.highlights = GradeZone(hue: 40, sat: 45, lum: 5)
         }
         if DemoMode.value("-lumenDemoMix") != nil { vm.colorMix = true }
+        // DRAFT — sandbox (CI screenshots): put non-zero Pro values into the demo edits so the
+        // watermark and export gate are exercised without touching any real photo.
+#if APP_STORE
+        if DemoMode.proEdits { vm.settings.sharpness = 40; vm.settings.texture = 25 }
+#endif
         if let z = DemoMode.value("-lumenDemoZoom").flatMap(Double.init) { zoom = CGFloat(z) }
         if let r = DemoMode.value("-lumenDemoCrop").flatMap(Double.init) {
             Task { @MainActor in
@@ -436,6 +469,41 @@ struct EditorView: View {
             panelUser["shared"] = CGFloat(h)
         }
         sliderStyle = DemoMode.value("-lumenDemoSlider") ?? "auto"
+        // DRAFT — sandbox (CI screenshots): pre-build the interesting state per tool so each App Store
+        // screenshot shows a real edit, not a neutral photo. Nothing here runs in normal use.
+#if APP_STORE
+        if DemoMode.value("-lumenDemoCurve") != nil {
+            vm.settings.curves.set(0, [CurvePoint(x: 0, y: 0.06), CurvePoint(x: 0.3, y: 0.27),
+                                       CurvePoint(x: 0.7, y: 0.74), CurvePoint(x: 1, y: 0.96)])
+        }
+        if DemoMode.value("-lumenDemoGrade") != nil {
+            vm.settings.grading.shadows = GradeZone(hue: 210, sat: 48, lum: -6)
+            vm.settings.grading.midtones = GradeZone(hue: 45, sat: 38, lum: 4)
+            vm.settings.grading.highlights = GradeZone(hue: 25, sat: 42, lum: 8)
+        }
+        if DemoMode.value("-lumenDemoDetail2") != nil {
+            vm.settings.sharpness = 45; vm.settings.texture = 30; vm.settings.clarity = 18
+            vm.settings.vignette = -18; vm.settings.grain = 10
+        }
+        if DemoMode.value("-lumenDemoExport") != nil {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                showExportChoices = true
+            }
+        }
+        if tool == .heal && DemoMode.value("-lumenDemoPeople") != nil {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 7_000_000_000)
+                vm.findPeople()
+            }
+        }
+        if DemoMode.paywall {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                showProPaywall = true
+            }
+        }
+#endif
     }
 
     // MARK: Canvas
@@ -470,6 +538,21 @@ struct EditorView: View {
         }
     }
 
+    // DRAFT — sandbox: the export gate (plan §4.1). Free users with a Pro feature active
+    // see the paywall instead of the export options; everyone else is unchanged.
+    private func requestExport() {
+#if APP_STORE
+        Task {
+            await proStore.refreshStatus()
+            if vm.settings.usesProFeatures && !proStore.isPro {
+                showProPaywall = true
+            } else { showExportChoices = true }
+        }
+#else
+        showExportChoices = true
+#endif
+    }
+
     private var photoArea: some View {
         GeometryReader { geo in
             let xform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan, bottomAlign: alignBottom)
@@ -478,6 +561,20 @@ struct EditorView: View {
                 Color.black
                 CanvasView(model: vm.canvas, xform: xform, hdr: vm.settings.hdr)
                     .allowsHitTesting(false)
+                // DRAFT — sandbox: watermark on Pro-edited previews for free users (plan §5.1).
+                // A tiled diagonal pattern (the classic "SAMPLE" protection look, 14 Oct) stretched
+                // over the photo's own frame, so it moves with the picture under pinch/pan and is
+                // clipped to the photo, not the screen.
+#if APP_STORE
+                if vm.settings.usesProFeatures && !proStore.isPro && !DemoMode.noWM {
+                    let wmXform = ViewXform(canvas: geo.size, image: vm.imageSize, zoom: zoom, pan: pan, bottomAlign: alignBottom)
+                    let r = wmXform.rect
+                    LumenMark()
+                        .frame(width: r.width, height: r.height)
+                        .offset(x: r.midX - geo.size.width / 2, y: r.midY - geo.size.height / 2)
+                        .clipped()
+                }
+#endif
                 if vm.imageSize != .zero {
                     gestureLayer(xform)
                     if tool == .crop { CropOverlay(vm: vm, xform: xform) }
@@ -696,7 +793,7 @@ struct EditorView: View {
             FloatButton(system: "arrow.uturn.backward", disabled: !vm.canUndo) { vm.undo() }.accessibilityIdentifier("btn-undo")
             FloatButton(system: "arrow.uturn.forward", disabled: !vm.canRedo) { vm.redo() }.accessibilityIdentifier("btn-redo")
             // Export has its own button: it used to be the last entry of a long menu that could not always be scrolled.
-            FloatButton(system: "square.and.arrow.up") { showExportChoices = true }.accessibilityIdentifier("btn-export")
+            FloatButton(system: "square.and.arrow.up") { requestExport() }.accessibilityIdentifier("btn-export")
             Menu {
                 // Short, flat, most-used first. Nothing in here changes while the menu is open.
                 // like Lightroom's Copy Settings / Paste Settings: what goes is chosen when copying

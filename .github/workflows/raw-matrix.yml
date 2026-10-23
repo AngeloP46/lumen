@@ -1,0 +1,66 @@
+name: RAW format matrix
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'Sources/Edit/**'
+      - 'Tests/rawmatrix/**'
+      - '.github/workflows/raw-matrix.yml'
+
+# DRAFT — sandbox. Proves the engine opens and exports one sample of every major camera RAW
+# format (Canon CR2/CR3, Nikon NEF, Fuji RAF, Sony ARW, DNG). Samples come from raw.pixls.us
+# (public domain). Does not touch the SideStore build or the main branch.
+concurrency:
+  group: raw-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
+        with:
+          persist-credentials: false
+      - name: Fetch one sample per RAW format
+        run: |
+          mkdir -p samples
+          bash .github/ci/get.sh samples/canon-5d2.CR2 "https://raw.pixls.us/getfile.php/1182/nice/Canon%20-%20EOS%205D%20Mark%20II%20-%20RAW%20(3%3A2).CR2" 20000000
+          echo "81c5ee6da45c4e22584c5344807ac32e2c9ba82ad274486ba64745ef8dd4f69c  samples/canon-5d2.CR2" | shasum -a 256 -c -
+          bash .github/ci/get.sh samples/canon-r5.CR3  "https://raw.pixls.us/data/Canon/EOS%20R5/Canon_EOS_R5_RAW_ISO_100_nocrop_nodual.CR3" 20000000
+          bash .github/ci/get.sh samples/nikon-d750.NEF "https://raw.pixls.us/data/Nikon/D750/compressed_14_bit.NEF" 10000000
+          bash .github/ci/get.sh samples/fuji-xt4.RAF   "https://raw.pixls.us/data/Fujifilm/X-T4/DSCF0266.RAF" 10000000
+          bash .github/ci/get.sh samples/sony-a7.arw    "https://raw.pixls.us/data/Sony/ILCE-7/Sony_-_ILCE-7_-_14bit_uncompressed_(32).arw" 10000000
+          bash .github/ci/get.sh samples/canon-5d3.DNG  "https://raw.pixls.us/data/Adobe%20DNG%20Converter/Canon%20EOS%205D%20Mark%20III/5G4A9394-compressed-lossless.DNG" 10000000
+          ls -la samples
+      - name: Build kernels and matrix tool
+        run: |
+          mkdir -p out
+          xcrun -sdk macosx metal -fcikernel -c Sources/Edit/Kernels.metal -o out/k.air
+          xcrun -sdk macosx metallib -cikernel out/k.air -o out/k.metallib
+          swiftc -Onone -g -o out/raw-matrix \
+            Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift \
+            Sources/Edit/Engine.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift Sources/Edit/Denoise.swift \
+            Sources/Edit/Histogram.swift \
+            Tests/rawmatrix/main.swift
+      - name: Run
+        # exit 1 = a check failed; anything above is a crash (backtrace, result unchanged)
+        run: |
+          set +e
+          ./out/raw-matrix out/k.metallib samples out/matrix
+          code=$?
+          echo "raw-matrix exit code: $code"
+          if [ "$code" -gt 1 ]; then
+            echo "::group::lldb backtrace (the test crashed)"
+            lldb -b -o run -o "bt 25" -- ./out/raw-matrix out/k.metallib samples out/matrix
+            echo "::endgroup::"
+          fi
+          exit "$code"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
+        if: always()
+        with:
+          name: raw-matrix
+          path: out/matrix

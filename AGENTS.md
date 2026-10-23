@@ -1,12 +1,9 @@
-# Lumen session entry point
+# Lumen sandbox entry point
 
-Read `CLAUDE.md` in this folder before working on Lumen, the iPhone app or SideStore.
-It holds the architecture, build and phone setup notes.
-Read `PRODUCT-BRIEF.md` too. It defines the platform, audience, camera coverage and
-product direction; use it for every feature, UI, testing and copy decision.
+Read `../Lumen/PRODUCT-BRIEF.md` for the owner-confirmed platform, audience and camera
+coverage. Read `../Lumen/AGENTS.md`, `../Lumen/CLAUDE.md`, and this folder's `HANDOFF.md`
+and `SANDBOX-LOG.md` before working here.
 
-The canonical project folder is `C:\Users\pc user\Projects\app development\Lumen`.
-App Store draft work and its latest handover live in the sibling `Lumen-Sandbox` folder.
-Read `Lumen-Sandbox\HANDOFF.md`'s latest update before reviewing that work. Preserve the
-existing personal SideStore app; do not publish or merge App Store changes to main without
-Angelo's instruction. Windows cannot compile this iPhone app; builds run on GitHub Actions.
+This is the App Store sandbox. Preserve its Store code separately. Shared editor
+fixes are authorized in both builds; personal main/SideStore stays fully unlocked.
+Do not publish sandbox work to main or change pricing without Angelo's instruction.

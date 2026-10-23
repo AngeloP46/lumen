@@ -265,6 +265,8 @@ Read PRODUCT-BRIEF.md for the iOS/RAW/all-brands and cheaper-Lightroom direction
 
 Read this first. It records what exists, how it's built and shipped, and what to do next.
 
+**App Store sandbox (this branch):** the Store layer (`Sources/Store/`, paywall, watermark, `#if APP_STORE` hooks) sits on top of main's code. Read `SANDBOX-LOG.md` and `MARKETING.md` (pricing, Free vs Pro, claims) before touching it. Never copy Store code into main.
+
 ## Housekeeping (do this every session)
 - Before finishing any session, update the **Status**, **Things to verify** and **Troubleshooting** sections below with what changed or was learned, then commit and push (`git add -A; git commit; git push`) so the next session starts current.
 - Keep this file factual and short; remove items once they're fixed or verified. Never put passwords, tokens or Apple ID credentials in it.

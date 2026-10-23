@@ -46,6 +46,11 @@ struct LibraryView: View {
     /// Long-press → Remove asks first too (it removed the photo at once before 22 Oct: checklist A3).
     @State private var confirmRemove: LibraryItem?
     @State private var showBatchExport = false
+#if APP_STORE
+    @State private var showProPaywall = false
+    @ObservedObject private var proStore = LumenStore.shared
+    @Environment(\.scenePhase) private var scenePhase
+#endif
     @State private var showDiagnostics = false
     @State private var notice: String?
     /// Pasting edits that include AI Denoise asks first (it needs a clean of each photo).
@@ -79,6 +84,19 @@ struct LibraryView: View {
     }
 
     private var selectedItems: [LibraryItem] { visible.filter { selection.contains($0.id) } }
+
+    private func requestBatchExport() {
+#if APP_STORE
+        Task {
+            await proStore.refreshStatus()
+            if selectedItems.contains(where: { store.settings(for: $0).usesProFeatures }) && !proStore.isPro {
+                showProPaywall = true
+            } else { showBatchExport = true }
+        }
+#else
+        showBatchExport = true
+#endif
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -222,9 +240,26 @@ struct LibraryView: View {
             .sheet(isPresented: $showBatchExport) {
                 let list = selectedItems
                 ExportOptionsSheet(count: list.count, hdrAvailable: list.contains { store.editorSettings(for: $0).hdr }) { o in
+#if APP_STORE
+                    Task {
+                        await proStore.refreshStatus()
+                        if list.contains(where: { store.settings(for: $0).usesProFeatures }) && !proStore.isPro {
+                            showBatchExport = false
+                            showProPaywall = true
+                        } else { store.export(list, options: o) }
+                    }
+#else
                     store.export(list, options: o)
+#endif
                 }
             }
+#if APP_STORE
+            .sheet(isPresented: $showProPaywall) { PaywallView(store: proStore) }
+            .task { await proStore.refreshStatus() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await proStore.refreshStatus() } }
+            }
+#endif
             .sheet(item: $store.batchResult) { result in
                 BatchExportSheet(urls: result.urls) { show(await store.saveToPhotos(result.urls)) }
             }
@@ -367,7 +402,7 @@ struct LibraryView: View {
                     if let clip = store.clipboard { paste(clip, to: selectedItems) }
                 }
                 .disabled(store.clipboard == nil || selection.isEmpty)
-                barButton("Export", "square.and.arrow.up", id: "lib-export") { showBatchExport = true }
+                barButton("Export", "square.and.arrow.up", id: "lib-export") { requestBatchExport() }
                     .disabled(selection.isEmpty)
                 barButton("Delete", "trash", id: "lib-delete") { confirmDelete = true }
                     .disabled(selection.isEmpty)

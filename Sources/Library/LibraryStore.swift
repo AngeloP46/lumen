@@ -434,7 +434,13 @@ final class LibraryStore: ObservableObject {
         let demoOff = DemoMode.isOn && DemoMode.value("-lumenDemoRawHDR") == nil
         if !demoOff, failedSaves[item.id] == nil, !FileManager.default.fileExists(atPath: editURL(item).path),
            UTType(filenameExtension: (item.fileName as NSString).pathExtension.lowercased())?.conforms(to: .rawImage) == true {
+            #if APP_STORE
+            // HDR is a Pro feature: starting a free user's RAW in HDR would watermark it and ask them to pay
+            // before they had touched anything
+            if LumenStore.shared.isPro { s.hdr = true }
+            #else
             s.hdr = true
+            #endif
         }
         return s
     }
@@ -794,6 +800,12 @@ final class LibraryStore: ObservableObject {
 
     /// Exports every photo in `list` one after another in the background, then offers them in `batchResult`.
     func export(_ list: [LibraryItem], options o: ExportOptions) {
+#if APP_STORE
+        guard LumenStore.shared.isPro || !list.contains(where: { settings(for: $0).usesProFeatures }) else {
+            lastError = "This selection includes Pro edits. Unlock Pro or turn off those edits before exporting."
+            return
+        }
+#endif
         guard batchProgress == nil, !list.isEmpty else { return }
         exportCancel = false
         batchProgress = (0, list.count)

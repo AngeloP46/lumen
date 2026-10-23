@@ -1,0 +1,182 @@
+# DRAFT — sandbox workflow, runs on sandbox pushes and manual dispatch.
+# Does not publish SideStore or App Store builds.
+# Purpose: prove the sandbox draft compiles in the App Store configuration (flag ON, new bundle
+# ID override) on GitHub's Mac. Signing/upload steps are documented but commented out — they
+# activate only at Gate 4 with real certificates (plan §2.2 / §6).
+name: App Store sandbox compile check
+
+on:
+  # Runs automatically on every push to the sandbox branch (and can be triggered by hand).
+  # It can NEVER touch main: the SideStore feed (build.yml) publishes from main only,
+  # and this workflow builds nothing for the device — just a compile check.
+  push:
+    branches: [sandbox]
+  workflow_dispatch:
+    inputs:
+      checks_only:
+        description: 'Skip duplicate UI screenshots; compile both payment flag configurations'
+        type: boolean
+        default: false
+
+concurrency:
+  group: app-store-sandbox-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compile-check:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
+        with:
+          persist-credentials: false
+
+      - name: AI models (depth, scene, heal)
+        run: |
+          bash .github/ci/get-depth-model.sh Models
+          bash .github/ci/get-seg-model.sh Models
+          bash .github/ci/get-heal-model.sh Models
+          # AI Denoise: a compile check doesn't need the model; an empty stand-in keeps the project building
+          mkdir -p Models/Denoise.mlmodelc
+
+      - name: Install XcodeGen
+        run: bash .github/ci/install-xcodegen.sh
+
+      - name: Generate Xcode project
+        # project.yml is FROZEN (SideStore pipeline reads it). The App Store configuration is
+        # applied entirely at build time: the compilation flag via SWIFT_ACTIVE_COMPILATION_CONDITIONS
+        # and the bundle ID via the PRODUCT_BUNDLE_IDENTIFIER override below.
+        run: xcodegen generate
+
+      - name: Export policy regression checks
+        run: |
+          swiftc -D APP_STORE Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Store/ProGate.swift Tests/progate/main.swift -o /tmp/lumen-progate
+          /tmp/lumen-progate
+
+      - name: Build for simulator (APP_STORE flag OFF)
+        run: |
+          xcodebuild -project Lumen.xcodeproj -scheme Lumen -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build-sidestore \
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO ARCHS=arm64 > build-sidestore.log 2>&1 || { tail -80 build-sidestore.log; exit 1; }
+
+      - name: Build for simulator (APP_STORE flag ON, App Store bundle ID)
+        run: |
+          # App Store name (Angelo, 22 Oct): "Lumen RAW" on the home screen; the SideStore app stays "Lumen"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Lumen RAW' Config/Info.plist
+          code=0
+          xcodebuild \
+            -project Lumen.xcodeproj -scheme Lumen -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO ARCHS=arm64 \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS=APP_STORE \
+            TARGETED_DEVICE_FAMILY=1             PRODUCT_BUNDLE_IDENTIFIER=com.lumenraw.app > build.log 2>&1 || code=$?
+          # Show the actual compiler errors (and a tail of the log for context) so failures
+          # are fixable from the run log without downloading anything.
+          grep -E "error:|error while|fatal error" build.log | head -40
+          tail -25 build.log
+          exit $code
+
+      - name: App Store build must not carry a tester expiry date
+        run: |
+          # tester-build.yml (main only) adds LumenTesterExpires to Info.plist; the App Store app must never have it
+          PLIST=build/Build/Products/Release-iphonesimulator/Lumen.app/Info.plist
+          if /usr/libexec/PlistBuddy -c 'Print :LumenTesterExpires' "$PLIST" 2>/dev/null; then
+            echo '::error::LumenTesterExpires is in the App Store build: the app would expire'; exit 1
+          fi
+          echo 'No tester expiry key in the App Store build'
+          name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$PLIST")
+          [ "$name" = "Lumen RAW" ] || { echo "::error::App Store display name is '$name', not 'Lumen RAW'"; exit 1; }
+          echo "Display name: $name"
+          fam=$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily' "$PLIST" | tr -d '[:space:]')
+          [ "$fam" = "Array{1}" ] || { echo "::error::App Store build must be iPhone only (UIDeviceFamily $fam)"; exit 1; }
+          echo "iPhone only"
+
+      - name: StoreKit purchase test (monthly trial, annual, lifetime; App Store build)
+        run: |
+          # appstore-tests.yml = project.yml + a hosted unit-test target with Tests/store/LumenRAW.storekit
+          xcodegen generate --spec appstore-tests.yml
+          code=0
+          xcodebuild test -project Lumen.xcodeproj -scheme LumenStore -configuration Debug             -destination 'platform=iOS Simulator,name=iPhone 16 Pro Max' -derivedDataPath build-store             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 CODE_SIGNING_ALLOWED=NO SWIFT_ACTIVE_COMPILATION_CONDITIONS="APP_STORE DEBUG" > store-test.log 2>&1 || code=$?
+          grep -E "error:|Test Case .*(passed|failed)|Executed" store-test.log | head -40
+          [ $code -eq 0 ] || { tail -40 store-test.log; grep -E "error:" store-test.log | head -20 | while IFS= read -r l; do echo "::error::${l:0:900}"; done; }
+          exit $code
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
+        if: always()
+        with:
+          name: build-log
+          path: |
+            build.log
+            store-test.log
+
+      # --- App Store UI screenshots (only if the compile above passed) ---
+      - name: Sample photos
+        if: ${{ success() && !inputs.checks_only }}
+        run: |
+          mkdir -p demo
+          bash .github/ci/get.sh demo/1-a9.ARW "https://raw.pixls.us/data/Sony/ILCE-9/Sony_-_ILCE-9_-_compressed.ARW" 10000000
+          bash .github/ci/get.sh demo/2-cat.jpg "https://commons.wikimedia.org/wiki/Special:FilePath/Cat_November_2010-1a.jpg?width=2000" 100000
+          ls -la demo
+
+      - name: Boot simulator and install
+        if: ${{ success() && !inputs.checks_only }}
+        run: |
+          UDID=$(xcrun simctl list devices available | grep -E "iPhone 16 Pro Max" | head -1 | grep -oE '[0-9A-F-]{36}')
+          echo "UDID=$UDID" >> $GITHUB_ENV
+          xcrun simctl boot $UDID
+          xcrun simctl bootstatus $UDID -b
+          xcrun simctl install $UDID build/Build/Products/Release-iphonesimulator/Lumen.app
+          CONTAINER=$(xcrun simctl get_app_container $UDID com.lumenraw.app data)
+          mkdir -p "$CONTAINER/Documents/demo"
+          cp demo/* "$CONTAINER/Documents/demo/"
+          echo "DEMO=$CONTAINER/Documents/demo" >> $GITHUB_ENV
+
+      # --- App Store UI screenshots: real captures of every main screen (only if the compile passed) ---
+      - name: App Store screenshots
+        if: ${{ success() && !inputs.checks_only }}
+        run: |
+          mkdir -p shots
+          shot() { # name, args...
+            name=$1; shift
+            W=${W:-14}
+            xcrun simctl terminate $UDID com.lumenraw.app 2>/dev/null || true
+            xcrun simctl launch $UDID com.lumenraw.app -lumenDemoDir "$DEMO" "$@"
+            sleep $W
+            xcrun simctl io $UDID screenshot shots/$name.png
+          }
+          # App Store listing shots: ALL captured clean (-lumenDemoNoWM suppresses the watermark
+          # even on Pro edits), because a watermark in the ad images would look like a defect.
+          # 05-masks / 06-heal use CI stand-ins (no AI in the simulator) — internal reference only,
+          # NOT for the listing (Angelo, 14 Oct).
+          W=18 shot 01-free-light -lumenDemoOpen 0 -lumenDemoTool Light -lumenDemoEdit 1 -lumenDemoNoWM
+          W=18 shot 02-grade -lumenDemoOpen 0 -lumenDemoTool Grade -lumenDemoGrade 1 -lumenDemoNoWM
+          W=18 shot 03-curve -lumenDemoOpen 0 -lumenDemoTool Curve -lumenDemoCurve 1 -lumenDemoNoWM
+          W=18 shot 04-detail -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoDetail2 1 -lumenDemoNoWM
+          W=35 shot 05-masks -lumenDemoOpen 0 -lumenDemoTool Masks -lumenDemoMask sky -lumenDemoNoWM
+          W=30 shot 06-heal -lumenDemoOpen 0 -lumenDemoTool Heal -lumenDemoPeople 1 -lumenDemoNoWM
+          W=20 shot 07-export -lumenDemoOpen 0 -lumenDemoTool Light -lumenDemoEdit 1 -lumenDemoExport 1 -lumenDemoNoWM
+          W=20 shot 08-batch -lumenDemoBatch 1 -lumenDemoNoWM
+          # THE watermark: a free user's Pro edit (Detail) — the tiled diagonal protection mark.
+          W=20 shot 09-watermark -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoPro 1
+          # The paywall: what a free user sees when they try to export a Pro edit.
+          W=20 shot 10-paywall -lumenDemoOpen 0 -lumenDemoTool Detail -lumenDemoPro 1 -lumenDemoPaywall 1 -lumenDemoNoWM
+          ls -la shots
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
+        if: ${{ success() && !inputs.checks_only }}
+        with:
+          name: app-store-shots
+          path: shots
+
+      # --- Gate 4 (real pipeline, not this one) will do this instead, with real secrets: ---
+      # xcodebuild archive ... (same flags) -destination 'generic/platform=iOS'
+      #   PRODUCT_BUNDLE_IDENTIFIER=com.lumenraw.app  (final, Angelo 22 Oct) TARGETED_DEVICE_FAMILY=1 (iPhone only for 1.0)
+      #   CODE_SIGN_ENTITLEMENTS=Lumen.entitlements (Increased Memory Limit: enable the capability on the App ID first)
+      #   DEVELOPMENT_TEAM=<team> CODE_SIGN_IDENTITY="Apple Distribution"
+      #   PROVISIONING_PROFILE_SPECIFIER="Lumen App Store"
+      # then: export IPA (method: app-store) -> upload to App Store Connect (altool/Transporter)
+      # Certificates/profile: created in a web browser at developer.apple.com, stored here as
+      # encrypted secrets. No Mac needed locally (plan §6).

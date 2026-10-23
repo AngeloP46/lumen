@@ -11,6 +11,17 @@ enum DemoMode {
     }
 
     static var isOn: Bool { value("-lumenDemoDir") != nil }
+
+    /// CI (App Store screenshots): present the paywall shortly after launch.
+    static var paywall: Bool { isOn && value("-lumenDemoPaywall") == "1" }
+
+    /// CI (App Store screenshots): put non-zero Pro values (Detail) into the demo edits, so the
+    /// watermark and the export gate are exercised without touching any real photo.
+    static var proEdits: Bool { isOn && value("-lumenDemoPro") == "1" }
+
+    /// CI (App Store screenshots): suppress the watermark even on a Pro edit, so the same edited
+    /// photo can be captured clean for the App Store listing images.
+    static var noWM: Bool { value("-lumenDemoNoWM") != nil }
 }
 
 extension DemoMode {
