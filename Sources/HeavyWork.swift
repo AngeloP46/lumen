@@ -61,6 +61,9 @@ final class HeavyWork: @unchecked Sendable {
     private var nextID = 0
     /// Let go of what can be made again (GPU caches, models not in use). Set by the app; any thread.
     nonisolated(unsafe) static var release: ((Kind) -> Void)?
+    /// Whether Lumen is on screen (the app keeps it current). iOS refuses GPU work in the background and Core Image does not
+    /// throw: a render started there comes out black or partial (quality checklist B2). Heavy jobs wait for the screen.
+    nonisolated(unsafe) static var isForeground = true
     /// Logging (the app points it at Diagnostics).
     nonisolated(unsafe) static var note: ((String) -> Void)?
     /// Memory Lumen may still use (MB); the app points it at os_proc_available_memory.
@@ -80,6 +83,11 @@ final class HeavyWork: @unchecked Sendable {
         // the simulator reports no memory at all (checklist B1): there a preview decode is not held up
         if kind == .preview, Self.availableMB() <= 0 { return work() }
         condition.lock()
+        // not while Lumen is in the background (AI Denoise has its own pause and is not held here)
+        if kind != .denoise, !Self.isForeground {
+            Self.note?("\(kind.rawValue): waiting for Lumen to be on screen")
+            while !Self.isForeground { condition.wait(until: Date().addingTimeInterval(0.5)) }
+        }
         var waited = false
         while !admits(need, long: long, margin: Self.marginMB(for: kind)) {
             if optional {
