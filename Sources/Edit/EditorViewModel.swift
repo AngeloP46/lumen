@@ -81,6 +81,16 @@ final class EditorViewModel: ObservableObject {
     private var detailBuilding = false
     private var zoomLevel: CGFloat = 1
     private var releaseTask: Task<Void, Never>?
+    /// The 100 % copy was decoded through this session, which keeps that decode (1-2 GB on a 48 MP photo) for as long as it
+    /// lives, whether the copy is kept or not. Dropping the copy therefore decodes the preview again with a new session
+    /// (quality checklist A8; 0.1.581, 17:14: 2.4-2.8 GB in use before an AI Denoise started, which then ran out).
+    private var sessionHoldsFullDecode = false
+
+    /// Drops the zoomed-in copy and, if it was built, lets go of the decode it left in the session.
+    private func releaseDetail() {
+        detailSource = nil
+        if sessionHoldsFullDecode { sessionHoldsFullDecode = false; reloadSource() }
+    }
 
     private var session: EditSession?
     private var source: ImageSource?
@@ -238,19 +248,27 @@ final class EditorViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.maskMemo = [:]
-                if self.denoiseProgress == nil { self.denoiseQueue.async { EditSession.releaseDenoiseModel() } }
+                if self.denoiseProgress == nil {
+                    Diagnostics.shared.note("AI Denoise model let go (memory warning)")
+                    self.denoiseQueue.async { EditSession.releaseDenoiseModel() }
+                }
                 // The Heal model stays: it holds only ~150-300 MB once loaded, but loading it again is a 2-3 GB spike (owner's
                 // phone, 23 Oct). Only when memory is truly critical does it go.
                 if !self.healBusy && !self.healPreparing && Diagnostics.availableMB < 500 { EditSession.releaseHealModel() }
                 // the 100 % copy goes even while zoomed in: a softer view is better than iOS closing Lumen
-                if self.detailSource != nil { self.detailSource = nil; Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
+                let droppedDetail = self.detailSource != nil
+                if droppedDetail { self.releaseDetail(); Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
                 // and no new try for a while: dropped, tried again at once, dropped again was how iOS closed Lumen (23 Oct)
                 self.detailRetry.hold(for: 30)
                 if !self.showOriginal { self.unhealedSource = nil }
-                self.renderAfterWarning?.cancel()
-                let again = DispatchWorkItem { [weak self] in self?.requestRender() }
-                self.renderAfterWarning = again
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: again)
+                // only for the pictures that changed with what was let go of (the zoomed-in copy, the original copy); Lumen's own
+                // let-go at 2.4 GB changes nothing on screen, and a redraw with the caches just cleared is the costliest one
+                if !BlackBox.shared.warningIsOwn || droppedDetail {
+                    self.renderAfterWarning?.cancel()
+                    let again = DispatchWorkItem { [weak self] in self?.requestRender() }
+                    self.renderAfterWarning = again
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: again)
+                }
             }
         }
         applyingHistory = true
@@ -404,6 +422,9 @@ final class EditorViewModel: ObservableObject {
     /// The photo's size in megapixels (the heavy-work coordinator's estimates scale with it).
     private var megapixels: Double { session.map { Double($0.nativeSize.width * $0.nativeSize.height) / 1_000_000 } ?? 24 }
     private var denoiseReload: DispatchWorkItem?
+    /// Free memory (MB) a clean needs before it starts: the model's working memory and a strip of the photo. 1500 with the
+    /// 512 px model (0.1.599: 1.4 GB seen beside the photo); the 256 px model needs a quarter of the model's part.
+    nonisolated static let denoiseNeedsFreeMB = 1100
     private let denoiseQueue = DispatchQueue(label: "lumen.denoise", qos: .userInitiated)
     /// Set when the app leaves the screen: the running job stops at its next tile and starts again on return.
     nonisolated(unsafe) private var denoiseCancel = false
@@ -432,12 +453,11 @@ final class EditorViewModel: ObservableObject {
             let nc = NotificationCenter.default
             denoiseObservers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 self?.denoisePausing = true
-                // nothing of AI Denoise stays loaded in the background; Detail makes it ready again on return. A clean
-                // that was running starts again when Lumen is back on screen.
+                // a clean that was running starts again when Lumen is back on screen (the loaded model is kept: letting it
+                // go gives its memory back to nobody and the next load costs it again)
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    if self.denoiseProgress != nil { self.denoiseResume = true; return }
-                    self.denoiseQueue.async { EditSession.releaseDenoiseModel() }
+                    guard let self, self.denoiseProgress != nil else { return }
+                    self.denoiseResume = true
                 }
             })
             denoiseObservers.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
@@ -468,6 +488,7 @@ final class EditorViewModel: ObservableObject {
         denoiseResume = false
         denoisePausing = false
         denoiseProgress = 0
+        canvas.busyHold = true   // the locked screen covers the photo: nothing of it is drawn until the clean ends
         denoiseSecondsLeft = nil
         denoiseCancel = false
         denoiseUserCancelled = false
@@ -481,7 +502,27 @@ final class EditorViewModel: ObservableObject {
         Diagnostics.shared.note(from > 0 ? String(format: "denoise continues from %.0f %%", from * 100) : "denoise start")
         let began = Date()
         let mp = megapixels
-        denoiseQueue.async {
+        denoiseQueue.async { [weak self] in
+            // Room first. A clean needs ~1.4 GB beside the photo, and starting it with less is how it ran out (owner's phone,
+            // 0.1.599, 18:08: started with 952 MB free after HDR toggles, Lens Blur and AI masks, closed within 5 s). What can
+            // be made again goes first; if there is still not enough, the clean does not start and says why. The simulator
+            // reports no memory (0): no limit there.
+            var tries = 0
+            while Diagnostics.availableMB > 0 && Diagnostics.availableMB < EditorViewModel.denoiseNeedsFreeMB && tries < 6 {
+                LumenGPU.context.clearCaches(); Thread.sleep(forTimeInterval: 0.5); tries += 1
+            }
+            if Diagnostics.availableMB > 0 && Diagnostics.availableMB < EditorViewModel.denoiseNeedsFreeMB {
+                Diagnostics.shared.note("denoise not started: only \(Diagnostics.availableMB) MB free (needs ~\(EditorViewModel.denoiseNeedsFreeMB))")
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.denoiseProgress = nil
+                    self.canvas.busyHold = false
+                    self.denoiseRequested = false
+                    UIApplication.shared.isIdleTimerDisabled = false
+                    self.message = "There isn't enough free memory to clean this photo right now. Close Lumen from the app switcher, open it again and start AI Denoise before the other edits."
+                }
+                return
+            }
             var noted = 0
             let outcome = HeavyWork.shared.run(.denoise, megapixels: mp, long: true) { session.makeDenoised(progress: { p in
                 // the phone's real speed, for ⋯ → Send diagnostics
@@ -506,9 +547,9 @@ final class EditorViewModel: ObservableObject {
                                     : outcome == .paused ? "denoise paused (Lumen left the screen): it carries on from here"
                                     : outcome == .cancelled ? "denoise cancelled" : "denoise failed")
             Task { @MainActor [weak self] in
-                // the model is let go of straight after a clean (owner's phone, 0.1.394: keeping it while Detail was
-                // open held ~600 MB, and iOS closed Lumen when it came back to the screen)
-                EditSession.releaseDenoiseModel()
+                // The model stays loaded for the next photo (23 Oct, 0.1.599: it was let go after every clean, which gave back
+                // ~130 MB of ~1 GB, and the next load took ~1.1 GB more: the second clean in a session ran out of memory).
+                EditSession.releaseDenoiseFallback()
                 UIApplication.shared.isIdleTimerDisabled = false   // even if the editor has gone
                 // where memory settles after a clean (0.1.533: ~1 GB stayed in use with the model gone, then a Lens Blur
                 // redraw or the Heal model on top went past the limit)
@@ -518,6 +559,7 @@ final class EditorViewModel: ObservableObject {
                 }
                 guard let self else { return }
                 self.denoiseProgress = nil
+                self.canvas.busyHold = false
                 self.denoiseSecondsLeft = nil
                 self.refreshDenoiseReady()
                 // back on screen before the stopped clean got to its next tile: start it again now
@@ -550,28 +592,23 @@ final class EditorViewModel: ObservableObject {
     }
 
     /// Detail is the open tool and the photo isn't cleaned yet: the model is made ready in the background (load + GPU
-    /// setup, ~20 s the first time on the owner's phone), so tapping AI Denoise starts cleaning at once. Let go of 30 s
-    /// after leaving Detail, straight after a clean, in the background and on a memory warning.
+    /// setup, ~20 s the first time on the owner's phone), so tapping AI Denoise starts cleaning at once. Once loaded it stays
+    /// (a memory warning lets it go), so it is loaded once per session; with little memory free it waits for the tap.
     private(set) var detailOpen = false
-    private var denoiseRelease: Task<Void, Never>?
     private var denoiseWarming = false
     func detailToolChanged(open: Bool, now: Bool = false) {
         detailOpen = open
-        denoiseRelease?.cancel(); denoiseRelease = nil
-        if open { warmDenoiseIfNeeded(); return }
-        denoiseRelease = Task { @MainActor [weak self] in
-            if !now { try? await Task.sleep(nanoseconds: 30_000_000_000) }
-            guard !Task.isCancelled, let self, !self.detailOpen, self.denoiseProgress == nil else { return }
-            self.denoiseQueue.async { EditSession.releaseDenoiseModel() }
-        }
+        if open { warmDenoiseIfNeeded() }
     }
 
     private func warmDenoiseIfNeeded() {
         refreshDenoiseReady()
-        guard MemoryBudget.denoiseFits, detailOpen, !denoiseReady, !denoiseWarming, denoiseProgress == nil, store?.denoiseBatch == nil, EditSession.hasDenoiseModel,
-              Diagnostics.availableMB > 1500, UIApplication.shared.applicationState != .background else { return }
+        guard MemoryBudget.denoiseFits, detailOpen, !denoiseReady, !denoiseWarming, !EditSession.denoiseWarm, denoiseProgress == nil,
+              store?.denoiseBatch == nil, EditSession.hasDenoiseModel, !MemoryBudget.careful,
+              Diagnostics.availableMB > 2400, UIApplication.shared.applicationState != .background else { return }
         denoiseWarming = true
         denoiseQueue.async {
+            Diagnostics.shared.note("denoise model: loading")
             let s = EditSession.warmDenoise()
             if s > 0.5 { Diagnostics.shared.note(String(format: "denoise model made ready in %.1f s (Detail open)", s)) }
             Task { @MainActor [weak self] in self?.denoiseWarming = false }
@@ -840,7 +877,7 @@ final class EditorViewModel: ObservableObject {
                 releaseTask = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 6_000_000_000)
                     guard let self, !Task.isCancelled else { return }
-                    if self.zoomLevel <= 1.05 { self.detailSource = nil }
+                    if self.zoomLevel <= 1.05 { self.releaseDetail() }
                     self.releaseTask = nil
                 }
             }
@@ -859,7 +896,6 @@ final class EditorViewModel: ObservableObject {
         unhealedSource = nil
         LumenGPU.context.clearCaches()
         EditSession.releaseMaskModels()
-        if denoiseProgress == nil { denoiseQueue.async { EditSession.releaseDenoiseModel() } }
     }
 
     private func buildDetail(afterRelease: Bool = false) {
@@ -932,6 +968,7 @@ final class EditorViewModel: ObservableObject {
                     return
                 }
                 self.detailSource = src
+                if src != nil { self.sessionHoldsFullDecode = true }
                 self.syncDetailMasks()
                 self.requestRender()
                 // zoomed back out while it was building: start the usual release countdown
@@ -1503,7 +1540,7 @@ final class EditorViewModel: ObservableObject {
     /// again first (the 100 % view's full-resolution source, the heal-free "before" preview, GPU caches). With all of
     /// them alive iOS closed the app during big heals (owner, 18 Oct, Lumen at 3.3 GB in the JetsamEvent report).
     func freeMemoryForHeal() {
-        detailSource = nil
+        releaseDetail()
         unhealedSource = nil
         LumenGPU.context.clearCaches()
         // short of room: the mask models go too (masks already worked out are kept; they load again when needed)
