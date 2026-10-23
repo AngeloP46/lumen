@@ -114,7 +114,7 @@ on the 2560 px copy for every photo over 2700 px, not just over 30 MP (B6); the 
 (a 48 MP export peaked at about 1.1 GB on the phone, the old 60 MB/MP + 800 asked for more than the limit). It waits
 for the phone results of 0.1.521.
 
-**23 Oct, evening and night (Claude, SideStore 0.1.533 to 0.1.581).** The first phone runs found memory closures that the
+**23 Oct, evening and night (Claude, SideStore 0.1.533 to 0.1.593).** The first phone runs found memory closures that the
 batches above did not set out to fix. New rows below the table of 23 Oct: A21 (the 100 % view loop), A22 (spikes and
 closures: the flight recorder is in since 0.1.546), A23 (reload storms). Versions:
 
@@ -128,9 +128,17 @@ closures: the flight recorder is in since 0.1.546), A23 (reload storms). Version
 | 0.1.569 | A17 rest, A8 export part (above) |
 | 0.1.574 | A22 frame pacing: one frame in flight (was two), a rested picture is rendered once into a bitmap and drawn from that, a 2048 px preview, a memory warning draws again once 0.6 s later |
 | 0.1.581 | A22 Heal: the Heal model runs on the GPU (not with the Neural Engine, whose first load after an update took 2.2-3 GB inside Lumen), is loaded on its own with the canvas still and nothing else heavy running, or Heal says there is no room; the canvas also stays still during a heal; a fresh demo launch forgets the undo history (test isolation) |
+| 0.1.589 | careful mode: after two memory closures within a day Lumen uses a 1600 px preview, skips the zoomed-in copy and the Heal warm-up, lets go earlier (2.0 GB) and says so once; back to normal after a day without a closure (`CarefulMode`, logic tests) |
+| 0.1.593 | B6: the original copy is made once at a time (0.1.581 log: 11 times in a minute during undo/redo), export works out AI masks on the small copy for every photo over 2700 px, a realistic export estimate (30 MB/MP + 700) |
 
-**Still open:** A22 (proof of 0.1.574 and 0.1.581 only from Send diagnostics), A8 residual (~1 GB after AI Denoise), B6 (PR #91 rebased,
-branch quality-batch11, in a later batch). **B3 is closed as won't fix:** a heal paints pixels the model made, which never had sensor noise, over the photo
+**Phone evidence, 0.1.581 (Angelo, 23 Oct 16:49-16:51):** heavy, quick editing (undo/redo and HDR toggles, three people removed, four heals, the
+zoomed-in copy built three times, AI masks on every change): **no closure, peak 1932 MB** (0.1.552 and earlier reached 3.0-3.4 GB and closed). The Heal model
+loaded alone in about a second (262 to 413 MB), the 100 % copy was refused once for lack of room (1831 MB left, needs ~2880) as designed, one heal started
+with 1869 MB free (needs ~2000) and finished. One session, not proof: A22 stays open until a few days of use have passed without a closure.
+Seen in the same log and fixed in 0.1.593: "original copy made 11 times within 60 s".
+
+**Still open:** A22 (a few more days of use without a closure; Send diagnostics will show), A8 residual (~1 GB after AI Denoise: the
+"4 s after AI Denoise ended" line, needs one more AI Denoise run on 0.1.552 or later). **B3 is closed as won't fix:** a heal paints pixels the model made, which never had sensor noise, over the photo
 after AI Denoise has done its work, so the patch looks the same at any AI Denoise amount while the photo around it does not; matching it means
 inventing grain (a feature, not a repair), and moving the patch before the denoise changes nothing (the noise is zero inside it). Healing after
 AI Denoise gives the closest match. Phone verification of everything above is outstanding (section G).
@@ -186,7 +194,7 @@ AI Denoise gives the closest match. Phone verification of everything above is ou
 | B3 | **Heal and AI Denoise don't compose.** Patches are baked from the decode at the time (with that AI Denoise amount and HDR mode) and painted over every later decode: heal-then-denoise leaves noisy spots; denoise-then-heal-then-lower leaves clean spots; an HDR-made sky patch may not match in SDR or in thumbnails. `[1+2]` | code: Engine.swift:463–467; Heal.swift:238 | Engine test: noisy photo, heal, then denoise; noise inside vs outside the patch; HDR→SDR patch vs ring. | won't fix (23 Oct, reason in the note after the table of versions above): the patch has no sensor noise and is painted after AI Denoise, so it is unaffected by the amount; matching grain would be a new feature |
 | B4 | **Brush masks with long strokes bloat everything:** every point kept; the sidecar saved every 0.5 s on the main thread; up to 201 history snapshots rewritten after each save; the History list re-diffs all steps on every redraw; the brush raster redrawn from scratch on each finger move on the main thread. `[1+2]` | code: Masks.swift:170; LibraryStore.swift:422–447; EditSettings.swift:649–668; EditorViewModel.swift:988–996 | Sim: 20 long strokes → sidecar/history size, save time; phone P3. | fixed (0.1.562) - a brush stroke is reduced to the points that give its shape when the finger lifts (Ramer-Douglas-Peucker, 1.5 px on the preview, at most 300 points); logic tests |
 | B5 | **Moving AI Denoise strength re-decodes the photo** (and rebuilds the 100 % copy when zoomed). | phone 0.1.459 ("100% view: building" ×5 in 20 s); code | Count reloads per slider move in the demo log. | mitigated (0.1.562) - a decode after a pause of the slider is one decode at a time (0.1.546), and the 100 % copy is made 2 s later, once, instead of after every pause |
-| B6 | **Repeated AI work:** subject-at-a-point re-runs Vision; each model renders its own 1024 px copy; each heal blends over the whole picture; export works out masks at full size under 30 MP (fixed in #91, not merged). `[1+2]` | code | Engine timings before/after. | open |
+| B6 | **Repeated AI work:** subject-at-a-point re-runs Vision; each model renders its own 1024 px copy; each heal blends over the whole picture; export works out masks at full size under 30 MP (fixed in #91, not merged). `[1+2]` | code | Engine timings before/after. | fixed (0.1.593) - the original copy once at a time, export masks from the small copy for every photo over 2700 px, a 30 MB/MP + 700 export estimate; the other parts of B6 (each model's own 1024 px copy, a heal blending over the whole picture) are cost, not memory: left as they are |
 | B7 | **The canvas may redraw the whole photo on unrelated screen updates** (`updateUIView` always calls `setNeedsDisplay()`), competing with AI Denoise for the GPU. `[1]` | code: CanvasView.swift:221–234 | Count "draw canvas" log lines during a clean. | fixed (branch) — `updateUIView` now redraws only when the layout (xform/HDR) changed; image changes and view resizes keep their own redraw paths. Existing UI tests (zoom, pan, rotate, split, every tool) guard that the canvas still follows the finger; phone P-check: watch for a frozen canvas |
 | B8 | **iOS RAW decoder changes aren't tracked:** stored AI Denoise noise and heal patches assume today's decode; an iOS update with a new RAW engine could misalign them. `[2]` | code: Engine.swift:427–442 | Record the decoder version per photo; compare on update. | fixed (0.1.552) - AI Denoise results remember the RAW decoder (`CIRAWFilter.decoderVersion`) they were made with; another decoder after an iOS update counts as missing (the A16 notice) |
 
