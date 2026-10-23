@@ -71,10 +71,32 @@ wrong spot. The A14, A17 and A19 changes themselves hold up (`renderData` is beh
 | B7: a frame refused in the background was never redrawn | CanvasView | redraw on `didBecomeActive` |
 | Heal model read twice in `prepareHealModel` (second load after a release) | Heal.swift | read once |
 
-**Not fixed yet (known, recorded):** A4 reopen-while-healing race (heal added by `addHeals` can be overwritten by the
-reopened editor's next save); `LoadedModel` can start a second load for a waiter after a release; B1 (CI runs as a
-low-memory phone: a decision, default tier could be faked in demo mode); sandbox is still behind main on batches
-0–2 and Copy/Paste (merge main into it, never the other way); A13, A16, A18, A20, B2–B6, B8 as before.
+**Verification of `quality-fixes` (PR #99, merged 23 Oct; simulator and Mac only, no phone evidence):** Build IPA and
+Release readiness green; Linux logic tests green; engine test green (1072 checks plus the 12 MP ProRAW memory run); full
+UI suite 87 of 88 with the one failure a test of mine that compared against the wrong starting value (Lens Blur amount
+after leaving the tool), fixed and re-run 3 of 3; the eight tests that exercise the changed flows 8 of 8.
+Published as SideStore **0.1.516**.
+
+**Batch 4 (PR #100, merged 23 Oct, SideStore 0.1.521):**
+
+| Finding | Fix | Guard |
+|---|---|---|
+| A18: an AI step that failed (request threw, model wouldn't load, no memory) was remembered as "found nothing" ("No people found") and could never be retried | `ImageSource.noteFailure/failures/clearFailures`; each Masks.swift step notes a failure where it happens; the empty-mask banner says the AI couldn't run and offers Try again (`mask-empty-retry`) | engine test: failure registry; targeted UI tests |
+| A20: a batch clean of a photo removed meanwhile left a stray cleaned file; a batch paused by backgrounding never carried on if Lumen came back first | file removed when the photo is gone; carries on when the app is active again | code review (hard to test) |
+| A4 reopen: a heal finished after its editor closed was written by the store, then overwritten by a reopened editor's next save | store posts `.lumenHealsAdded`; an open editor of that photo adopts the heals | code review; targeted heal UI tests |
+
+Checks: Build IPA + Release readiness green, Logic green, Engine green (first commit), six targeted UI tests green
+(mask, heal, next photo, people mask). Full UI suite not re-run on this batch.
+
+**App Store version (`sandbox-on-main`, 23 Oct):** the old `sandbox` had drifted too far for a merge (20 conflicts), so it
+is main's code with the Store layer put back on top (only `EditorView`, `LibraryView`, `LibraryStore`, `Demo.swift`
+hold `#if APP_STORE` hooks; all other shared files are main's). Checked with app-store-sandbox.yml: flag off and on,
+ProGate checks, StoreKit test, screenshots. Not yet merged into `sandbox`; nothing is submitted.
+
+**Not fixed yet (known, recorded):** `LoadedModel` can start a second load for a waiter after a release; A13
+(thumbnails don't show AI masks: needs a design decision); A16; B1 (CI runs as a low-memory phone: a decision, the
+default tier could be faked in demo mode); B2–B6, B8; B3 (heal × denoise) after the engine measurement. Phone
+verification of everything above is outstanding (section G).
 
 ## A. Confirmed bugs, ranked by user impact
 
@@ -205,6 +227,14 @@ are left **ready, not merged**: merging publishes to SideStore, and that waits f
 - P5 48 MP: open a 48 MP ProRAW, zoom to 100 %, heal one spot, export; Send diagnostics.
 - P6 Background: start Remove people (or a batch export of 5) and press Home straight away; come back; any black
   patches or broken files?
+- P7 Copy and paste (0.1.516): in the library tick a photo → Copy → pick only Light + a mask → tick two others →
+  Paste. Do they take exactly what you chose? Open one: no second prompt, masks sit right. Try a photo with AI
+  Denoise: Paste should ask before cleaning (about a minute).
+- P8 Remove asks first: tick a photo → Remove. A question appears first; Cancel keeps it; Remove takes it out at once.
+- P9 Edits survive: change a slider, press Home straight away, kill Lumen from the app switcher, open it again: edit
+  still there. Open a photo and leave without touching anything: it must not appear as "edited".
+- P10 AI masks undo/redo: add a Subject or Sky mask, Undo, Redo: the mask should return at once (no 7–14 s wait).
+- P11 Memory: the same P1 run on 0.1.516; compare "Memory now" with 0.1.465 (about 900–1000 MB after a clean).
 
 ## H. Test failures and their causes
 
