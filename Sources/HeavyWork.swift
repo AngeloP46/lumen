@@ -21,6 +21,8 @@ final class HeavyWork: @unchecked Sendable {
         case denoise = "AI Denoise"
         case export = "export"
         case original = "original copy"
+        case preview = "preview decode"
+        case healModel = "Heal model"
     }
 
     /// Roughly what a job needs on an iPhone (MB), from the owner's diagnostics and the CI memory test: the RAW engine's
@@ -38,11 +40,20 @@ final class HeavyWork: @unchecked Sendable {
         // original copy started when it really couldn't fit (checklist A8; phone 0.1.465: 892-1001 MB between
         // photos after a clean).
         case .original: return Int(50 * mp) + 100
+        // the editor decoding the photo again after undo, HDR or a heal: ~170-300 MB net on the owner's phone, more
+        // while the old and the new copy exist together (23 Oct)
+        case .preview: return Int(8 * mp) + 600
+        // loading the Heal model: memory goes up ~2.2-2.8 GB for a second or two (owner's phone, 23 Oct: 533 -> 2769 MB;
+        // closed Lumen at 320 MB in use three times) and falls back to ~150-300 MB once it is loaded
+        case .healModel: return 2800
         }
     }
 
     /// The memory never left free while jobs share the phone (MB).
     static let marginMB = 700
+    /// The model's load is a short spike that is over before anything else can start (the others wait for it), so it
+    /// asks for less to spare than a long job does.
+    static func marginMB(for kind: Kind) -> Int { kind == .healModel ? 100 : marginMB }
 
     private struct Running { let id: Int; let kind: Kind; let need: Int; let long: Bool }
     private let condition = NSCondition()
@@ -55,10 +66,10 @@ final class HeavyWork: @unchecked Sendable {
     /// Memory Lumen may still use (MB); the app points it at os_proc_available_memory.
     nonisolated(unsafe) static var availableMB: () -> Int = { 1 << 20 }
 
-    private func admits(_ need: Int, long: Bool) -> Bool {
+    private func admits(_ need: Int, long: Bool, margin: Int = HeavyWork.marginMB) -> Bool {
         if running.isEmpty { return true }
         if long && running.contains(where: \.long) { return false }
-        return Self.availableMB() - need >= Self.marginMB
+        return Self.availableMB() - need >= margin
     }
 
     /// Runs `work` on the calling (background) thread when there is room for it, and returns its result. `long` = a
@@ -66,9 +77,11 @@ final class HeavyWork: @unchecked Sendable {
     /// room. `optional`: returns nil at once instead of waiting or starting short of memory.
     func run<T>(_ kind: Kind, megapixels: Double, long: Bool = false, optional: Bool = false, _ work: () -> T) -> T? {
         let need = Self.needMB(kind, megapixels: megapixels)
+        // the simulator reports no memory at all (checklist B1): there a preview decode is not held up
+        if kind == .preview, Self.availableMB() <= 0 { return work() }
         condition.lock()
         var waited = false
-        while !admits(need, long: long) {
+        while !admits(need, long: long, margin: Self.marginMB(for: kind)) {
             if optional {
                 condition.unlock()
                 Self.note?("\(kind.rawValue): skipped, \(Self.availableMB()) MB free, ~\(need) MB needed beside \(runningNames)")
@@ -83,16 +96,16 @@ final class HeavyWork: @unchecked Sendable {
         running.append(me)
         condition.unlock()
         // short of room even alone: what can be made again goes first
-        if alone, Self.availableMB() < need + Self.marginMB {
+        if alone, Self.availableMB() < need + Self.marginMB(for: kind) {
             if optional {
                 // an optional job (the 100 % copy, the original copy) is not worth sleeping on the shared work queue for
                 // (it stalled the next photo's decode by 3 s): it starts if there is room for it AND the safety margin
                 // (without the margin a 4096 px copy started with 2477 MB free for ~2150 MB and iOS closed Lumen,
                 // 23 Oct), else it is skipped at once
                 let free = Self.availableMB()
-                if free < need + Self.marginMB {
+                if free < need + Self.marginMB(for: kind) {
                     finish(me)
-                    Self.note?("\(kind.rawValue): skipped, only \(free) MB free (~\(need) MB needed, plus \(Self.marginMB) MB to spare)")
+                    Self.note?("\(kind.rawValue): skipped, only \(free) MB free (~\(need) MB needed, plus \(Self.marginMB(for: kind)) MB to spare)")
                     return nil
                 }
             } else {
