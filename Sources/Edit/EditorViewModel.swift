@@ -1275,6 +1275,8 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var peopleChosen: Set<Int> = []
     /// Bumped by Cancel (or leaving Heal) so a search still running is ignored when it finishes.
     private var peopleSearch = 0
+    /// A running multi-person removal can be stopped (A19: only AI Denoise could). What is removed so far is kept.
+    nonisolated(unsafe) private var removePeopleCancel = false
 
     func findPeople() {
         guard !healBusy, let session else { return }
@@ -1343,6 +1345,9 @@ final class EditorViewModel: ObservableObject {
         requestRender()
     }
 
+    /// Stops a running multi-person removal between people (A19); the people already removed stay removed.
+    func cancelRemovingPeople() { removePeopleCancel = true }
+
     /// Removes the people picked, one heal each (each built on the ones before), all added as one undo step.
     func removeChosenPeople() {
         guard !healBusy, let session, let people = peopleFound else { return }
@@ -1351,12 +1356,14 @@ final class EditorViewModel: ObservableObject {
         let earlier = settings.effective.heals
         healBusy = true
         healBusyText = chosen.count == 1 ? "Removing…" : "Removing 1 of \(chosen.count)…"
+        removePeopleCancel = false
         freeMemoryForHeal()
         let mp = megapixels
-        workQueue.async {
+        workQueue.async { [weak self] in
             var made: [HealSpot] = []
             var failures: [HealFailure] = []
             for (i, person) in chosen.enumerated() {
+                if self?.removePeopleCancel == true { break }   // A19: stop between people; what's removed stays removed
                 if i > 0 {
                     let text = "Removing \(i + 1) of \(chosen.count)…"
                     Task { @MainActor [weak self] in self?.healBusyText = text }
@@ -1370,12 +1377,13 @@ final class EditorViewModel: ObservableObject {
                     failures.append(EditSession.healFailure ?? .failed)
                 }
             }
-            let done = made, failed = failures
+            let done = made, failed = failures, stopped = self?.removePeopleCancel == true
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.peopleFound = nil
                 self.peopleChosen = []
-                if let first = failed.first {
+                if stopped { self.healMessage = "Stopped after \(done.count) of \(chosen.count)." }
+                else if let first = failed.first {
                     self.healMessage = done.isEmpty ? first.message
                         : "\(failed.count) of \(chosen.count) couldn't be removed. Paint over what's left to try again."
                 }
@@ -1688,19 +1696,25 @@ final class EditorViewModel: ObservableObject {
         workQueue.async {
             defer { patches.close() }
             Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
-            let data = HeavyWork.shared.run(.export, megapixels: mp) {
-                session.renderData(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
-            } ?? nil
+            // A17: the failure says why, not just that it failed
+            let outcome: EditSession.ExportOutcome? = HeavyWork.shared.run(.export, megapixels: mp) {
+                session.renderDataOutcome(s, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+            }
             var url: URL?
-            if let data {
+            var failReason: String?
+            switch outcome {
+            case .data(let data):
                 let u = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-lumen.\(o.format.ext)")
                 if (try? data.write(to: u, options: .atomic)) != nil { url = u }
                 if DemoMode.isOn { DemoMode.log("exported \(o.format.rawValue) q \(Int(o.quality)) edge \(o.longEdge) bytes \(data.count)") }
+            case .failed(let f): failReason = f.message
+            case nil: failReason = "There isn't enough free memory to export this photo right now."
             }
             Task { @MainActor [weak self] in
                 self?.isExporting = false
                 self?.refreshUnhealed()
-                if let url { self?.exported = ExportResult(url: url) } else { self?.message = "Export failed." }
+                if let url { self?.exported = ExportResult(url: url) }
+                else { self?.message = failReason ?? "Export failed." }
             }
         }
     }

@@ -65,6 +65,8 @@ final class LibraryStore: ObservableObject {
     private var batchRunning = false
     nonisolated(unsafe) private var batchPausing = false
     nonisolated(unsafe) private var batchCancel = false
+    /// A batch export can be cancelled (A19: only AI Denoise could). The photos already done are kept.
+    nonisolated(unsafe) private var exportCancel = false
     private let batchDenoiseQueue = DispatchQueue(label: "lumen.denoise.batch", qos: .userInitiated)
     private var batchObservers: [NSObjectProtocol] = []
     /// Cleans that paused in the editor (Lumen left the screen or was swiped away): photo and how far it got.
@@ -650,6 +652,9 @@ final class LibraryStore: ObservableObject {
     // MARK: Batch export
 
     /// Exports every photo in `list` one after another in the background, then offers them in `batchResult`.
+    /// Stops a running batch export after the current photo; what has already been exported is kept (A19).
+    func cancelExport() { exportCancel = true }
+
     func export(_ list: [LibraryItem], options o: ExportOptions) {
 #if APP_STORE
         guard LumenStore.shared.isPro || !list.contains(where: { settings(for: $0).usesProFeatures }) else {
@@ -658,6 +663,7 @@ final class LibraryStore: ObservableObject {
         }
 #endif
         guard batchProgress == nil, !list.isEmpty else { return }
+        exportCancel = false
         batchProgress = (0, list.count)
         // In the App Store build, untouched RAW photos export with neutral saved settings.
         // editorSettings(for:) injects HDR for an unopened RAW, which is a Pro feature;
@@ -672,17 +678,28 @@ final class LibraryStore: ObservableObject {
         let patches = HealStore.retain(Set(jobs.flatMap { $0.edits.heals.map(\.id) }))
         let dir = fm.temporaryDirectory.appendingPathComponent("lumen-export-\(UUID().uuidString)", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        exportQueue.async {
+        exportQueue.async { [weak self] in
             defer { patches.close() }
             var urls: [URL] = []
             var used = Set<String>()
+            var failures: [String] = []   // A17: what went wrong, not just how many
             for (n, job) in jobs.enumerated() {
+                if self?.exportCancel == true { break }   // A19: stop between photos; what's done is kept
                 autoreleasepool {
-                    guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr && o.hdr) else { return }
+                    // Decode the way the editor would (checklist A14): "Include HDR" only controls the gain map,
+                    // not the decode, so the same SDR export from the editor and the library is the same photo.
+                    guard let session = EditSession(url: job.url, expandHDR: job.edits.hdr) else { return }
                     let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
-                    guard let data = HeavyWork.shared.run(.export, megapixels: mp, {
-                        session.renderData(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
-                    }) ?? nil else { return }
+                    let outcome: EditSession.ExportOutcome? = HeavyWork.shared.run(.export, megapixels: mp) {
+                        session.renderDataOutcome(job.edits, format: o.format, quality: o.quality / 100, maxEdge: o.maxEdge, includeHDR: o.hdr)
+                    }
+                    var data: Data?
+                    switch outcome {
+                    case .data(let d): data = d
+                    case .failed(let f): failures.append(f.message)
+                    case nil: failures.append("There isn't enough free memory to export this photo right now.")
+                    }
+                    guard let data = data else { return }
                     var name = job.name + "-lumen", k = 2
                     // the file system ignores case: IMG_1 and img_1 would overwrite each other
                     while used.contains(name.lowercased()) { name = "\(job.name)-lumen-\(k)"; k += 1 }
@@ -700,7 +717,11 @@ final class LibraryStore: ObservableObject {
                 guard let self else { return }
                 self.batchProgress = nil
                 if DemoMode.isOn { DemoMode.log("batch exported \(done.count) of \(jobs.count)") }
-                if done.count < jobs.count { self.lastError = "\(jobs.count - done.count) of \(jobs.count) photos could not be exported." }
+                if exportCancel { self.lastError = "Export stopped after \(done.count) of \(jobs.count)." }
+                else if done.count < jobs.count {
+                    let why = Array(Set(failures)).sorted()
+                    self.lastError = "\(jobs.count - done.count) of \(jobs.count) photos could not be exported.\(why.isEmpty ? "" : "\n" + why.joined(separator: "\n"))"
+                }
                 if !done.isEmpty { self.batchResult = BatchResult(urls: done) }
             }
         }
