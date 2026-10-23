@@ -294,6 +294,27 @@ if args.contains("--ctxprobe") {
         let f = malloc_zone_pressure_relief(nil, 0)
         print("::notice::PROBE E new key scale \(scale) hdr \(hdr): +\(mid - b) MB after the decode, relief freed \(f / 1_048_576) MB, now +\(footprintMB() - b) MB")
     }
+    // F: the same, from the file's bytes (mapped) instead of its URL
+    func decodeData(_ ctx: CIContext, scale: Float, hdr: Bool) {
+        autoreleasepool {
+            guard let data = try? Data(contentsOf: arw, options: .alwaysMapped),
+                  let f = CIRAWFilter(imageData: data, identifierHint: arw.pathExtension) else { return }
+            f.scaleFactor = scale
+            f.extendedDynamicRangeAmount = hdr ? 2.0 : 1.0
+            guard let img = f.outputImage else { return }
+            let e = img.extent
+            let w = Int(e.width), h = Int(e.height)
+            var px = [UInt16](repeating: 0, count: w * h * 4)
+            px.withUnsafeMutableBytes { ctx.render(img, toBitmap: $0.baseAddress!, rowBytes: w * 8, bounds: e, format: .RGBAh, colorSpace: nil) }
+        }
+    }
+    for (scale, hdr) in [(0.35, true), (0.6, false), (0.9, true), (0.35, true)] as [(Float, Bool)] {
+        let b = footprintMB()
+        decodeData(mk(false), scale: scale, hdr: hdr)
+        print("::notice::PROBE F from bytes scale \(scale) hdr \(hdr): left behind \(footprintMB() - b) MB (now \(footprintMB()))")
+    }
+    sleep(3)
+    print("::notice::PROBE F after 3 s: \(footprintMB()) MB")
     exit(0)
 }
 // ---- Memory budget (`--memory`, its own process so nothing else is counted): the 24 MP Sony ARW opened the way
