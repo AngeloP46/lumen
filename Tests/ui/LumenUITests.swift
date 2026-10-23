@@ -31,12 +31,15 @@ final class LumenUITests: XCTestCase {
             sleep(1)
             return Double(valueOf("reset-Blur amount")) ?? -1
         }
-        let first = drag(0.4, 0.7)
+        _ = drag(0.4, 0.7)
         for other in ["Detail", "Masks", "Curve"] {
+            // the amount just before leaving, not the very first one: each round's drag back lands a few points from
+            // where it started, so comparing with the first value made every round after the first drift
+            let leaving = Double(valueOf("reset-Blur amount")) ?? -1
             tapTool(other); sleep(1)
             tapTool("Lens Blur"); sleep(2)
             let before = Double(valueOf("reset-Blur amount")) ?? -1
-            XCTAssertEqual(before, first, accuracy: 0.6, "amount must be kept after visiting \(other)")
+            XCTAssertEqual(before, leaving, accuracy: 0.6, "amount must be kept after visiting \(other)")
             let after = drag(0.6, 0.3)
             XCTAssertLessThan(after, before - 3, "Blur amount must still move after visiting \(other)")
             _ = drag(0.3, 0.6)
