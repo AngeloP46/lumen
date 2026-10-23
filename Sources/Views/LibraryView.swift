@@ -49,7 +49,6 @@ struct LibraryView: View {
 #if APP_STORE
     @State private var showProPaywall = false
     @ObservedObject private var proStore = LumenStore.shared
-    @Environment(\.scenePhase) private var scenePhase
 #endif
     @State private var showDiagnostics = false
     @State private var notice: String?
@@ -95,6 +94,25 @@ struct LibraryView: View {
         }
 #else
         showBatchExport = true
+#endif
+    }
+
+    private var batchExportSheet: some View {
+        let list = selectedItems
+        return ExportOptionsSheet(count: list.count, hdrAvailable: list.contains { store.editorSettings(for: $0).hdr }) { exportSelected(list, $0) }
+    }
+
+    private func exportSelected(_ list: [LibraryItem], _ o: ExportOptions) {
+#if APP_STORE
+        Task {
+            await proStore.refreshStatus()
+            if list.contains(where: { store.settings(for: $0).usesProFeatures }) && !proStore.isPro {
+                showBatchExport = false
+                showProPaywall = true
+            } else { store.export(list, options: o) }
+        }
+#else
+        store.export(list, options: o)
 #endif
     }
 
@@ -237,28 +255,9 @@ struct LibraryView: View {
             }
             .overlay(alignment: .top) { SaveProblemBanner() }
             .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
-            .sheet(isPresented: $showBatchExport) {
-                let list = selectedItems
-                ExportOptionsSheet(count: list.count, hdrAvailable: list.contains { store.editorSettings(for: $0).hdr }) { o in
+            .sheet(isPresented: $showBatchExport) { batchExportSheet }
 #if APP_STORE
-                    Task {
-                        await proStore.refreshStatus()
-                        if list.contains(where: { store.settings(for: $0).usesProFeatures }) && !proStore.isPro {
-                            showBatchExport = false
-                            showProPaywall = true
-                        } else { store.export(list, options: o) }
-                    }
-#else
-                    store.export(list, options: o)
-#endif
-                }
-            }
-#if APP_STORE
-            .sheet(isPresented: $showProPaywall) { PaywallView(store: proStore) }
-            .task { await proStore.refreshStatus() }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await proStore.refreshStatus() } }
-            }
+            .modifier(ProPaywall(show: $showProPaywall, store: proStore))
 #endif
             .sheet(item: $store.batchResult) { result in
                 BatchExportSheet(urls: result.urls) { show(await store.saveToPhotos(result.urls)) }
@@ -559,3 +558,21 @@ struct ThumbnailView: View {
             .clipped()
     }
 }
+
+#if APP_STORE
+/// The paywall for the export gate: the sheet, and the Pro status refreshed when the screen opens and when Lumen
+/// comes back (kept out of `body`, which the compiler can't type-check once it grows this long).
+private struct ProPaywall: ViewModifier {
+    @Binding var show: Bool
+    @ObservedObject var store: LumenStore
+    @Environment(\.scenePhase) private var scenePhase
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $show) { PaywallView(store: store) }
+            .task { await store.refreshStatus() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await store.refreshStatus() } }
+            }
+    }
+}
+#endif
