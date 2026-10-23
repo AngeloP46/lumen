@@ -330,6 +330,7 @@ do {
     check(both.wait(timeout: .now() + 3) == .success, "both callers finish")
     check(loads == 1, "a waiter must not start a second load after a release (\(loads) loads)")
     check(got.count == 2 && got.allSatisfy { $0 == 5 }, "both callers get the model (\(got))")
+}
 
 // ---- A23 (23 Oct): one decode at a time, only the newest settings; the Heal model's load waits for room
 do {
