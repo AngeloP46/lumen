@@ -81,6 +81,23 @@ final class CanvasModel {
         return (s.count, s[s.count / 2], s[min(s.count - 1, s.count * 95 / 100)], s.last ?? 0)
     }
 
+    /// While true the canvas keeps its last frame and draws nothing new: loading the Heal model or healing needs all the
+    /// memory it can get, and a redraw of a heavy picture holds up to a gigabyte while it goes (quality checklist A22).
+    /// It resumes by itself after 20 s in case something forgets to.
+    var drawingPaused = false {
+        didSet {
+            pauseWatchdog?.cancel(); pauseWatchdog = nil
+            if drawingPaused {
+                let w = DispatchWorkItem { [weak self] in self?.drawingPaused = false }
+                pauseWatchdog = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: w)
+            } else {
+                redrawAll()
+            }
+        }
+    }
+    private var pauseWatchdog: DispatchWorkItem?
+
     /// Bumped by every `update`; a frozen picture is used only if no newer one has arrived.
     private var generation = 0
     private var freezeWork: DispatchWorkItem?
@@ -104,6 +121,7 @@ final class CanvasModel {
               img.extent.width <= 4096, img.extent.height <= 4096 else { return }
         let work = DispatchWorkItem { [weak self] in
             // not when memory is already tight: the draw that is going on is enough (the simulator reports none: no limit)
+            if self?.drawingPaused == true { return }   // a model load or a heal is using the memory
             let left = Diagnostics.availableMB
             if left > 0 && left < 700 { return }
             let e = img.extent.integral
@@ -185,6 +203,7 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
     private var redrawWaiting = false
 
     func draw(in view: MTKView) {
+        guard !model.drawingPaused else { return }
         guard inFlight < 1 else { redrawWaiting = true; return }
         BlackBox.shared.count("draw")
         guard let queue = LumenGPU.queue, let drawable = view.currentDrawable,
