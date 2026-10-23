@@ -231,6 +231,56 @@ func floatPixels(_ img: CIImage, width: Int = 64) -> [Float]? {
 
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
 
+// PROBE (23 Oct, not merged): what rendering the Lens Blur preview costs in memory, by amount. The owner's phone showed
+// 1.2 GB (amount 16) and more (amount 69) of extra memory in the second after a Lens Blur photo's tool changed.
+if args.contains("--lensmem") {
+    func footprintMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+    final class Hi: @unchecked Sendable { var mb = 0; var stop = false; let lock = NSLock() }
+    let hi = Hi()
+    Thread.detachNewThread {
+        while true {
+            hi.lock.lock(); let done = hi.stop; hi.mb = max(hi.mb, footprintMB()); hi.lock.unlock()
+            if done { break }
+            usleep(5_000)
+        }
+    }
+    guard let arw = files.first(where: { ["arw", "dng"].contains($0.pathExtension.lowercased()) }),
+          let session = EditSession(url: arw, expandHDR: true),
+          let preview = session.makeSource(maxEdge: 2560, materialize: true) else { print("PROBE no photo"); exit(1) }
+    let values = (0..<4096).map { Float($0 % 64) / 63 }
+    let field = DepthField(width: 64, height: 64, values: values, histogram: Array(repeating: 1, count: 64))
+    preview.storeDepth(field)
+    preview.storeMask(EditSession.aiDepth, EditSession.depthImage(field, extent: preview.extent))
+    let e = preview.extent
+    let subject = EditSession.constant(1, CGRect(x: e.minX + e.width * 0.2, y: e.minY, width: e.width * 0.2, height: e.height))
+        .composited(over: EditSession.constant(0, e))
+    preview.storeMask(EditSession.aiSubject, subject)
+    print("PROBE preview \(Int(e.width))x\(Int(e.height)), footprint \(footprintMB()) MB")
+    for amount in [0.0, 16, 40, 69, 100] {
+        for pass in 1...2 {
+            var s = EditSettings(); s.hdr = true
+            s.lensBlur.amount = amount; s.lensBlur.activated = true
+            hi.lock.lock(); hi.mb = footprintMB(); hi.lock.unlock()
+            let before = footprintMB()
+            let t = now()
+            var drawn = false
+            autoreleasepool { drawn = session.renderCGImage(s, source: preview) != nil }
+            hi.lock.lock(); let p = hi.mb; hi.lock.unlock()
+            print("::notice::PROBE Lens Blur \(Int(amount)) render \(pass): peak +\(p - before) MB over \(before) MB, after +\(footprintMB() - before) MB, \(String(format: "%.2f", now() - t)) s, ok \(drawn)")
+        }
+        LumenGPU.context.clearCaches()
+        print("PROBE after clearCaches: \(footprintMB()) MB")
+    }
+    hi.lock.lock(); hi.stop = true; hi.lock.unlock()
+    exit(0)
+}
 // ---- Memory budget (`--memory`, its own process so nothing else is counted): the 24 MP Sony ARW opened the way
 // the phone opens it (HDR), the 100 % view's full-size copy, a subject mask, a big heal and a full-size export.
 // iOS closes Lumen at about 3.4 GB (owner's JetsamEvent, 18 Oct: killed at 3388 MB). The Mac counts GPU memory a
