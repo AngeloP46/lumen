@@ -190,14 +190,6 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
-    /// iOS has closed Lumen for memory twice today: say what it does about it, once per launch.
-    private var carefulModeNoted = false
-    private func noteCarefulMode() {
-        guard !carefulModeNoted, MemoryBudget.careful, message == nil else { return }
-        carefulModeNoted = true
-        message = "iOS closed Lumen for memory twice today, so for now it uses smaller previews and skips the zoomed-in copy. It goes back to normal after a day without it."
-    }
-
     /// AI Denoise is on, but the cleaned copy is not on the phone (it is not in backups, an iOS update can retire it):
     /// say so once instead of quietly showing the photo without it (A16, B8).
     private var missingDenoiseNoted = false
@@ -380,7 +372,6 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.ensureDenoise()
                 self.noteMissingDenoise()
-                self.noteCarefulMode()
                 self.warmDenoiseIfNeeded()
                 self.refreshUnhealed()
                 // HDR was switched while the photo was still loading: decode it again the other way
