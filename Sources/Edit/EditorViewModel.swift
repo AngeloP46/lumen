@@ -180,6 +180,14 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    /// iOS has closed Lumen for memory twice today: say what it does about it, once per launch.
+    private var carefulModeNoted = false
+    private func noteCarefulMode() {
+        guard !carefulModeNoted, MemoryBudget.careful, message == nil else { return }
+        carefulModeNoted = true
+        message = "iOS closed Lumen for memory twice today, so for now it uses smaller previews and skips the zoomed-in copy. It goes back to normal after a day without it."
+    }
+
     /// AI Denoise is on, but the cleaned copy is not on the phone (it is not in backups, an iOS update can retire it):
     /// say so once instead of quietly showing the photo without it (A16, B8).
     private var missingDenoiseNoted = false
@@ -354,6 +362,7 @@ final class EditorViewModel: ObservableObject {
                 }
                 self.ensureDenoise()
                 self.noteMissingDenoise()
+                self.noteCarefulMode()
                 self.warmDenoiseIfNeeded()
                 self.refreshUnhealed()
                 // HDR was switched while the photo was still loading: decode it again the other way
@@ -855,7 +864,7 @@ final class EditorViewModel: ObservableObject {
 
     private func buildDetail(afterRelease: Bool = false) {
         // not while AI Denoise is cleaning the full-size photo: both together are too much memory (diagnostics 20 Oct)
-        guard let session, let source, !detailBuilding, denoiseProgress == nil, detailRetry.allows() else { return }
+        guard let session, let source, !detailBuilding, denoiseProgress == nil, detailRetry.allows(), !MemoryBudget.careful else { return }
         let native = max(session.nativeSize.width, session.nativeSize.height)
         // The copy needs ~2.1 GB at its peak on a 24 MP photo (owner's phone, 23 Oct; 48 MP: 2.6 GB, 21 Oct): mostly the
         // RAW engine's decode, whatever the copy's size. It is built only with that much free AND the safety margin
@@ -1371,7 +1380,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var healPreparing = false
     /// Loads the Heal model off the main thread the first time the Heal tool opens.
     func prepareHeal() {
-        guard !healPreparing, !EditSession.healModelReady, EditSession.hasHealModel else { return }
+        guard !healPreparing, !EditSession.healModelReady, EditSession.hasHealModel, !MemoryBudget.careful else { return }
         healPreparing = true
         BlackBox.shared.crumb("Heal tool opened")
         // Not at the very moment the tool opens, and not without room: the panel appearing redraws the photo, loading the
@@ -1501,6 +1510,9 @@ final class EditorViewModel: ObservableObject {
         if Diagnostics.availableMB < 1500 { EditSession.releaseMaskModels() }
     }
 
+    /// HDR mode of the original copy being made (nil = none).
+    private var unhealedBuilding: Bool?
+
     /// Keeps a preview of the original (no heals, no AI Denoise) while the photo has either, for hold-to-compare and
     /// the split's before half (21 Oct review: with AI Denoise on they showed the cleaned photo). Built in the
     /// background, not while a clean or the AI masks are running, dropped when neither is on.
@@ -1511,10 +1523,13 @@ final class EditorViewModel: ObservableObject {
         guard denoiseProgress == nil else { return }
         // the photo without heals doesn't change when heals do, only when HDR changes how it is decoded
         if unhealedSource != nil && unhealedHDR == settings.hdr { return }
+        // one at a time: a reload while it is being made used to throw it away and start another (diagnostics
+        // 22 Oct: "original copy: making it" five times in 20 s after an AI Denoise change)
+        guard unhealedBuilding != settings.hdr else { return }
         unhealedSource = nil
         let hdr = settings.hdr
-        let generation = loadGeneration
         BlackBox.shared.crumb("original copy")
+        unhealedBuilding = hdr
         Diagnostics.shared.note("original copy (no heals, no AI Denoise): making it")
         let mp = megapixels
         workQueue.async {
@@ -1523,8 +1538,11 @@ final class EditorViewModel: ObservableObject {
                 session.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true, heals: [], denoise: false)
             } ?? nil
             Task { @MainActor [weak self] in
-                guard let self, generation == self.loadGeneration, let src, src.size == self.source?.size else { return }
-                guard hdr == self.settings.hdr else { return }
+                guard let self else { return }
+                if self.unhealedBuilding == hdr { self.unhealedBuilding = nil }
+                // it depends only on the file and HDR, so a reload for heals or AI Denoise meanwhile doesn't matter
+                guard let src, src.size == self.source?.size else { return }
+                guard hdr == self.settings.hdr else { self.refreshUnhealed(); return }
                 self.unhealedSource = src
                 self.unhealedHDR = hdr
                 if self.showOriginal || self.splitCompare { self.requestRender() }
