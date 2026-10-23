@@ -93,6 +93,19 @@ is main's code with the Store layer put back on top (only `EditorView`, `Library
 hold `#if APP_STORE` hooks; all other shared files are main's). Checked with app-store-sandbox.yml: flag off and on,
 ProGate checks, StoreKit test, screenshots. Not yet merged into `sandbox`; nothing is submitted.
 
+**23 Oct, first phone test of 0.1.521: Lumen was closed by iOS twice in four minutes.** Neither is something the batches
+above set out to fix (they protect your edits and data); both are memory, and CI cannot see memory (B1: the simulator
+reports none, so every UI test runs as a low-memory phone and the 100 % copy is never built there).
+
+| Finding | Evidence | Status |
+|---|---|---|
+| **A21: the 100 % view loops into a memory kill.** After Remove person on a 24 MP photo, zooming in tried to build the zoomed copy 13 times in a minute (every pinch step asks, and so did every memory warning that dropped it); each build adds ~2.1 GB; at 2477 MB free a 4096 px copy was started (the margin was not kept) and iOS closed Lumen | phone 0.1.521, 10:16:41-10:16:52: "100% view: building" x13, warnings x11, closed after the last | fixed (batch 5, PR #105, SideStore 0.1.533): cost 2150 MB at 24 MP / 2640 MB at 48 MP plus the 700 MB margin must be free; zooming first lets go of the original copy, the mask/Heal/denoise models and GPU caches and looks again once; a try with no room, a skipped build or a copy dropped on a memory warning is not repeated for 12-30 s; coordinator: optional jobs keep the margin; logic tests (`DetailCopy`, `RetryGate`, the coordinator) |
+| **A22: memory spikes right after AI Denoise on a 48 MP photo** (Lens Blur 20, 2 masks, Detail open): 1454 MB at the end of the clean, then 2764, 2837 and 3083 MB within 7 s (limit 3375), warnings x6, closed a few seconds later. The clean itself was fine (101 s, 0.43 s/tile, 0 redone). **Cause not found.** Candidates: the preview reload with the cleaned copy, the thumbnail made again on closing the editor, the Lens Blur masks; a Mac probe could not tell (each RAW decode stays in the process, a second decode of the same size adds almost nothing) | phone 0.1.521, 10:11:30-10:11:42 | open. 0.1.533 logs "preview decode: start/done" and "thumbnail: making/done" (photos over 20 MP) with the memory they ran at; the thumbnail is made again on closing only if the edits changed. Send diagnostics after the same steps to see which one it is |
+| CI blind spot: the 100 % copy, the standard-memory paths and AI Denoise are never exercised in UI tests | B1 | open: needs a decision, see B1 (a UI test with `-lumenDemoMemoryMB 3375` would exercise the 100 % view gating) |
+
+Idea for the 100 % view (not built): render only the visible part at full size (a cropped lazy decode cost ~400 MB in
+the Heal measurement) instead of a whole 4096 px copy (~2.1 GB).
+
 **PR #91 (from the 0.1.465 diagnostics), ready, not merged:** rebased on main 0.1.521 and green (Build IPA, Release
 readiness, Engine, six targeted UI tests: hold-to-compare, export quality and size, batch export, before/after split, next
 photo). The original copy is made once at a time (diagnostics showed it made five times in 20 s); export works out AI masks
