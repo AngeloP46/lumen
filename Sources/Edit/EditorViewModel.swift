@@ -253,14 +253,19 @@ final class EditorViewModel: ObservableObject {
                 // phone, 23 Oct). Only when memory is truly critical does it go.
                 if !self.healBusy && !self.healPreparing && Diagnostics.availableMB < 500 { EditSession.releaseHealModel() }
                 // the 100 % copy goes even while zoomed in: a softer view is better than iOS closing Lumen
-                if self.detailSource != nil { self.releaseDetail(); Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
+                let droppedDetail = self.detailSource != nil
+                if droppedDetail { self.releaseDetail(); Diagnostics.shared.note("100% view: copy dropped (memory warning)") }
                 // and no new try for a while: dropped, tried again at once, dropped again was how iOS closed Lumen (23 Oct)
                 self.detailRetry.hold(for: 30)
                 if !self.showOriginal { self.unhealedSource = nil }
-                self.renderAfterWarning?.cancel()
-                let again = DispatchWorkItem { [weak self] in self?.requestRender() }
-                self.renderAfterWarning = again
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: again)
+                // only for the pictures that changed with what was let go of (the zoomed-in copy, the original copy); Lumen's own
+                // let-go at 2.4 GB changes nothing on screen, and a redraw with the caches just cleared is the costliest one
+                if !BlackBox.shared.warningIsOwn || droppedDetail {
+                    self.renderAfterWarning?.cancel()
+                    let again = DispatchWorkItem { [weak self] in self?.requestRender() }
+                    self.renderAfterWarning = again
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: again)
+                }
             }
         }
         applyingHistory = true
@@ -414,6 +419,8 @@ final class EditorViewModel: ObservableObject {
     /// The photo's size in megapixels (the heavy-work coordinator's estimates scale with it).
     private var megapixels: Double { session.map { Double($0.nativeSize.width * $0.nativeSize.height) / 1_000_000 } ?? 24 }
     private var denoiseReload: DispatchWorkItem?
+    /// Free memory (MB) a clean needs before it starts: the model's working memory and a strip of the photo.
+    nonisolated static let denoiseNeedsFreeMB = 1500
     private let denoiseQueue = DispatchQueue(label: "lumen.denoise", qos: .userInitiated)
     /// Set when the app leaves the screen: the running job stops at its next tile and starts again on return.
     nonisolated(unsafe) private var denoiseCancel = false
@@ -492,7 +499,27 @@ final class EditorViewModel: ObservableObject {
         Diagnostics.shared.note(from > 0 ? String(format: "denoise continues from %.0f %%", from * 100) : "denoise start")
         let began = Date()
         let mp = megapixels
-        denoiseQueue.async {
+        denoiseQueue.async { [weak self] in
+            // Room first. A clean needs ~1.4 GB beside the photo, and starting it with less is how it ran out (owner's phone,
+            // 0.1.599, 18:08: started with 952 MB free after HDR toggles, Lens Blur and AI masks, closed within 5 s). What can
+            // be made again goes first; if there is still not enough, the clean does not start and says why. The simulator
+            // reports no memory (0): no limit there.
+            var tries = 0
+            while Diagnostics.availableMB > 0 && Diagnostics.availableMB < EditorViewModel.denoiseNeedsFreeMB && tries < 6 {
+                LumenGPU.context.clearCaches(); Thread.sleep(forTimeInterval: 0.5); tries += 1
+            }
+            if Diagnostics.availableMB > 0 && Diagnostics.availableMB < EditorViewModel.denoiseNeedsFreeMB {
+                Diagnostics.shared.note("denoise not started: only \(Diagnostics.availableMB) MB free (needs ~\(EditorViewModel.denoiseNeedsFreeMB))")
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.denoiseProgress = nil
+                    self.canvas.busyHold = false
+                    self.denoiseRequested = false
+                    UIApplication.shared.isIdleTimerDisabled = false
+                    self.message = "There isn't enough free memory to clean this photo right now. Close Lumen from the app switcher, open it again and start AI Denoise before the other edits."
+                }
+                return
+            }
             var noted = 0
             let outcome = HeavyWork.shared.run(.denoise, megapixels: mp, long: true) { session.makeDenoised(progress: { p in
                 // the phone's real speed, for ⋯ → Send diagnostics
