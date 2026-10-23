@@ -6,6 +6,10 @@ on:
         description: 'Run only these test methods, comma-separated, e.g. testPinchZoomsAndDoubleTapToggles (empty = all)'
         required: false
         default: ''
+      memory:
+        description: 'Pretend the phone gives Lumen this many MB, e.g. 3400 for a standard phone (empty = the simulator reports none and everything runs as a low-memory phone)'
+        required: false
+        default: ''
       device:
         description: 'Simulator, e.g. "iPhone SE (3rd generation)" or "iPhone 16e" (small screens; empty = iPhone 16 Pro Max)'
         required: false
@@ -47,6 +51,7 @@ jobs:
         env:
           TEST_RUNNER_DEMO_DIR: ${{ github.workspace }}/demo
           TEST_RUNNER_OUT_DIR: ${{ github.workspace }}/uiout
+          TEST_RUNNER_MEMORY_MB: ${{ inputs.memory }}
           ONLY_TEST: ${{ github.event.inputs.only }}
           SIM_DEVICE: ${{ inputs.device }}
         # xcodebuild's own exit status is the job's status. The log goes to a file first and is filtered afterwards,

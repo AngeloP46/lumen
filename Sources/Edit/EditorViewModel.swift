@@ -651,7 +651,15 @@ final class EditorViewModel: ObservableObject {
                 self.prepareAutoMasksIfNeeded()
                 self.ensureDenoise()
                 self.refreshUnhealed()
-                if self.zoomLevel > 1.4 { self.buildDetail() }
+                if self.zoomLevel > 1.4 {
+                    // not at once: a decode after every pause of the AI Denoise slider, each followed by a 2 GB copy, is what
+                    // B5 describes; the copy is made once the changes have stopped
+                    self.detailRetry.hold(for: 2)
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 2_100_000_000)
+                        if let self, self.zoomLevel > 1.4, self.detailSource == nil { self.buildDetail() }
+                    }
+                }
                 // a new heal shows once the photo has been decoded with it
                 if self.healBusy && self.healWaitingForReload { self.healBusy = false; self.healStroke = []; self.healWaitingForReload = false }
             }
@@ -1861,8 +1869,17 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
-    /// The finger that was painting lifted.
-    func endStroke() { strokeOpen = false }
+    /// The finger that was painting lifted: the stroke keeps its shape with far fewer points (quality checklist B4).
+    func endStroke() {
+        let wasOpen = strokeOpen
+        strokeOpen = false
+        guard wasOpen, let c = selectedComponent, c.kind == .brush, let last = c.strokes.last, last.points.count > 16 else { return }
+        updateComponent(c.id) { comp in
+            guard var l = comp.strokes.popLast() else { return }
+            l = l.simplified()
+            comp.strokes.append(l)
+        }
+    }
 
     /// A pinch starts with one finger down, which paints a stray dab: take it back.
     func cancelRecentStroke() {

@@ -144,7 +144,7 @@ final class LumenUITests: XCTestCase {
         let dir = env["DEMO_DIR"] ?? "/tmp/demo"
         logPath = (env["OUT_DIR"] ?? NSTemporaryDirectory()) + "/events-\(UUID().uuidString).log"
         app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoOpen", "\(open)", "-lumenDemoTool", tool,
-                               "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra
+                               "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra + memoryArguments(extra)
         app.launch()
         XCTAssertTrue(el("photo").waitForExistence(timeout: 60), "editor did not open")
         sleep(3)   // let the photo load
@@ -161,13 +161,22 @@ final class LumenUITests: XCTestCase {
         shot("tester-expired")
     }
 
+    /// B1: the simulator reports no memory limit, so every test runs as a low-memory phone and the standard-phone paths
+    /// (the 100 % copy, the memory gates) are never exercised. A run with `memory=3400` (uitest.yml input) pretends the phone
+    /// gives Lumen that many MB, unless the test sets its own.
+    func memoryArguments(_ extra: [String]) -> [String] {
+        guard !extra.contains("-lumenDemoMemoryMB"),
+              let mb = ProcessInfo.processInfo.environment["MEMORY_MB"], !mb.isEmpty else { return [] }
+        return ["-lumenDemoMemoryMB", mb]
+    }
+
     /// Opens the app on the library (no photo open). The demo library always holds exactly the sample photos.
     func launchLibrary(extra: [String] = []) {
         app = XCUIApplication()
         let env = ProcessInfo.processInfo.environment
         let dir = env["DEMO_DIR"] ?? "/tmp/demo"
         logPath = (env["OUT_DIR"] ?? NSTemporaryDirectory()) + "/events-\(UUID().uuidString).log"
-        app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra
+        app.launchArguments = ["-lumenDemoDir", dir, "-lumenDemoLog", logPath, "-lumenDemoFresh", "1"] + extra + memoryArguments(extra)
         app.launch()
         XCTAssertTrue(el("library-item").waitForExistence(timeout: 60), "library did not show any photos")
         sleep(3)
