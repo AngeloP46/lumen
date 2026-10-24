@@ -190,6 +190,21 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
+    /// The editor is closing: its copies of the photo go now, not when the view model is freed. Something can keep a closed
+    /// editor alive (0.1.620, 24 Oct: editors left after Lens Blur, heals or Remove people were never freed, and Lumen sat
+    /// at 1.4-1.9 GB with no photo open, then at 2.0-2.5 GB editing the next one); the copies are the heavy part, and jobs
+    /// still running took their own references to what they use.
+    func releaseForClose() {
+        detailSource = nil
+        unhealedSource = nil
+        maskMemo = [:]
+        peopleFound = nil
+        source = nil
+        session = nil
+        canvas.update(nil)
+        LumenGPU.context.clearCaches()
+    }
+
     /// AI Denoise is on, but the cleaned copy is not on the phone (it is not in backups, an iOS update can retire it):
     /// say so once instead of quietly showing the photo without it (A16, B8).
     private var missingDenoiseNoted = false
