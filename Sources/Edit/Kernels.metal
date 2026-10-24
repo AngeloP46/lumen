@@ -267,6 +267,7 @@ float4 lumenGainLocal(sample_t img, sample_t l1, sample_t l2, sample_t ch,
 
 // p.x = w (0...1): how much of the gain to show. No clamp: values above 1 are the HDR highlights.
 float4 lumenApplyGain(sample_t sdr, sample_t gain, float4 p) {
+    if (sdr.a <= 0.0) return float4(0.0);   // empty canvas stays empty (see lumenFinish)
     return float4(sdr.rgb * exp2(p.x * log2(max(gain.r, 1.0))), 1.0);
 }
 
@@ -276,6 +277,9 @@ float4 lumenApplyGain(sample_t sdr, sample_t gain, float4 p) {
 // g1 = (width, height, grain amount, grain cell size)
 // g2 = (grain roughness, output gamma-encoded? 1 : 0, seed, 0)
 float4 lumenFinish(sample_t s, float4 g0, float4 g1, float4 g2, destination dest) {
+    // Outside a straightened or transformed photo the canvas is empty (transparent). It stays empty: made opaque black
+    // here, the mask overlay painted it red and the clipping warning blue (owner's screenshots, 24 Oct).
+    if (s.a <= 0.0) return float4(0.0);
     float3 c = max(s.rgb, 0.0);
     float2 size = g1.xy;
     float2 p = dest.coord();
@@ -311,6 +315,7 @@ float4 lumenFinish(sample_t s, float4 g0, float4 g1, float4 g2, destination dest
 
 // Gamma-encoded -> linear (used after the 3D look table).
 float4 lumenToLinear(sample_t s) {
+    if (s.a <= 0.0) return float4(0.0);   // empty canvas stays empty (see lumenFinish)
     return float4(lmSrgbDec(s.r), lmSrgbDec(s.g), lmSrgbDec(s.b), 1.0);
 }
 
@@ -514,10 +519,12 @@ float4 lumenSkyGaps(sample_t img, sample_t sky, sample_t t, sample_t sn, sample_
     return float4(v, v, v, 1.0);
 }
 
-// Mask overlay: tints `s` towards colour.rgb by mask * colour.a
+// Mask overlay: tints `s` towards colour.rgb by mask * colour.a. Only where there is picture: the empty canvas around a
+// transformed or zoomed-out photo is transparent and stays so (owner's screenshot, 24 Oct: a Luminance mask on the
+// shadows painted the whole empty canvas red, and the clipping warning drawn after it then made it blue). Premultiplied.
 float4 lumenOverlay(sample_t s, sample_t m, float4 colour) {
     float k = clamp(m.r, 0.0, 1.0) * colour.a;
-    return float4(mix(s.rgb, colour.rgb, k), 1.0);
+    return float4(mix(s.rgb, colour.rgb * s.a, k), s.a);
 }
 
 // Heal detail (2026-10-18, owner: big removals looked blurry): the model's fill at full size plus the fine texture
