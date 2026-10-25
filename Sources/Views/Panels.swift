@@ -72,6 +72,7 @@ struct LightPanel: View {
         // HDR is a photo-wide mode: it lives in the top bar now (owner's request 2026-10-10)
         let items = [
             vm.param("Exposure", \.exposure, range: -5...5, decimals: 2),
+            vm.param("Brightness", \.brightness),
             vm.param("Contrast", \.contrast),
             vm.param("Highlights", \.highlights),
             vm.param("Shadows", \.shadows),
