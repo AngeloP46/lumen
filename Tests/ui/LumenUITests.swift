@@ -1557,17 +1557,16 @@ final class LumenUITests: XCTestCase {
         return (t, b, h)
     }
 
-    func testPhotoRestsOnThePanelAndGrowsUpwardsWhenZoomed() {
+    func testPhotoIsCentredAndGrowsWhenZoomed() {
         launch(open: 0, tool: "Light")
         guard let d0 = drawn() else { return XCTFail("photo should report where it is drawn: \(valueOf("photo"))") }
-        XCTAssertEqual(d0.bottom, d0.height, accuracy: 2, "at fit the photo should sit on the panel, not leave a gap (\(d0))")
+        XCTAssertEqual(d0.top, d0.height - d0.bottom, accuracy: 3, "at fit the photo sits in the middle of the free space, equal gaps above and below (\(d0))")
         XCTAssertGreaterThan(d0.top, 10, "a landscape photo leaves space above it (\(d0))")
         el("photo").pinch(withScale: 2.5, velocity: 2)
         sleep(1)
         guard let d1 = drawn() else { return XCTFail("no drawn value after zoom") }
         XCTAssertGreaterThan(zoomLevel(), 1.5, "the pinch should zoom in")
-        XCTAssertLessThanOrEqual(d1.top, 2, "zoomed in, the photo should grow up into the free space (\(d1))")
-        XCTAssertGreaterThanOrEqual(d1.bottom, d1.height - 2, "and still reach the panel (\(d1))")
+        XCTAssertGreaterThan(d1.bottom - d1.top, d0.bottom - d0.top + 20, "zoomed in, the photo grows (\(d0) -> \(d1))")
         shot("zoomed-fills-height")
     }
 
@@ -1625,8 +1624,8 @@ final class LumenUITests: XCTestCase {
         el("tools-collapse").tap()
         sleep(1)
         XCTAssertTrue(el("slider-Exposure").exists, "folded: the Light sliders are still there")
-        // the photo still rests on the panel
-        if let d = drawn() { XCTAssertEqual(d.bottom, d.height, accuracy: 2, "folded: no gap under the photo (\(d))") }
+        // the photo stays centred in what is left
+        if let d = drawn() { XCTAssertEqual(d.top, d.height - d.bottom, accuracy: 3, "folded: equal gaps above and below the photo (\(d))") }
         el("tools-expand").tap()
         sleep(1)
         tapTool("Masks")
