@@ -309,3 +309,10 @@ Store code is only in: `Sources/Store/`, `PaywallView`, `LumenMark`, `AppPrivacy
 `LibraryStore` (batch export refuses Pro edits for free users; a never-opened RAW starts in HDR only for Pro) and `Demo.swift`
 (`paywall`, `proEdits`, `noWM`). Everything else is main's file unchanged. Checked by app-store-sandbox.yml (flag off and on,
 ProGate checks, StoreKit test, screenshots).
+
+## 24 Oct 2026: sandbox follows main to 0.1.608
+Main merges since the rebuild came in as plain `git merge origin/main` (no conflicts, no Store code touched): batches 11-17 (careful mode,
+the original copy once at a time, the Heal model on the GPU and loaded alone, lighter canvas context, AI Denoise needs free memory,
+AI Denoise model at 256 px tiles and kept loaded). Each port was checked with `app-store-sandbox.yml -f checks_only=true`. The RAW format
+matrix workflow (sandbox only) had not compiled since `LoadedModel.swift` joined the engine files; its compile list is fixed and its run
+passes. Not submitted; the App Store version waits for Apple Developer enrolment and Angelo's instruction.
