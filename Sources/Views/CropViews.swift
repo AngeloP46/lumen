@@ -190,14 +190,15 @@ struct CropPanel: View {
         let key: String, title: String, kp: WritableKeyPath<EditSettings, Double>
         var range: ClosedRange<Double> = -100...100
         var neutral: Double = 0
+        var icon: String?
     }
     private static let axes: [Axis] = [
         Axis(key: "vertical", title: "Vertical", kp: \.tVertical),
         Axis(key: "horizontal", title: "Horizontal", kp: \.tHorizontal),
         Axis(key: "aspect", title: "Aspect", kp: \.tAspect),
         Axis(key: "scale", title: "Scale", kp: \.tScale, range: 50...150, neutral: 100),
-        Axis(key: "moveX", title: "Move ↔", kp: \.tOffX),
-        Axis(key: "moveY", title: "Move ↕", kp: \.tOffY),
+        Axis(key: "moveX", title: "Move", kp: \.tOffX, icon: "arrow.left.and.right"),
+        Axis(key: "moveY", title: "Move", kp: \.tOffY, icon: "arrow.up.and.down"),
     ]
 
     /// "Transform" was the second tab until 25 Oct.
@@ -271,8 +272,9 @@ struct CropPanel: View {
                 }
                 .padding(.horizontal, 12)
             }
-            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-                GridRow {
+            // four equal tiles a row; Reset takes the width of two
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
                     Button { rotate(-1) } label: { CropTile(system: "rotate.left") }
                         .accessibilityIdentifier("crop-rotate-left").accessibilityLabel("Rotate left")
                     Button { rotate(1) } label: { CropTile(system: "rotate.right") }
@@ -286,21 +288,22 @@ struct CropPanel: View {
                     }
                     .accessibilityIdentifier("crop-flip-v").accessibilityLabel("Flip upside down")
                 }
-                GridRow {
-                    Button { vm.flipCropOrientation() } label: { CropTile(system: "rectangle.portrait.rotate") }
-                        .disabled(vm.settings.cropAspect == 0).opacity(vm.settings.cropAspect == 0 ? 0.4 : 1)
-                        .accessibilityIdentifier("crop-orientation").accessibilityLabel("Portrait or landscape")
-                    Menu {
-                        ForEach([("thirds", "Thirds"), ("golden", "Golden ratio"), ("diagonal", "Diagonals"),
-                                 ("grid", "Fine grid"), ("none", "No grid")], id: \.0) { key, name in
-                            Button { grid = key } label: { Label(name, systemImage: grid == key ? "checkmark" : "grid") }
-                        }
-                    } label: { CropTile(system: "squareshape.split.3x3") }
-                    .accessibilityIdentifier("crop-grid")
+                HStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Button { vm.flipCropOrientation() } label: { CropTile(system: "rectangle.portrait.rotate") }
+                            .disabled(vm.settings.cropAspect == 0).opacity(vm.settings.cropAspect == 0 ? 0.4 : 1)
+                            .accessibilityIdentifier("crop-orientation").accessibilityLabel("Portrait or landscape")
+                        Menu {
+                            ForEach([("thirds", "Thirds"), ("golden", "Golden ratio"), ("diagonal", "Diagonals"),
+                                     ("grid", "Fine grid"), ("none", "No grid")], id: \.0) { key, name in
+                                Button { grid = key } label: { Label(name, systemImage: grid == key ? "checkmark" : "grid") }
+                            }
+                        } label: { CropTile(system: "squareshape.split.3x3") }
+                        .accessibilityIdentifier("crop-grid")
+                    }
                     Button { vm.settings.reset(.crop) } label: { CropTile(title: "Reset", system: "arrow.counterclockwise") }
                         .disabled(!vm.settings.hasEdits(.crop)).opacity(vm.settings.hasEdits(.crop) ? 1 : 0.4)
                         .accessibilityIdentifier("crop-reset")
-                        .gridCellColumns(2)
                 }
             }
             .padding(.horizontal, 12)
@@ -340,7 +343,7 @@ struct CropPanel: View {
                 HStack(spacing: 6) {
                     ForEach(Self.axes, id: \.key) { x in
                         let v = vm.settings[keyPath: x.kp]
-                        Chip(title: v == x.neutral ? x.title : "\(x.title) \(Int(v.rounded()))", selected: x.key == a.key) { axisKey = x.key }
+                        Chip(title: v == x.neutral ? x.title : "\(x.title) \(Int(v.rounded()))", system: x.icon, selected: x.key == a.key) { axisKey = x.key }
                             .accessibilityIdentifier("persp-\(x.key)")
                     }
                 }
