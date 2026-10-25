@@ -1464,9 +1464,22 @@ do {
                 if edge == 900, let cg = smallRender(drawn, width: 400) { items.append((name, cg)) }
                 // drawn as CanvasRenderer.draw does: moved to the origin, scaled (Lanczos below 0.7, a plain scale above), placed
                 // on a black screen bigger than the photo; the screen around it must stay black at every zoom
-                guard name == "plain" || name == "straighten 8" else { continue }
+                guard name == "plain" || name == "straighten 8" || name == "HDR, straighten 8, Fill off" else { continue }
+                // the picture at rest is a frozen copy (CanvasModel.scheduleFreeze): rendered once into a half-float pixel
+                // buffer and drawn from that; check the live picture and the frozen one
+                var frozen: CIImage?
+                var buffer: CVPixelBuffer?
+                let attrs: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](), kCVPixelBufferMetalCompatibilityKey: true]
+                if CVPixelBufferCreate(kCFAllocatorDefault, Int(ie.width), Int(ie.height), kCVPixelFormatType_64RGBAHalf, attrs as CFDictionary, &buffer) == kCVReturnSuccess,
+                   let buffer {
+                    LumenGPU.context.render(shown, to: buffer, bounds: ie, colorSpace: nil)
+                    frozen = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()])
+                        .transformed(by: CGAffineTransform(translationX: ie.minX, y: ie.minY))
+                } else { check(false, "mask outside: no pixel buffer for the frozen copy") }
+                for (kind, pic) in [("live", Optional(shown)), ("frozen", frozen)] {
+                guard let pic else { continue }
                 for k: CGFloat in [0.45, 0.69, 0.71, 1.0, 1.3] {
-                    var placed = shown.transformed(by: CGAffineTransform(translationX: -ie.minX, y: -ie.minY))
+                    var placed = pic.transformed(by: CGAffineTransform(translationX: -ie.minX, y: -ie.minY))
                     placed = k < 0.7 ? placed.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0])
                                      : placed.transformed(by: CGAffineTransform(scaleX: k, y: k))
                     let pw = placed.extent.width, ph = placed.extent.height
@@ -1478,11 +1491,17 @@ do {
                         let m = Int(strip.width) * Int(strip.height)
                         var px = [Float](repeating: 0, count: m * 4)
                         LumenGPU.context.render(out2, toBitmap: &px, rowBytes: Int(strip.width) * 16, bounds: strip, format: .RGBAf, colorSpace: nil)
-                        let reds = (0..<m).filter { px[$0 * 4] > 0.05 }.count
-                        let top = (0..<m).map { px[$0 * 4] }.max() ?? 0
-                        print(String(format: "mask outside on screen (%.0f px, %@, zoom %.2f): %d of %d margin px red, worst %.3f", Double(edge), name, Double(k), reds, m, Double(top)))
-                        check(reds == 0, "the screen around the photo must stay black with a Background mask (\(Int(edge)) px, \(name), scale \(k)): \(reds) of \(m) red, worst \(top)")
+                        var reds = 0
+                        var top: Float = 0
+                        for i in 0..<m {
+                            let r: Float = px[i * 4]
+                            if r > 0.05 { reds += 1 }
+                            top = max(top, r)
+                        }
+                        print(String(format: "mask outside on screen (%.0f px, %@, %@, zoom %.2f): %d of %d margin px red, worst %.3f", Double(edge), name, kind, Double(k), reds, m, Double(top)))
+                        check(reds == 0, "the screen around the photo must stay black with a Background mask (\(Int(edge)) px, \(name), \(kind), scale \(k)): \(reds) of \(m) red, worst \(top)")
                     }
+                }
                 }
             }
         }
