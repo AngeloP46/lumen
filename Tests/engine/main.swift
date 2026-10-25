@@ -1417,6 +1417,57 @@ do {
     } else { check(false, "SourceGeometry check: no photo could be opened") }
 }
 
+// A Background mask over the empty canvas (owner, 25 Oct: "sometimes shows the area outside the image in red", at some
+// zoom levels). The editor's whole path: develop, the mask overlay, drawn over black on a canvas twice the photo's size
+// (zoomed out). Where there is no photo (alpha ~0) it must stay black. The preview and a 100 %-view-sized copy; the cases
+// that leave empty canvas inside the picture. Sheet: mask-outside.jpg.
+do {
+    if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f) {
+        var items: [(String, CGImage)] = []
+        for edge: CGFloat in [900, 2400] {
+            guard let src = session.makeSource(maxEdge: edge, materialize: true) else { check(false, "mask outside: no source at \(edge)"); continue }
+            let e = src.extent
+            // a made-up subject in the middle: the background is everything else
+            let subject = CIImage(color: .white)
+                .cropped(to: CGRect(x: e.midX - e.width * 0.2, y: e.midY - e.height * 0.25, width: e.width * 0.4, height: e.height * 0.5))
+                .composited(over: CIImage(color: .black).cropped(to: e))
+            src.storeMask(EditSession.aiSubject, subject)
+            let mask = Mask.make(.background)
+            var cases: [(String, EditSettings, Double)] = [("plain", EditSettings(), 0)]
+            var a = EditSettings(); a.straighten = 8; cases.append(("straighten 8", a, 0))
+            var b = a; b.tFill = false; cases.append(("straighten 8, Fill off", b, 0))
+            var c = EditSettings(); c.tVertical = 40; c.tFill = false; cases.append(("vertical 40, Fill off", c, 0))
+            var d = c; d.tScale = 70; cases.append(("vertical 40, scale 70, Fill off", d, 0))
+            var h = b; h.hdr = true; cases.append(("HDR, straighten 8, Fill off", h, 1))
+            var l = b; l.blackAndWhite = true; cases.append(("B&W look, straighten 8, Fill off", l, 0))
+            var g = b; g.grain = 40; g.vignette = -40; cases.append(("grain, vignette, Fill off", g, 0))
+            var o = EditSettings(); o.cropVersion = nil; o.straighten = 6; o.tVertical = 30; cases.append(("older edit", o, 0))
+            for (name, s, hw) in cases {
+                let img = session.develop(s, source: src, geometry: true, applyCrop: true, hdrWeight: hw, lens: .off)
+                let ie = img.extent.integral
+                let shown = session.overlay(img, mask: mask, source: src, gain: 1, settings: s, applyCrop: true).cropped(to: img.extent)
+                let canvas = CGRect(x: ie.minX - ie.width / 2, y: ie.minY - ie.height / 2, width: ie.width * 2, height: ie.height * 2)
+                let drawn = shown.composited(over: CIImage(color: .black).cropped(to: canvas))
+                let n = Int(ie.width) * Int(ie.height)
+                var photo = [Float](repeating: 0, count: n * 4), out = [Float](repeating: 0, count: n * 4)
+                LumenGPU.context.render(img, toBitmap: &photo, rowBytes: Int(ie.width) * 16, bounds: ie, format: .RGBAf, colorSpace: nil)
+                LumenGPU.context.render(drawn, toBitmap: &out, rowBytes: Int(ie.width) * 16, bounds: ie, format: .RGBAf, colorSpace: nil)
+                var empty = 0, red = 0, worst: Float = 0
+                for i in 0..<n where photo[i * 4 + 3] < 0.02 {
+                    empty += 1
+                    let r = out[i * 4]
+                    if r > 0.05 { red += 1 }
+                    worst = max(worst, r)
+                }
+                print(String(format: "mask outside (%.0f px, %@): %d empty px, %d red, worst %.3f", Double(edge), name, empty, red, Double(worst)))
+                check(red == 0, "the Background mask should not paint the empty canvas red (\(Int(edge)) px, \(name): \(red) of \(empty) empty pixels red, worst \(worst))")
+                if edge == 900, let cg = smallRender(drawn, width: 400) { items.append((name, cg)) }
+            }
+        }
+        if let sh = sheet(items, cell: 400, cols: 3) { saveJPEG(sh, "mask-outside.jpg") }
+    } else { check(false, "mask outside: no photo could be opened") }
+}
+
 // UI refresh (2026-10-10): a switched-off tool renders as untouched; brush strokes keep their own softness
 do {
     if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f),
