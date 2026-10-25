@@ -1,17 +1,17 @@
 # Lumen – project notes for Claude
 
 ## Quality work before the App Store (from 22 Oct 2026)
-- **Status 24 Oct (night):** batches 0-2, 4-10, 13-17 and Copy/Paste are on main and published: SideStore **0.1.608**. Angelo
+- **Status 24 Oct (night):** batches 0-2, 4-10, 13-17 and Copy/Paste are on main and published: SideStore **0.1.620**. Angelo
   allowed publishing verified builds so he can test on his phone and is away from his phone on 24 Oct; his phone runs of
   0.1.521-0.1.552 had Lumen closed by iOS for memory many times. What was found and done is in the checklist ("23 Oct,
   evening and night"): the 100 % view loop (A21), reload storms (A23), frame pacing (A22 part), the flight recorder
   (`BlackBox`, lines "memory N MB used ... at HH:MM:SS.S . crumbs" in Send diagnostics before "previous run ended"). CI cannot
   see memory (B1: `uitest.yml -f memory=3400` runs the suite as a standard phone), so memory fixes are only proven by his
-  Send diagnostics. The App Store version is main plus the Store layer (branch `sandbox`, merged through 0.1.608).
+  Send diagnostics. The App Store version is main plus the Store layer (branch `sandbox`, merged through 0.1.620).
   Phone: his 0.1.581 log (heavy quick editing, 3 people removed, 4 heals) had no closure and peaked at 1932 MB; careful mode is in
   0.1.589. 0.1.599 logs (18:09, 19:00): closures when a second AI Denoise model load stacked on the first one's memory (a load costs
   0.65-1.2 GB, a release gives back ~130 MB); 0.1.608 makes the model a quarter of the size (256 px tiles) and keeps it loaded.
-  Open: A22 (more days of use), A8 residual (confirm the AI Denoise model's memory on 0.1.608). Further main merges follow
+  0.1.608 phone log: 48 MP AI Denoise peaked at 723 MB (was 1.8 GB), no closure. Open: A22 and A8 (a few days of use without a closure). Further main merges follow
   the release routine; nothing is submitted to the App Store.
 - `docs/QUALITY-CHECKLIST.md` is the durable record: findings (two independent reviews), fix batches, test results,
   baselines, phone tests. Update it with every batch. Angelo's rules for this work: fix batches only after he approves
