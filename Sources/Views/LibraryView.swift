@@ -51,6 +51,7 @@ struct LibraryView: View {
     @ObservedObject private var proStore = LumenStore.shared
 #endif
     @State private var showDiagnostics = false
+    @State private var showAcknowledgements = false
     @State private var notice: String?
     /// Pasting edits that include AI Denoise asks first (it needs a clean of each photo).
     @State private var denoisePaste: [LibraryItem]?
@@ -258,6 +259,7 @@ struct LibraryView: View {
             }
             .overlay(alignment: .top) { SaveProblemBanner() }
             .sheet(isPresented: $showDiagnostics) { DiagnosticsSheet() }
+            .sheet(isPresented: $showAcknowledgements) { AcknowledgementsView() }
             .sheet(isPresented: $showBatchExport) { batchExportSheet }
 #if APP_STORE
             .modifier(ProPaywall(show: $showProPaywall, store: proStore))
@@ -361,6 +363,7 @@ struct LibraryView: View {
                 }
                 Divider()
                 Button { showDiagnostics = true } label: { Label("Send diagnostics…", systemImage: "stethoscope") }
+                Button { showAcknowledgements = true } label: { Label("Acknowledgements", systemImage: "doc.text") }
             } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
             .accessibilityIdentifier("btn-library-filter")
         }

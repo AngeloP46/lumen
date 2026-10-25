@@ -133,6 +133,7 @@ closures: the flight recorder is in since 0.1.546), A23 (reload storms). Version
 | 0.1.599 | nothing is drawn while a clean has the screen locked; a picture is frozen only with room; the decode a zoomed-in copy leaves in the session goes with the copy |
 | 0.1.606 | the canvas draws with a context that keeps no intermediate results; Lumen's own let-go does not redraw at once; AI Denoise does not start with under 1500 MB free (it says so) |
 | 0.1.608 | AI Denoise model at 256 px tiles (was 512); the loaded model is kept for the session instead of let go and loaded again (only a memory warning lets it go); Detail warms it only with 2400 MB free; a clean needs 1100 MB free |
+| 0.1.620 | careful mode works without a popup (owner: users shouldn't see it); the Heal model needs 1200 MB free to load, not 2800 (0.1.608 refused three heals with 2764 MB free; on the GPU it loads for ~150 MB) |
 
 **Phone evidence, 0.1.581 (Angelo, 23 Oct 16:49-16:51):** heavy, quick editing (undo/redo and HDR toggles, three people removed, four heals, the
 zoomed-in copy built three times, AI masks on every change): **no closure, peak 1932 MB** (0.1.552 and earlier reached 3.0-3.4 GB and closed). The Heal model
@@ -153,6 +154,11 @@ So "the model costs ~0.9 GB and can't be freed" was right about the model and wr
 model a quarter of the size (256 px tiles: its working memory grows with the tile's area; CI Mac time per tile 5.3, 3.0, 1.3 s for 512, 384, 256 px, the same
 speed per pixel, about 15 % more tiles for the overlap, so 24 MP ~51 s to ~58 s and 48 MP ~98 s to ~113 s) and loads it once per session. CI cannot measure
 the phone's GPU memory (the CI Mac's footprint does not include it): the effect shows only in Angelo's next "denoise model: loading" / "made ready" lines.
+
+**Phone evidence, 0.1.608 (Angelo, 23 Oct 20:56-21:04): no closure.** 48 MP ProRAW AI Denoise twice in a row: model loaded in 0.5 s for +40 MB
+(165 to 205 MB), peak 723 MB (was ~1.8 GB), 97 and 102 s, 972 tiles of 256 px at 0.09-0.11 s, settled at 480 MB. 24 MP: 486 tiles at 0.09 s, ~40 s
+(was 51 s). The second clean loaded nothing (model kept). Speed is accepted by the owner (24 Oct). Seen in the same log: Heal refused three times
+("needs ~2900"), fixed in 0.1.620.
 
 **Still open:** A22 (a few more days of use without a closure; Send diagnostics will show), A8 residual (the AI Denoise model's memory: 0.1.608 makes it a quarter of
 the size and loads it once; confirm with one session on 0.1.608: the "denoise model: loading" line and the memory at "made ready" should be well under the 0.65-1.2 GB above). **B3 is closed as won't fix:** a heal paints pixels the model made, which never had sensor noise, over the photo

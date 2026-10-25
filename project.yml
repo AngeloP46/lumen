@@ -51,10 +51,12 @@ targets:
         NSPhotoLibraryAddUsageDescription: Lumen saves your exported photos to your library.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # export compliance: Lumen uses no encryption beyond what iOS itself provides (App Store Connect asks otherwise)
+        ITSAppUsesNonExemptEncryption: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.lumen
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1"   # iPhone only for 1.0 (an iPad build needs its own layout and screenshots)
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon   # Sources/Assets.xcassets, same design as sidestore/icon.png
         MTL_COMPILER_FLAGS: "-fcikernel"

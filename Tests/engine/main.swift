@@ -80,6 +80,28 @@ do {
     }
 }
 
+// The empty canvas around a straightened or transformed photo stays transparent through the finishing steps, so the
+// mask overlay and the clipping warning don't paint it (owner's screenshots, 24 Oct: red and blue outside the photo).
+do {
+    let k = LumenKernels.shared!
+    let bounds = CGRect(x: 0, y: 0, width: 4, height: 4)
+    let clear = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0)).cropped(to: bounds)
+    let full = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: bounds)
+    func v(_ a: Double, _ b: Double, _ c: Double, _ d: Double) -> CIVector { CIVector(x: a, y: b, z: c, w: d) }
+    var steps: [(String, CIImage?)] = [
+        ("finish", k.finish.apply(extent: bounds, arguments: [clear, v(0.3, 0.5, 0.5, 0), v(4, 4, 0.5, 1), v(0.5, 1, 7, 0)])),
+        ("to linear", k.toLinear.apply(extent: bounds, arguments: [clear])),
+        ("mask overlay", k.overlay.apply(extent: bounds, arguments: [clear, full, v(1, 0.1, 0.12, 0.55)]))
+    ]
+    if let ag = k.applyGain { steps.append(("HDR gain", ag.apply(extent: bounds, arguments: [clear, full, v(1, 0, 0, 0)]))) }
+    for (name, out) in steps {
+        guard let out else { check(false, "empty canvas: \(name) kernel failed"); continue }
+        var px = [Float](repeating: 0, count: 4)
+        LumenGPU.context.render(out, toBitmap: &px, rowBytes: 16, bounds: CGRect(x: 1, y: 1, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        check(px.allSatisfy { abs($0) < 0.001 }, "empty canvas should stay transparent through \(name): \(px)")
+    }
+}
+
 func now() -> Double { Date().timeIntervalSinceReferenceDate }
 
 func saveJPEG(_ cg: CGImage, _ name: String) {
