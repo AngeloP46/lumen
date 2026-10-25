@@ -415,10 +415,28 @@ do {
     check(CarefulMode.pruned((0..<50).map { now.addingTimeInterval(-Double($0)) }, now: now).count == 20, "careful: the list never grows past 20")
 }
 
+// ---- end stops (owner, 25 Oct: past a limit and back, the control seemed to forget where 0 was)
+do {
+    var base = 140.0
+    let range = 50.0...150.0
+    let atEnd = EndStop.value(base: &base, delta: 40, in: range)          // pushed 30 past the end
+    check(atEnd == 150, "end stop: a drag past the end stops at it (\(atEnd))")
+    let back = EndStop.value(base: &base, delta: 35, in: range)           // the finger comes back 5
+    check(abs(back - 145) < 1e-9, "end stop: coming back responds at once, not after undoing the overshoot (\(back))")
+    var b2 = 0.0
+    let free = EndStop.value(base: &b2, delta: 12, in: -45...45)
+    check(free == 12 && b2 == 0, "end stop: inside the range the drag is unchanged")
+}
+
 // ---- crop frame moves (pinch and drag of the photo under the frame), 25 Oct
 do {
     func near(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-9 }
     let full = CropRect.full
+    // back to 1x: the biggest frame of the same shape, centred
+    let f1 = CropMath.fullShape(CropRect(l: 0.6, t: 0.1, r: 0.8, b: 0.2))      // 2:1 in fractions
+    check(near(f1.w, 1) && near(f1.h, 0.5) && near(f1.t, 0.25) && near(f1.l, 0), "crop 1x: a wide frame fills the width, centred \(f1)")
+    let f2 = CropMath.fullShape(CropRect(l: 0.2, t: 0.2, r: 0.3, b: 0.6))      // tall
+    check(near(f2.h, 1) && near(f2.w, 0.25) && near(f2.l, 0.375), "crop 1x: a tall frame fills the height, centred \(f2)")
     // dragging the photo moves the frame the other way and keeps its size; it stops at the picture's edge
     let half = CropRect(l: 0.25, t: 0.25, r: 0.75, b: 0.75)
     let p1 = CropMath.panned(half, dx: 0.1, dy: -0.05)

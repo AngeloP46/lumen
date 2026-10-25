@@ -352,7 +352,11 @@ struct EditorView: View {
                 DragGesture(minimumDistance: 2, coordinateSpace: .global)
                     .onChanged { v in
                         if panelDragStart == nil { panelDragStart = plan.height }
-                        panelLive = (panelDragStart ?? plan.height) - v.translation.height
+                        var live = (panelDragStart ?? plan.height) - v.translation.height
+                        // held at its tallest: dragging back down responds at once (no overshoot kept, as with EndStop);
+                        // below the shortest is kept, since pulling far enough down closes the panel
+                        if live > plan.maxHeight { panelDragStart = plan.maxHeight + v.translation.height; live = plan.maxHeight }
+                        panelLive = live
                     }
                     .onEnded { v in
                         let raw = (panelDragStart ?? plan.height) - v.translation.height
@@ -897,6 +901,19 @@ struct EditorView: View {
         }
         .animation(.easeOut(duration: 0.28), value: vm.settings.cropAspect)
         .animation(.easeOut(duration: 0.28), value: vm.settings.quarterTurns)
+        // while pinching: how far in the crop is (1x = the biggest frame of its shape; the Crop tab's zoom tile goes back)
+        .overlay {
+            if cropPinch != nil {
+                Text(String(format: "%.1f×", vm.cropZoom))
+                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Color.black.opacity(0.6), in: Capsule())
+                    .foregroundStyle(.white)
+                    .position(x: canvas.width / 2, y: CropStage.rect(in: canvas).minY + 24)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("crop-zoom-badge")
+            }
+        }
     }
 
     /// Two fingers in the Crop tool zoom the photo under the frame: the point between the fingers stays under them.
@@ -914,9 +931,13 @@ struct EditorView: View {
         case .changed:
             guard let b = cropPinch else { return }
             let rel = (x: b.rel.x + Double((p.x - b.centre.x) / b.frame.width), y: b.rel.y + Double((p.y - b.centre.y) / b.frame.height))
-            let z = CropMath.zoomed(b.rect, factor: Double(spread / b.spread), anchor: (b.anchor.x, b.anchor.y), rel: rel)
+            let z = CropMath.zoomed(b.rect, factor: Double(max(spread, 1) / b.spread), anchor: (b.anchor.x, b.anchor.y), rel: rel)
             let r = vm.cropKeptOnPhoto(from: b.rect, to: z)
             vm.setCropFrame(r.l, r.t, r.r, r.b)
+            // step by step: at a limit (the whole picture, the photo's edge, the smallest frame) the fingers moving back
+            // zoom again at once (before, they had to undo what they had pushed past the limit first)
+            let now = vm.cropRect
+            cropPinch = (now, Pt(x: now.l + rel.x * now.w, y: now.t + rel.y * now.h), Pt(x: rel.x, y: rel.y), p, max(spread, 1), b.frame)
         case .ended:
             cropPinch = nil
             vm.pinching = false
@@ -1010,9 +1031,11 @@ struct EditorView: View {
                     panBase = CGSize(width: pan.width - v.translation.width, height: pan.height - v.translation.height)
                 }
                 if let b = panBase {
-                    let p = clampPan(CGSize(width: b.width + v.translation.width, height: b.height + v.translation.height),
-                                     zoom: zoom, xf)
+                    let raw = CGSize(width: b.width + v.translation.width, height: b.height + v.translation.height)
+                    let p = clampPan(raw, zoom: zoom, xf)
                     if p != pan { pan = p }
+                    // held at the photo's edge: moving back responds at once (no overshoot kept, as with EndStop)
+                    if p != raw { panBase = CGSize(width: p.width - v.translation.width, height: p.height - v.translation.height) }
                 }
             }
             .onEnded { _ in panBase = nil }

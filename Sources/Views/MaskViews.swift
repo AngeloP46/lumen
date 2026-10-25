@@ -183,9 +183,18 @@ struct LumRangeEditor: View {
                         high = max(v, low + 0.02)
                         if !depth { highFeather = min(highFeather, 1 - high) }
                     case 2:
-                        lowFeather = depth ? min(max(featherStart + (low <= 0.001 ? 1 : -1) * Double(g.translation.width / w), 0), 1) : min(max(low - v, 0), min(0.5, low))
+                        if depth {
+                            // relative drag: held at 0 or 1, moving back responds at once (EndStop)
+                            lowFeather = EndStop.value(base: &featherStart, delta: (low <= 0.001 ? 1 : -1) * Double(g.translation.width / w), in: 0...1)
+                        } else {
+                            lowFeather = min(max(low - v, 0), min(0.5, low))
+                        }
                     default:
-                        highFeather = depth ? min(max(featherStart + (high >= 0.999 ? -1 : 1) * Double(g.translation.width / w), 0), 1) : min(max(v - high, 0), min(0.5, 1 - high))
+                        if depth {
+                            highFeather = EndStop.value(base: &featherStart, delta: (high >= 0.999 ? -1 : 1) * Double(g.translation.width / w), in: 0...1)
+                        } else {
+                            highFeather = min(max(v - high, 0), min(0.5, 1 - high))
+                        }
                     }
                 }
                 .onEnded { _ in active = nil; onActive?(false) })

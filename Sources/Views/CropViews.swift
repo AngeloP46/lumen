@@ -125,9 +125,12 @@ struct RulerDial: View {
             .onChanged { v in
                 if base == nil { base = value; onActive(true) }
                 let old = value
-                let raw = (base ?? 0) - Double(v.translation.width / perTick) * step
+                // past either end the ruler stays at the end, and turning back moves it at once (EndStop)
+                var b = base ?? value
+                let raw = EndStop.value(base: &b, delta: -Double(v.translation.width / perTick) * step, in: range)
+                base = b
                 let k = pow(10, Double(decimals))
-                let next = (min(max(raw, range.lowerBound), range.upperBound) * k).rounded() / k
+                let next = (raw * k).rounded() / k
                 if next != value { value = next }
                 if Int((next / step).rounded()) != Int((old / step).rounded()) { UISelectionFeedbackGenerator().selectionChanged() }
             }
@@ -203,7 +206,14 @@ struct CropPanel: View {
 
     /// "Transform" was the second tab until 25 Oct.
     private var tab: String { storedTab == "Transform" ? "Perspective" : (Self.tabs.contains(storedTab) ? storedTab : "Crop") }
-    private var axis: Axis { Self.axes.first { $0.key == axisKey } ?? Self.axes[0] }
+    /// Scale and the moves only matter with Fill frame off (the photo on a bigger canvas): with it on, pinching and moving
+    /// the photo under the frame do the same, and two zooms disagreed (owner, 25 Oct). A photo that already uses them shows them.
+    private var shownAxes: [Axis] {
+        Self.axes.filter { x in
+            ["vertical", "horizontal", "aspect"].contains(x.key) || !vm.settings.tFill || vm.settings[keyPath: x.kp] != x.neutral
+        }
+    }
+    private var axis: Axis { shownAxes.first { $0.key == axisKey } ?? Self.axes[0] }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -301,9 +311,19 @@ struct CropPanel: View {
                         } label: { CropTile(system: "squareshape.split.3x3") }
                         .accessibilityIdentifier("crop-grid")
                     }
-                    Button { vm.settings.reset(.crop) } label: { CropTile(title: "Reset", system: "arrow.counterclockwise") }
-                        .disabled(!vm.settings.hasEdits(.crop)).opacity(vm.settings.hasEdits(.crop) ? 1 : 0.4)
-                        .accessibilityIdentifier("crop-reset")
+                    HStack(spacing: 8) {
+                        // the zoom (pinch) and the way back to 1x
+                        let z = vm.cropZoom
+                        Button { withAnimation(.easeOut(duration: 0.28)) { vm.cropZoomToFit() } } label: {
+                            CropTile(title: z > 1.02 ? String(format: "%.1f×", z) : "1×", system: "arrow.down.right.and.arrow.up.left")
+                        }
+                        .disabled(z <= 1.02).opacity(z > 1.02 ? 1 : 0.4)
+                        .accessibilityIdentifier("crop-zoom").accessibilityLabel("Zoom back to 1x")
+                        .accessibilityValue(String(format: "%.1f", z))
+                        Button { vm.settings.reset(.crop) } label: { CropTile(title: "Reset", system: "arrow.counterclockwise") }
+                            .disabled(!vm.settings.hasEdits(.crop)).opacity(vm.settings.hasEdits(.crop) ? 1 : 0.4)
+                            .accessibilityIdentifier("crop-reset")
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -341,7 +361,7 @@ struct CropPanel: View {
             // what the ruler changes; a changed one shows its value
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(Self.axes, id: \.key) { x in
+                    ForEach(shownAxes, id: \.key) { x in
                         let v = vm.settings[keyPath: x.kp]
                         Chip(title: v == x.neutral ? x.title : "\(x.title) \(Int(v.rounded()))", system: x.icon, selected: x.key == a.key) { axisKey = x.key }
                             .accessibilityIdentifier("persp-\(x.key)")
@@ -438,6 +458,24 @@ extension EditorViewModel {
                                     : settings.cropUsed(source: sourceSize)
     }
 
+    /// How far in the crop is zoomed: 1 = the biggest frame of its shape (kept on the photo). Pinching is the one zoom
+    /// (owner, 25 Oct: a Scale ruler capped at 150 beside the pinch left two zooms that disagreed about where 1x was).
+    var cropZoom: Double {
+        let c = cropRect
+        guard c.w > 0 else { return 1 }
+        let f = CropMath.fullShape(c)
+        var s = settings
+        (s.cropL, s.cropT, s.cropR, s.cropB) = (f.l, f.t, f.r, f.b)
+        let u = s.cropVersion == nil ? f : s.cropUsed(source: sourceSize)
+        return max(u.w / c.w, 1)
+    }
+
+    /// Back to 1x: the biggest frame of the crop's shape, centred; straighten, perspective and the ratio stay.
+    func cropZoomToFit() {
+        let f = CropMath.fullShape(cropRect)
+        setCropFrame(f.l, f.t, f.r, f.b)
+    }
+
     /// A frame moved from `start` (all photo) towards `target`: it stops at the photo's edge while Keep inside is on.
     func cropKeptOnPhoto(from start: CropRect, to target: CropRect) -> CropRect {
         guard settings.tFill, settings.cropVersion != nil, sourceSize.width > 0 else { return target }
@@ -464,7 +502,9 @@ struct CropOverlay: View {
     @AppStorage("cropGrid") private var grid = "thirds"
     @State private var mode: Edges?
     @State private var moving = false
-    @State private var start = CropRect.full
+    @State private var start = CropRect.full       // the frame as of the last step of the drag
+    @State private var begun = CropRect.full       // the frame when the finger came down
+    @State private var origin = CGSize.zero        // the finger's travel at the last step
     @State private var startImage = CGSize.zero
     @State private var afterPinch = false
 
@@ -605,6 +645,8 @@ struct CropOverlay: View {
 
     private func begin(at loc: CGPoint) {
         start = vm.cropRect
+        begun = start
+        origin = .zero
         startImage = xform.rect.size
         let e = Self.handle(at: loc, in: frame)
         if e.isEmpty { moving = true } else { mode = e; onResize(true) }
@@ -613,14 +655,18 @@ struct CropOverlay: View {
     private func update(_ v: DragGesture.Value) {
         // a second finger landed: this is a pinch now, put the frame back where it was
         if vm.pinching {
-            if moving || mode != nil { vm.setCropFrame(start.l, start.t, start.r, start.b) }
+            if moving || mode != nil { vm.setCropFrame(begun.l, begun.t, begun.r, begun.b) }
             if mode != nil { onResize(false) }
             moving = false; mode = nil
             afterPinch = true   // the finger left on the glass after the pinch does nothing until it lifts
             return
         }
         guard startImage.width > 0, startImage.height > 0 else { return }
-        let dx = Double(v.translation.width / startImage.width), dy = Double(v.translation.height / startImage.height)
+        // step by step from where the frame is now: at a limit (the picture's or the photo's edge, the smallest frame)
+        // it stays put, and moving back responds at once instead of after the finger has undone its overshoot
+        let dx = Double((v.translation.width - origin.width) / startImage.width)
+        let dy = Double((v.translation.height - origin.height) / startImage.height)
+        defer { start = vm.cropRect; origin = v.translation }
         if moving {
             // the photo follows the finger, so the frame moves the other way over it
             let r = vm.cropKeptOnPhoto(from: start, to: CropMath.panned(start, dx: -dx, dy: -dy))
