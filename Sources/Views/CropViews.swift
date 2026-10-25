@@ -8,6 +8,9 @@ import UIKit
 /// frame. docs/CROP-REWORK.md.
 enum CropStage {
     /// The room the frame may use: a margin all round, so no corner sits under a button or the system's edge swipe.
+    /// The top buttons' strip: the picture is not drawn there.
+    static let clearTop: CGFloat = 48
+
     static func rect(in canvas: CGSize) -> CGRect {
         let side: CGFloat = 28, top: CGFloat = 58, bottom: CGFloat = 16
         return CGRect(x: side, y: top, width: max(canvas.width - 2 * side, 40), height: max(canvas.height - top - bottom, 40))
@@ -46,80 +49,133 @@ struct CropStageCanvas: View, Animatable {
     var body: some View {
         let xform = ViewXform(canvas: canvas, image: vm.imageSize, zoom: zoom, pan: CGSize(width: panX, height: panY))
         ZStack {
+            // nothing of the photo behind the top buttons (a warped or zoomed picture reached up under them)
             CanvasView(model: model, xform: xform, hdr: hdr).allowsHitTesting(false)
+                .mask { VStack(spacing: 0) { Color.clear.frame(height: CropStage.clearTop); Color.black } }
             CropOverlay(vm: vm, xform: xform, onResize: onResize)
         }
         .frame(width: canvas.width, height: canvas.height)
     }
 }
 
-// MARK: - Straighten dial
+// MARK: - Ruler dial (straighten and perspective)
 
-/// A ruler under the photo: drag it like a physical dial (the ticks follow the finger), a click each degree, double-tap
-/// puts it back to 0. Reads and writes degrees.
+/// A ruler under the photo, as in Photos and Photomator: drag it like a physical dial (the ticks follow the finger), a
+/// click at each tick, double-tap puts it back to its neutral value. Numbers sit above the ticks, a pointer below the
+/// middle. Straighten: a tick is a degree; perspective: two units of the -100...100 scale.
 struct RulerDial: View {
     @Binding var value: Double
     var range: ClosedRange<Double> = -45...45
+    var neutral: Double = 0
+    /// What one tick is worth, and how many ticks from one number to the next
+    var step: Double = 1
+    var labelEvery = 5
+    var decimals = 1
     var axID = "Straighten"
+    var label = "Straighten"
+    /// A finger is on the dial (the crop shows a fine grid meanwhile)
+    var onActive: (Bool) -> Void = { _ in }
     @State private var base: Double?
 
-    private let perDegree: CGFloat = 9
+    private let perTick: CGFloat = 9
 
     var body: some View {
         Canvas { ctx, size in
             let cx = size.width / 2
-            let span = Double(cx / perDegree) + 1
-            let lo = max(Int(floor(value - span)), Int(range.lowerBound)), hi = min(Int(ceil(value + span)), Int(range.upperBound))
-            guard lo <= hi else { return }
-            for d in lo...hi {
-                let x = cx + CGFloat(Double(d) - value) * perDegree
-                let zero = d == 0, major = d % 5 == 0
-                let h: CGFloat = zero ? 24 : major ? 17 : 10
-                var p = Path()
-                p.move(to: CGPoint(x: x, y: size.height - 8)); p.addLine(to: CGPoint(x: x, y: size.height - 8 - h))
-                ctx.stroke(p, with: .color(zero ? Theme.accent : Color.white.opacity(major ? 0.75 : 0.35)), lineWidth: zero ? 2 : 1)
-                if d % 10 == 0 && !zero {
-                    ctx.draw(Text("\(abs(d))").font(.system(size: 9, weight: .medium)).foregroundStyle(Color.white.opacity(0.55)),
-                             at: CGPoint(x: x, y: size.height - 8 - h - 8))
+            let pos = value / step                                  // the pointer's place, in ticks
+            let span = Double(cx / perTick) + 1
+            let lo = max(Int((pos - span).rounded(.down)), Int((range.lowerBound / step).rounded(.up)))
+            let hi = min(Int((pos + span).rounded(.up)), Int((range.upperBound / step).rounded(.down)))
+            let ground = size.height - 16                           // the ticks stand on this line, the pointer below it
+            if lo <= hi {
+                for i in lo...hi {
+                    let x = cx + CGFloat(Double(i) - pos) * perTick
+                    let major = i % labelEvery == 0
+                    let h: CGFloat = major ? 14 : 8
+                    var p = Path()
+                    p.move(to: CGPoint(x: x, y: ground)); p.addLine(to: CGPoint(x: x, y: ground - h))
+                    ctx.stroke(p, with: .color(Color.white.opacity(major ? 0.8 : 0.35)), lineWidth: major ? 1.4 : 1)
+                    if major {
+                        let v = Double(i) * step
+                        let home = abs(v - neutral) < step / 2
+                        ctx.draw(Text("\(Int(v.rounded()))")
+                                    .font(.system(size: 12, weight: home ? .semibold : .regular).monospacedDigit())
+                                    .foregroundStyle(Color.white.opacity(home ? 0.95 : 0.55)),
+                                 at: CGPoint(x: x, y: ground - h - 10))
+                    }
                 }
             }
+            // where the value is: a line over the ticks (accent once moved) and a small pointer under them
+            let moved = abs(value - neutral) > step / 20
+            var line = Path()
+            line.move(to: CGPoint(x: cx, y: ground + 1)); line.addLine(to: CGPoint(x: cx, y: ground - 18))
+            ctx.stroke(line, with: .color(moved ? Theme.accent : .white), lineWidth: 2)
+            var tip = Path()
+            tip.move(to: CGPoint(x: cx, y: ground + 4))
+            tip.addLine(to: CGPoint(x: cx - 6, y: ground + 13)); tip.addLine(to: CGPoint(x: cx + 6, y: ground + 13))
+            tip.closeSubpath()
+            ctx.fill(tip, with: .color(.white))
         }
-        .overlay(alignment: .bottom) {
-            // the fixed pointer the ticks pass under
-            Capsule().fill(Color.white).frame(width: 2.5, height: 30).padding(.bottom, 4).allowsHitTesting(false)
-        }
-        .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.12),
-                                     .init(color: .black, location: 0.88), .init(color: .clear, location: 1)],
+        .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.14),
+                                     .init(color: .black, location: 0.86), .init(color: .clear, location: 1)],
                              startPoint: .leading, endPoint: .trailing))
-        .frame(height: 52)
+        .frame(height: 56)
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { v in
-                if base == nil { base = value }
+                if base == nil { base = value; onActive(true) }
                 let old = value
-                let raw = (base ?? 0) - Double(v.translation.width / perDegree)
-                let next = (min(max(raw, range.lowerBound), range.upperBound) * 10).rounded() / 10
+                let raw = (base ?? 0) - Double(v.translation.width / perTick) * step
+                let k = pow(10, Double(decimals))
+                let next = (min(max(raw, range.lowerBound), range.upperBound) * k).rounded() / k
                 if next != value { value = next }
-                if Int(next.rounded()) != Int(old.rounded()) { UISelectionFeedbackGenerator().selectionChanged() }
+                if Int((next / step).rounded()) != Int((old / step).rounded()) { UISelectionFeedbackGenerator().selectionChanged() }
             }
-            .onEnded { _ in base = nil })
-        .simultaneousGesture(TapGesture(count: 2).onEnded { value = 0 })
+            .onEnded { _ in base = nil; onActive(false) })
+        .simultaneousGesture(TapGesture(count: 2).onEnded { value = neutral })
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("slider-" + axID)
-        .accessibilityLabel("Straighten")
-        .accessibilityValue(String(format: "%.1f", value))
+        .accessibilityLabel(label)
+        .accessibilityValue(String(format: "%.\(decimals)f", value))
         .accessibilityAdjustableAction { dir in
-            value = min(max(value + (dir == .increment ? 0.5 : -0.5), range.lowerBound), range.upperBound)
+            let d = decimals > 0 ? step / 2 : step
+            value = min(max(value + (dir == .increment ? d : -d), range.lowerBound), range.upperBound)
         }
+    }
+}
+
+/// A Photomator-style tile: icon and/or words on a rounded grey tile that takes the width it is given; accent when on.
+struct CropTile: View {
+    var title: String?
+    var system: String?
+    var active = false
+    var busy = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if busy {
+                ProgressView().controlSize(.small)
+            } else if let system {
+                Image(systemName: system).font(.system(size: 17, weight: .medium))
+            }
+            if let title { Text(title).font(.system(size: 14, weight: .medium)).lineLimit(1).minimumScaleFactor(0.75) }
+        }
+        .frame(maxWidth: .infinity).frame(height: 44)
+        .background(active ? Theme.accent.opacity(0.85) : Theme.chip, in: RoundedRectangle(cornerRadius: 10))
+        .foregroundStyle(Color.white)
+        .contentShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
 // MARK: - Panel
 
+/// Crop | Straighten | Perspective (owner, 25 Oct: perspective like Photomator's, a ruler and a choice of what it changes,
+/// instead of six sliders). Every tab fits the same panel, so switching never moves the photo.
 struct CropPanel: View {
     @ObservedObject var vm: EditorViewModel
-    @AppStorage("cropTab") private var tab = "Crop"
+    @AppStorage("cropTab") private var storedTab = "Crop"
     @AppStorage("cropGrid") private var grid = "thirds"
+    @AppStorage("perspectiveAxis") private var axisKey = "vertical"
     @State private var askCustom = false
     @State private var customW = ""
     @State private var customH = ""
@@ -127,15 +183,36 @@ struct CropPanel: View {
     private let ratios: [(String, Double)] = [
         ("1:1", 1), ("5:4", 1.25), ("4:3", 4.0 / 3), ("7:5", 1.4), ("3:2", 1.5), ("16:9", 16.0 / 9), ("2:1", 2), ("3:1", 3),
     ]
+    private static let tabs = ["Crop", "Straighten", "Perspective"]
+
+    /// What the perspective ruler changes. Scale and the moves matter mostly with Fill frame off (the photo on a bigger canvas).
+    private struct Axis {
+        let key: String, title: String, kp: WritableKeyPath<EditSettings, Double>
+        var range: ClosedRange<Double> = -100...100
+        var neutral: Double = 0
+        var icon: String?
+    }
+    private static let axes: [Axis] = [
+        Axis(key: "vertical", title: "Vertical", kp: \.tVertical),
+        Axis(key: "horizontal", title: "Horizontal", kp: \.tHorizontal),
+        Axis(key: "aspect", title: "Aspect", kp: \.tAspect),
+        Axis(key: "scale", title: "Scale", kp: \.tScale, range: 50...150, neutral: 100),
+        Axis(key: "moveX", title: "Move", kp: \.tOffX, icon: "arrow.left.and.right"),
+        Axis(key: "moveY", title: "Move", kp: \.tOffY, icon: "arrow.up.and.down"),
+    ]
+
+    /// "Transform" was the second tab until 25 Oct.
+    private var tab: String { storedTab == "Transform" ? "Perspective" : (Self.tabs.contains(storedTab) ? storedTab : "Crop") }
+    private var axis: Axis { Self.axes.first { $0.key == axisKey } ?? Self.axes[0] }
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             HStack(spacing: 0) {
-                ForEach(["Crop", "Transform"], id: \.self) { t in
-                    Button { tab = t } label: {
+                ForEach(Self.tabs, id: \.self) { t in
+                    Button { storedTab = t } label: {
                         HStack(spacing: 4) {
                             Text(t).font(.system(size: 13, weight: .semibold))
-                            if t == "Transform" && (vm.settings.hasTransform) { EditedDot() }
+                            if edited(t) { EditedDot() }
                         }
                         .frame(maxWidth: .infinity).frame(height: 30)
                         .background(tab == t ? Theme.accent.opacity(0.85) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
@@ -148,9 +225,16 @@ struct CropPanel: View {
             .padding(2)
             .background(Theme.chip, in: RoundedRectangle(cornerRadius: 9))
             .padding(.horizontal, 12)
-            if tab == "Transform" { transform } else { crop }
+            ScrollView(showsIndicators: false) {
+                switch tab {
+                case "Straighten": straighten
+                case "Perspective": perspective
+                default: crop
+                }
+            }
         }
         .padding(.top, 4)
+        .onDisappear { vm.cropGuides = false }
         .alert("Custom ratio", isPresented: $askCustom) {
             TextField("Width", text: $customW).keyboardType(.decimalPad)
             TextField("Height", text: $customH).keyboardType(.decimalPad)
@@ -164,118 +248,134 @@ struct CropPanel: View {
         } message: { Text("For example 4 and 5 for 4:5.") }
     }
 
+    private func edited(_ t: String) -> Bool {
+        switch t {
+        case "Straighten": return vm.settings.straighten != 0
+        case "Perspective": return vm.settings.hasTransform
+        default: return false
+        }
+    }
+
     // MARK: Crop tab
 
     private var crop: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 4) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        Chip(title: "Free", selected: vm.settings.cropAspect == 0) { vm.setCropAspect(0) }
-                        Chip(title: "Original", selected: matches(vm.originalAspect)) { vm.setCropAspect(vm.originalAspect) }
-                        ForEach(ratios, id: \.0) { name, r in
-                            Chip(title: name, selected: matches(r)) { vm.selectCropRatio(r) }
-                        }
-                        Chip(title: "Custom", system: "plus") { customW = ""; customH = ""; askCustom = true }
-                            .accessibilityIdentifier("crop-custom")
+        VStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    Chip(title: "Free", selected: vm.settings.cropAspect == 0) { vm.setCropAspect(0) }
+                    Chip(title: "Original", selected: matches(vm.originalAspect)) { vm.setCropAspect(vm.originalAspect) }
+                    ForEach(ratios, id: \.0) { name, r in
+                        Chip(title: name, selected: matches(r)) { vm.selectCropRatio(r) }
                     }
-                    .padding(.horizontal, 12)
+                    Chip(title: "Custom", system: "plus") { customW = ""; customH = ""; askCustom = true }
+                        .accessibilityIdentifier("crop-custom")
                 }
-                // straighten: the ruler, its angle and one-tap levelling from the horizon
+                .padding(.horizontal, 12)
+            }
+            // four equal tiles a row; Reset takes the width of two
+            VStack(spacing: 8) {
                 HStack(spacing: 8) {
-                    Button { vm.autoLevel() } label: {
-                        HStack(spacing: 4) {
-                            if vm.levelling { ProgressView().controlSize(.mini) } else { Image(systemName: "level") }
-                            Text("Auto")
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 10).frame(height: 34)
-                        .background(Theme.chip, in: Capsule())
-                        .foregroundStyle(.white)
+                    Button { rotate(-1) } label: { CropTile(system: "rotate.left") }
+                        .accessibilityIdentifier("crop-rotate-left").accessibilityLabel("Rotate left")
+                    Button { rotate(1) } label: { CropTile(system: "rotate.right") }
+                        .accessibilityIdentifier("crop-rotate-right").accessibilityLabel("Rotate right")
+                    Button { flip(horizontal: true) } label: {
+                        CropTile(system: "arrow.left.and.right.righttriangle.left.righttriangle.right", active: isFlipped(horizontal: true))
                     }
-                    .accessibilityIdentifier("crop-auto-level")
-                    RulerDial(value: Binding(get: { vm.settings.straighten }, set: { vm.settings.straighten = $0 }))
-                    Text(String(format: "%.1f°", vm.settings.straighten))
-                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(vm.settings.straighten == 0 ? Color(white: 0.6) : Theme.accent)
-                        .frame(width: 50, alignment: .trailing)
-                        .accessibilityHidden(true)
+                    .accessibilityIdentifier("crop-flip-h").accessibilityLabel("Flip left to right")
+                    Button { flip(horizontal: false) } label: {
+                        CropTile(system: "arrow.up.and.down.righttriangle.up.righttriangle.down", active: isFlipped(horizontal: false))
+                    }
+                    .accessibilityIdentifier("crop-flip-v").accessibilityLabel("Flip upside down")
                 }
-                .padding(.horizontal, 14)
-                HStack(spacing: 2) {
-                    IconButton(system: "rotate.left") { rotate(-1) }.accessibilityIdentifier("crop-rotate-left")
-                    IconButton(system: "rotate.right") { rotate(1) }.accessibilityIdentifier("crop-rotate-right")
-                    IconButton(system: "arrow.left.and.right.righttriangle.left.righttriangle.right", active: isFlipped(horizontal: true)) {
-                        flip(horizontal: true)
+                HStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Button { vm.flipCropOrientation() } label: { CropTile(system: "rectangle.portrait.rotate") }
+                            .disabled(vm.settings.cropAspect == 0).opacity(vm.settings.cropAspect == 0 ? 0.4 : 1)
+                            .accessibilityIdentifier("crop-orientation").accessibilityLabel("Portrait or landscape")
+                        Menu {
+                            ForEach([("thirds", "Thirds"), ("golden", "Golden ratio"), ("diagonal", "Diagonals"),
+                                     ("grid", "Fine grid"), ("none", "No grid")], id: \.0) { key, name in
+                                Button { grid = key } label: { Label(name, systemImage: grid == key ? "checkmark" : "grid") }
+                            }
+                        } label: { CropTile(system: "squareshape.split.3x3") }
+                        .accessibilityIdentifier("crop-grid")
                     }
-                    .accessibilityIdentifier("crop-flip-h")
-                    IconButton(system: "arrow.up.and.down.righttriangle.up.righttriangle.down", active: isFlipped(horizontal: false)) {
-                        flip(horizontal: false)
-                    }
-                    .accessibilityIdentifier("crop-flip-v")
-                    IconButton(system: "rectangle.portrait.rotate", disabled: vm.settings.cropAspect == 0) { vm.flipCropOrientation() }
-                        .accessibilityIdentifier("crop-orientation")
-                    Menu {
-                        ForEach([("thirds", "Thirds"), ("golden", "Golden ratio"), ("diagonal", "Diagonals"),
-                                 ("grid", "Fine grid"), ("none", "No grid")], id: \.0) { key, name in
-                            Button { grid = key } label: { Label(name, systemImage: grid == key ? "checkmark" : "grid") }
-                        }
-                    } label: {
-                        Image(systemName: "squareshape.split.3x3").font(.system(size: 17))
-                            .frame(width: 38, height: 38).foregroundStyle(.white)
-                    }
-                    .accessibilityIdentifier("crop-grid")
-                    Spacer(minLength: 2)
-                    PillButton(title: "Reset", system: "arrow.counterclockwise") { vm.settings.reset(.crop) }
+                    Button { vm.settings.reset(.crop) } label: { CropTile(title: "Reset", system: "arrow.counterclockwise") }
+                        .disabled(!vm.settings.hasEdits(.crop)).opacity(vm.settings.hasEdits(.crop) ? 1 : 0.4)
                         .accessibilityIdentifier("crop-reset")
                 }
-                .padding(.horizontal, 10)
             }
+            .padding(.horizontal, 12)
         }
     }
 
-    // MARK: Transform tab
+    // MARK: Straighten tab
 
-    private var transform: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Perspective, stretch and position.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                    Spacer()
-                    PillButton(title: "Reset", system: "arrow.counterclockwise") {
-                        var s = vm.settings
-                        s.tVertical = 0; s.tHorizontal = 0; s.tAspect = 0; s.tScale = 100; s.tOffX = 0; s.tOffY = 0
-                        vm.settings = s
+    private var straighten: some View {
+        VStack(spacing: 6) {
+            Text(String(format: "%.1f°", vm.settings.straighten))
+                .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                .foregroundStyle(vm.settings.straighten == 0 ? Color(white: 0.6) : Theme.accent)
+                .accessibilityHidden(true)
+            RulerDial(value: Binding(get: { vm.settings.straighten }, set: { vm.settings.straighten = $0 }),
+                      onActive: { vm.cropGuides = $0 })
+                .padding(.horizontal, 8)
+            HStack(spacing: 8) {
+                Button { vm.autoLevel() } label: { CropTile(title: "Auto", system: "level", busy: vm.levelling) }
+                    .accessibilityIdentifier("crop-auto-level")
+                fillFrame
+                Button { vm.settings.straighten = 0 } label: { CropTile(title: "Reset", system: "arrow.counterclockwise") }
+                    .disabled(vm.settings.straighten == 0).opacity(vm.settings.straighten == 0 ? 0.4 : 1)
+                    .accessibilityIdentifier("straighten-reset")
+            }
+            .padding(.horizontal, 12)
+        }
+    }
+
+    // MARK: Perspective tab
+
+    private var perspective: some View {
+        let a = axis
+        return VStack(spacing: 6) {
+            // what the ruler changes; a changed one shows its value
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(Self.axes, id: \.key) { x in
+                        let v = vm.settings[keyPath: x.kp]
+                        Chip(title: v == x.neutral ? x.title : "\(x.title) \(Int(v.rounded()))", system: x.icon, selected: x.key == a.key) { axisKey = x.key }
+                            .accessibilityIdentifier("persp-\(x.key)")
                     }
-                    .opacity(vm.settings.hasTransform ? 1 : 0.45)
-                    .disabled(!vm.settings.hasTransform)
+                }
+                .padding(.horizontal, 12)
+            }
+            RulerDial(value: Binding(get: { vm.settings[keyPath: a.kp] }, set: { vm.settings[keyPath: a.kp] = $0 }),
+                      range: a.range, neutral: a.neutral, step: 2, decimals: 0, axID: a.key.prefix(1).uppercased() + a.key.dropFirst(), label: a.title,
+                      onActive: { vm.cropGuides = $0 })
+                .id(a.key)
+                .padding(.horizontal, 8)
+            HStack(spacing: 8) {
+                fillFrame
+                Button {
+                    var s = vm.settings
+                    s.tVertical = 0; s.tHorizontal = 0; s.tAspect = 0; s.tScale = 100; s.tOffX = 0; s.tOffY = 0
+                    vm.settings = s
+                } label: { CropTile(title: "Reset", system: "arrow.counterclockwise") }
+                    .disabled(!vm.settings.hasTransform).opacity(vm.settings.hasTransform ? 1 : 0.4)
                     .accessibilityIdentifier("transform-reset")
-                }
-                .padding(.horizontal, 14).padding(.vertical, 4)
-                Toggle(isOn: Binding(get: { vm.settings.tFill }, set: { vm.settings.tFill = $0 })) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Keep the crop inside the photo").font(.system(size: 13))
-                        Text("No empty corners after straightening or perspective").font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 14).padding(.vertical, 2)
-                .accessibilityIdentifier("transform-fill")
-                row("Vertical", \.tVertical)
-                row("Horizontal", \.tHorizontal)
-                row("Aspect", \.tAspect)
-                row("Scale", \.tScale, range: 50...150, neutral: 100)
-                row("X offset", \.tOffX)
-                row("Y offset", \.tOffY)
             }
+            .padding(.horizontal, 12)
         }
     }
 
-    private func row(_ title: String, _ kp: WritableKeyPath<EditSettings, Double>,
-                     range: ClosedRange<Double> = -100...100, neutral: Double = 0) -> some View {
-        LabeledSlider(title: title, value: Binding(get: { vm.settings[keyPath: kp] }, set: { vm.settings[keyPath: kp] = $0 }),
-                      range: range, neutral: neutral)
-            .padding(.horizontal, 14)
+    /// Fill frame: keep the crop on photo (no empty corners) after straightening or perspective.
+    private var fillFrame: some View {
+        Button { vm.settings.tFill.toggle() } label: {
+            CropTile(title: "Fill frame", system: vm.settings.tFill ? "checkmark.circle.fill" : "circle", active: vm.settings.tFill)
+        }
+        .accessibilityIdentifier("transform-fill")
+        .accessibilityLabel("Fill frame: no empty corners after straightening or perspective")
+        .accessibilityValue(vm.settings.tFill ? "on" : "off")
     }
 
     // MARK: Flip (as seen on screen)
@@ -409,10 +509,12 @@ struct CropOverlay: View {
         .allowsHitTesting(false)
     }
 
-    /// The composition grid (chosen in the crop panel); denser while a handle is held.
+    /// The composition grid (chosen in the crop panel); denser while a handle is held, a fine grid while the straighten or
+    /// perspective ruler turns (lines to judge verticals and the horizon against, as in Photos and Photomator).
     private func gridLines(_ f: CGRect) -> some View {
         let fractions: [CGFloat]
-        switch grid {
+        switch vm.cropGuides ? "guides" : grid {
+        case "guides": fractions = (1..<8).map { CGFloat($0) / 8 }
         case "none": fractions = []
         case "golden": fractions = [0.382, 0.618]
         case "grid": fractions = (1..<9).map { CGFloat($0) / 9 }
@@ -425,12 +527,12 @@ struct CropOverlay: View {
                 p.move(to: CGPoint(x: x, y: f.minY)); p.addLine(to: CGPoint(x: x, y: f.maxY))
                 p.move(to: CGPoint(x: f.minX, y: y)); p.addLine(to: CGPoint(x: f.maxX, y: y))
             }
-            if grid == "diagonal" {
+            if grid == "diagonal" && !vm.cropGuides {
                 p.move(to: CGPoint(x: f.minX, y: f.minY)); p.addLine(to: CGPoint(x: f.maxX, y: f.maxY))
                 p.move(to: CGPoint(x: f.maxX, y: f.minY)); p.addLine(to: CGPoint(x: f.minX, y: f.maxY))
             }
         }
-        .stroke(Color.white.opacity(0.4), lineWidth: 0.7)
+        .stroke(Color.white.opacity(vm.cropGuides ? 0.5 : 0.4), lineWidth: 0.7)
         .allowsHitTesting(false)
     }
 

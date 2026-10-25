@@ -74,6 +74,8 @@ final class EditorViewModel: ObservableObject {
 
     // Crop editing: the whole straightened picture is shown with a frame on top
     @Published var cropEditing = false { didSet { upgradeCropIfNeeded(); requestRender() } }
+    /// A finger is on the straighten or perspective ruler: the crop frame shows a fine grid to line things up against.
+    @Published var cropGuides = false
 
     // Full-resolution source used while zoomed in (100% view)
     @Published private(set) var detailLoading = false
