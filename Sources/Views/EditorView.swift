@@ -440,10 +440,10 @@ struct EditorView: View {
 
     // MARK: Canvas
 
-    /// The photo sits directly on top of the panel (spare height above it, under the floating buttons and the
-    /// histogram) and grows upwards into that space when zoomed. Masks and Crop keep it centred, so handles and the crop
-    /// frame have room all round.
-    private var alignBottom: Bool { !chromeHidden && !landscape && tool != nil && tool != .masks && tool != .crop }
+    /// The photo is centred between the top buttons and the panel in every tool (owner, 25 Oct: a wide photo resting on
+    /// the panel sat too low on the screen, with a big empty gap above it). `ViewXform.bottomAlign` stays for the maths
+    /// but nothing turns it on.
+    private var alignBottom: Bool { false }
 
     private var canvas: some View {
         photoArea
