@@ -1277,6 +1277,19 @@ final class LumenUITests: XCTestCase {
         shot("diagnostics")
     }
 
+    /// The library menu lists the AI models Lumen ships with their licence (App Store, Apache 2.0).
+    func testAcknowledgementsListModelsAndLicence() {
+        launchLibrary()
+        el("btn-library-filter").tap()
+        let ack = app.buttons["Acknowledgements"]
+        XCTAssertTrue(ack.waitForExistence(timeout: 5))
+        ack.tap()
+        XCTAssertTrue(app.staticTexts["SCUNet (real noise)"].waitForExistence(timeout: 5), "AI Denoise's model should be credited")
+        XCTAssertTrue(app.staticTexts["LaMa inpainting"].exists, "Heal's model should be credited")
+        shot("acknowledgements")
+        el("ack-done").tap()
+    }
+
     func testBatchExportOfSelectedPhotos() {
         launchLibrary()
         el("btn-select").tap()
