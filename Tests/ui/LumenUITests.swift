@@ -1143,7 +1143,13 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         let after = (c.value as? String) ?? ""
         XCTAssertNotEqual(before, after, "dragging on the curve should bend it")
-        XCTAssertEqual(after.split(separator: " ").count, 3, "the drag should add one point: \(after)")
+        // an untouched curve shows five points along the line (owner, 25 Oct, like Darkroom): the drag moves the middle one
+        let pts = after.split(separator: " ")
+        XCTAssertEqual(pts.count, 5, "the five starting points are saved once one moves: \(after)")
+        if pts.count == 5 {
+            let mid = pts[2].split(separator: ",").compactMap { Double($0) }
+            XCTAssertTrue(mid.count == 2 && abs(mid[0] - 0.5) < 0.05 && mid[1] > 0.55, "the middle point should be the one raised: \(after)")
+        }
         shot("curve-bent")
     }
 

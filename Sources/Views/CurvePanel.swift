@@ -3,6 +3,9 @@ import SwiftUI
 /// Point curve that fills the panel. Drag anywhere: the nearest point is picked up (or a new one is put on the curve
 /// where you touched) and moves with your finger *relative* to where you started, so your finger never hides it and
 /// small moves stay precise. The in → out values show while dragging. Double-tap a point to remove it.
+/// Since 25 Oct (owner, from Darkroom and Photomator): the plot sits inside a margin so the end points are whole, the
+/// zones are named along the top, an untouched curve shows five points evenly along the line (saved only once one is
+/// moved; a curve dragged back onto the line counts as untouched again), and points are rings, filled while held.
 struct CurvePanel: View {
     @ObservedObject var vm: EditorViewModel
     @State private var channel = 0
@@ -10,6 +13,12 @@ struct CurvePanel: View {
     @State private var readout: CurvePoint?
 
     private static let channels: [(Int, String, Color)] = [(0, "RGB", .white), (1, "Red", .red), (2, "Green", .green), (3, "Blue", .blue)]
+    /// What an untouched channel shows: blacks, shadows, midtones, highlights, whites, on the line.
+    private static let starter: [CurvePoint] = [0, 0.25, 0.5, 0.75, 1].map { CurvePoint(x: $0, y: $0) }
+    private static let zones: [(Double, String)] = [(0, "Blacks"), (0.25, "Shadows"), (0.5, "Midtones"), (0.75, "Highlights"), (1, "Whites")]
+    /// Room round the plot so a point at a corner is drawn whole, and a band above it for the zone names.
+    private static let pad: CGFloat = 14
+    private static let labelBand: CGFloat = 16
 
     private var channelColor: Color { Self.channels.first { $0.0 == channel }?.2 ?? .white }
 
@@ -56,22 +65,23 @@ struct CurvePanel: View {
                 curveCanvas
                     .frame(width: size.width, height: size.height)
                     .background(Color.black.opacity(0.45))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12), lineWidth: 0.5))
-                    .overlay(alignment: .topLeading) {
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+                    .overlay(alignment: .top) {
                         if let r = readout {
                             Text("In \(Int((r.x * 255).rounded()))  →  Out \(Int((r.y * 255).rounded()))")
                                 .font(.system(size: 12, weight: .semibold).monospacedDigit())
                                 .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(Color.black.opacity(0.6), in: Capsule())
-                                .padding(8)
+                                .background(Color.black.opacity(0.7), in: Capsule())
+                                .padding(.top, Self.pad + Self.labelBand + 4)
                                 .accessibilityIdentifier("curve-readout")
                         }
                     }
                     .overlay(alignment: .bottomTrailing) {
                         if readout == nil {
                             Text("Drag to bend · double-tap a point to remove it")
-                                .font(.system(size: 10)).foregroundStyle(Color.white.opacity(0.45)).padding(6)
+                                .font(.system(size: 10)).foregroundStyle(Color.white.opacity(0.4))
+                                .padding(.trailing, Self.pad + 4).padding(.bottom, Self.pad + 2)
                                 .allowsHitTesting(false)
                         }
                     }
@@ -89,62 +99,91 @@ struct CurvePanel: View {
         .padding(.top, 6)
     }
 
-    private func isNeutral(_ c: Int) -> Bool { vm.settings.curves.points(c) == ToneCurves.identity }
+    /// On the line (any number of points): renders as no curve at all.
+    private static func onLine(_ p: [CurvePoint]) -> Bool { p.allSatisfy { abs($0.y - $0.x) < 1e-4 } }
+    private func isNeutral(_ c: Int) -> Bool { Self.onLine(vm.settings.curves.points(c)) }
+    /// The points the panel shows and drags: the saved ones, or the five starters on an untouched channel.
+    private func shown(_ c: Int) -> [CurvePoint] {
+        let p = vm.settings.curves.points(c)
+        return Self.onLine(p) ? Self.starter : p
+    }
 
     private func set(_ pts: [(Double, Double)]) {
         vm.settings.curves.set(channel, pts.map { CurvePoint(x: $0.0, y: $0.1) })
     }
 
+    private static func plot(_ size: CGSize) -> CGRect {
+        CGRect(x: pad, y: pad + labelBand, width: max(size.width - 2 * pad, 1), height: max(size.height - 2 * pad - labelBand, 1))
+    }
+
+    private static func place(_ p: CurvePoint, _ r: CGRect) -> CGPoint {
+        CGPoint(x: r.minX + r.width * p.x, y: r.minY + r.height * (1 - p.y))
+    }
+
     private var curveCanvas: some View {
         Canvas { ctx, size in
+            let r = Self.plot(size)
             if let h = vm.histogram?.luma {
                 var p = Path()
-                p.move(to: CGPoint(x: 0, y: size.height))
+                p.move(to: CGPoint(x: r.minX, y: r.maxY))
                 for (i, v) in h.enumerated() {
-                    p.addLine(to: CGPoint(x: size.width * CGFloat(i) / CGFloat(h.count - 1), y: size.height * (1 - CGFloat(v) * 0.8)))
+                    p.addLine(to: CGPoint(x: r.minX + r.width * CGFloat(i) / CGFloat(h.count - 1), y: r.maxY - r.height * CGFloat(v) * 0.8))
                 }
-                p.addLine(to: CGPoint(x: size.width, y: size.height))
+                p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
                 ctx.fill(p, with: .color(Color.white.opacity(0.12)))
             }
-            for i in 1..<4 {
-                let t = CGFloat(i) / 4
-                var h = Path(); h.move(to: CGPoint(x: 0, y: size.height * t)); h.addLine(to: CGPoint(x: size.width, y: size.height * t))
-                var v = Path(); v.move(to: CGPoint(x: size.width * t, y: 0)); v.addLine(to: CGPoint(x: size.width * t, y: size.height))
-                ctx.stroke(h, with: .color(Color.white.opacity(0.13)), lineWidth: 0.5)
-                ctx.stroke(v, with: .color(Color.white.opacity(0.13)), lineWidth: 0.5)
+            // the zones: a line under each name, and the quarters across
+            for (x, name) in Self.zones {
+                let px = r.minX + r.width * x
+                var v = Path(); v.move(to: CGPoint(x: px, y: r.minY)); v.addLine(to: CGPoint(x: px, y: r.maxY))
+                ctx.stroke(v, with: .color(Color.white.opacity(x == 0 || x == 1 ? 0.18 : 0.13)), lineWidth: 0.5)
+                let anchor: UnitPoint = x == 0 ? .leading : (x == 1 ? .trailing : .center)
+                ctx.draw(Text(name).font(.system(size: 10, weight: .medium)).foregroundStyle(Color.white.opacity(0.45)),
+                         at: CGPoint(x: px, y: Self.pad + Self.labelBand / 2 - 2), anchor: anchor)
             }
-            var diag = Path(); diag.move(to: CGPoint(x: 0, y: size.height)); diag.addLine(to: CGPoint(x: size.width, y: 0))
-            ctx.stroke(diag, with: .color(Color.white.opacity(0.12)), style: StrokeStyle(lineWidth: 0.6, dash: [3, 3]))
+            for i in 1..<4 {
+                let y = r.minY + r.height * CGFloat(i) / 4
+                var h = Path(); h.move(to: CGPoint(x: r.minX, y: y)); h.addLine(to: CGPoint(x: r.maxX, y: y))
+                ctx.stroke(h, with: .color(Color.white.opacity(0.13)), lineWidth: 0.5)
+            }
+            var diag = Path(); diag.move(to: CGPoint(x: r.minX, y: r.maxY)); diag.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+            ctx.stroke(diag, with: .color(Color.white.opacity(0.14)), style: StrokeStyle(lineWidth: 0.6, dash: [3, 3]))
             // the other channels' curves, faintly, so you can see what is already bent
             for (c, _, col) in Self.channels where c != channel && !isNeutral(c) {
-                ctx.stroke(curvePath(vm.settings.curves.points(c), size), with: .color(col.opacity(0.3)), lineWidth: 1)
+                ctx.stroke(curvePath(vm.settings.curves.points(c), r), with: .color(col.opacity(0.3)), lineWidth: 1)
             }
-            let pts = vm.settings.curves.points(channel)
-            ctx.stroke(curvePath(pts, size), with: .color(channelColor), lineWidth: 2.2)
+            let pts = shown(channel)
+            ctx.stroke(curvePath(pts, r), with: .color(channelColor), lineWidth: 2.2)
+            // points: rings (Darkroom), the one held is bigger with a dot in it
             for (i, p) in pts.enumerated() {
-                let c = CGPoint(x: size.width * p.x, y: size.height * (1 - p.y))
-                let r: CGFloat = drag?.index == i ? 10 : 7
-                let dot = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
-                ctx.fill(dot, with: .color(channelColor))
-                ctx.stroke(dot, with: .color(.black.opacity(0.6)), lineWidth: 1.2)
+                let c = Self.place(p, r)
+                let held = drag?.index == i
+                let rad: CGFloat = held ? 11 : 8.5
+                let ring = Path(ellipseIn: CGRect(x: c.x - rad, y: c.y - rad, width: rad * 2, height: rad * 2))
+                ctx.fill(ring, with: .color(Color.black.opacity(0.8)))
+                ctx.stroke(ring, with: .color(channelColor), lineWidth: 2)
+                if held {
+                    ctx.fill(Path(ellipseIn: CGRect(x: c.x - 3.5, y: c.y - 3.5, width: 7, height: 7)), with: .color(channelColor))
+                }
             }
         }
     }
 
-    private func curvePath(_ pts: [CurvePoint], _ size: CGSize) -> Path {
+    private func curvePath(_ pts: [CurvePoint], _ r: CGRect) -> Path {
         let lut = ToneCurves.lut(for: pts, size: 96)
         var path = Path()
         for (i, y) in lut.enumerated() {
-            let pt = CGPoint(x: size.width * CGFloat(i) / CGFloat(lut.count - 1), y: size.height * (1 - CGFloat(y)))
+            let pt = CGPoint(x: r.minX + r.width * CGFloat(i) / CGFloat(lut.count - 1), y: r.minY + r.height * (1 - CGFloat(y)))
             if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
         }
         return path
     }
 
     private func nearest(_ pts: [CurvePoint], to loc: CGPoint, _ size: CGSize) -> (Int, CGFloat)? {
+        let r = Self.plot(size)
         var best: (Int, CGFloat)?
         for (i, p) in pts.enumerated() {
-            let c = CGPoint(x: p.x * size.width, y: (1 - p.y) * size.height)
+            let c = Self.place(p, r)
             let d = hypot(c.x - loc.x, c.y - loc.y)
             if best == nil || d < best!.1 { best = (i, d) }
         }
@@ -154,14 +193,15 @@ struct CurvePanel: View {
     private func dragGesture(_ size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { v in
-                let w = max(size.width, 1), h = max(size.height, 1)
-                var p = vm.settings.curves.points(channel)
+                let r = Self.plot(size)
+                let w = r.width, h = r.height
+                var p = shown(channel)
                 if drag == nil {
                     if let (i, d) = nearest(p, to: v.startLocation, size), d < 36 {
                         drag = (i, p[i])
                     } else {
                         // a new point goes *on* the curve where you touched, so nothing jumps
-                        let x = min(max(Double(v.startLocation.x / w), 0.02), 0.98)
+                        let x = min(max(Double((v.startLocation.x - r.minX) / w), 0.02), 0.98)
                         let lut = ToneCurves.lut(for: p, size: 256)
                         let y = Double(lut[min(max(Int((x * 255).rounded()), 0), 255)])
                         let np = CurvePoint(x: x, y: y)
@@ -184,13 +224,20 @@ struct CurvePanel: View {
                 readout = np
                 vm.settings.curves.set(channel, p)
             }
-            .onEnded { _ in drag = nil; readout = nil }
+            .onEnded { _ in
+                drag = nil
+                readout = nil
+                // back on the line: untouched again (no curve to render, no edited dot)
+                if Self.onLine(vm.settings.curves.points(channel)) && vm.settings.curves.points(channel) != ToneCurves.identity {
+                    vm.settings.curves.set(channel, ToneCurves.identity)
+                }
+            }
     }
 
     private func removePoint(near loc: CGPoint, _ size: CGSize) {
-        var p = vm.settings.curves.points(channel)
+        var p = shown(channel)
         guard let (i, d) = nearest(p, to: loc, size), d < 36, i > 0, i < p.count - 1 else { return }
         p.remove(at: i)
-        vm.settings.curves.set(channel, p)
+        vm.settings.curves.set(channel, Self.onLine(p) ? ToneCurves.identity : p)
     }
 }
