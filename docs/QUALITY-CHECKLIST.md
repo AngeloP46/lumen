@@ -141,6 +141,9 @@ closures: the flight recorder is in since 0.1.546), A23 (reload storms). Version
 | 0.1.644 | Grade opens taller (its compact height is 330 pt) |
 | 0.1.657 | crop rework (#147, `docs/CROP-REWORK.md`): the photo zooms and moves under a frame that stays big, 48 pt handles, a straighten dial; crop version 2 keeps the crop on real photo exactly ("Keep the crop inside the photo"), older edits converted when Crop opens them |
 | 0.1.665 | crop panel Crop / Straighten / Perspective like Photomator (#150): a ruler for straighten and for perspective (chips choose Vertical, Horizontal, Aspect, Scale, Move), big tiles, a fine grid while a ruler turns, nothing drawn behind the top buttons |
+| 0.1.673 | Crop: one zoom (pinch, zoom tile back to 1x, Scale / Move only with Fill frame off); `EndStop`: sliders, rulers, crop drags and pinch, photo pan, curve points, Depth edges and the panel handle respond at once when turning back at a limit (#153) |
+| 0.1.679 | Brightness (Light and masks: mid-tones up to +/-1 EV, white and black kept); Auto shares its lift between Exposure and Brightness and no longer treats a bright sky as a night scene (#155) |
+| 0.1.684 | canvas fills the whole texture at its own size and crops the photo to its place (a mask's tint showed around the photo on the phone); a wrong-shaped picture is noted in Send diagnostics (#157) |
 
 **Phone evidence, 0.1.581 (Angelo, 23 Oct 16:49-16:51):** heavy, quick editing (undo/redo and HDR toggles, three people removed, four heals, the
 zoomed-in copy built three times, AI masks on every change): **no closure, peak 1932 MB** (0.1.552 and earlier reached 3.0-3.4 GB and closed). The Heal model

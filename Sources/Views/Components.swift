@@ -38,8 +38,24 @@ extension EnvironmentValues {
 
 // MARK: - Slider
 
+/// The slider's haptics (Apple's sliders, owner 25 Oct: sliding should feel more satisfying): a firm click when the value
+/// arrives at its neutral point, a soft bump at either end, light ticks along the way. Prepared when a finger lands, so
+/// the first one is on time.
+final class SliderHaptics {
+    private let tick = UISelectionFeedbackGenerator()
+    private let detent = UIImpactFeedbackGenerator(style: .rigid)
+    private let end = UIImpactFeedbackGenerator(style: .soft)
+    func prepare() { tick.prepare(); detent.prepare(); end.prepare() }
+    func ticked() { tick.selectionChanged(); tick.prepare() }
+    func atNeutral() { detent.impactOccurred(intensity: 0.8); detent.prepare() }
+    func atEnd() { end.impactOccurred(intensity: 0.9); end.prepare() }
+}
+
 /// A wide, forgiving slider. Drag anywhere to move relative to where you started; drag your finger *away* from the
-/// track (up or down) to scrub in finer steps; double-tap anywhere on it to reset; a light tick marks the neutral point.
+/// track (up or down) to scrub in finer steps; double-tap anywhere on it to reset.
+/// Neutral is a detent (25 Oct): passing through it, the value rests there for a short stretch of finger travel with a
+/// click, then carries on, so 0 is easy to land on and the values right next to it can still be chosen. Before, anything
+/// within 1.2 % of the span snapped to neutral: on -100...100 nothing between -2 and 2, on Exposure nothing within 0.12 EV.
 struct ScrubSlider: View {
     @Binding var value: Double
     var range: ClosedRange<Double> = -100...100
@@ -51,52 +67,70 @@ struct ScrubSlider: View {
     var onActive: ((Bool) -> Void)?
     var axID = ""
 
-    @State private var base: Double = 0
-    @State private var acc: Double = 0
+    @State private var detent: DetentDrag?
     @State private var lastX: CGFloat = 0
     @State private var dragging = false
     @State private var moved = false
     @State private var ignoring = false
-    @State private var wasAtNeutral = false
     @State private var fine: Double = 1
     @State private var lastTap: Date?
     @State private var lastTapX: CGFloat = 0
+    @State private var lastTick = 0
+    @State private var haptics = SliderHaptics()
     /// True while a finger is on the slider. A gesture the system cancels (incoming call, Control Centre) never
     /// calls onEnded; this resets either way, so the slider can tidy up and the list can scroll again.
     @GestureState private var touching = false
 
+    /// How far the finger travels through the neutral detent before the value moves on.
+    private let detentPoints: CGFloat = 12
+
     private var neutralValue: Double { neutral ?? (range.contains(0) ? 0 : range.lowerBound) }
+    private var span: Double { range.upperBound - range.lowerBound }
+    /// A haptic tick (and a mark on the track while dragging) every twentieth of the range: 10 on -100...100, half a
+    /// stop on Exposure.
+    private var tickStep: Double { span / 20 }
 
     var body: some View {
         GeometryReader { geo in
             let w = max(geo.size.width, 1)
-            let span = range.upperBound - range.lowerBound
             let frac = CGFloat((value - range.lowerBound) / span)
             let nFrac = CGFloat((neutralValue - range.lowerBound) / span)
+            let thick: CGFloat = moved ? 6 : 4
             ZStack(alignment: .leading) {
                 if let track {
                     LinearGradient(colors: track, startPoint: .leading, endPoint: .trailing)
-                        .frame(height: 5).clipShape(Capsule())
+                        .frame(height: thick + 1).clipShape(Capsule())
                 } else {
-                    Capsule().fill(Color.white.opacity(0.16)).frame(height: 3)
+                    Capsule().fill(Color.white.opacity(moved ? 0.2 : 0.14)).frame(height: thick)
                     Capsule().fill(Theme.accent)
-                        .frame(width: abs(frac - nFrac) * w, height: 3)
+                        .frame(width: max(abs(frac - nFrac) * w, 0), height: thick)
                         .offset(x: min(frac, nFrac) * w)
                 }
-                Rectangle().fill(Color.white.opacity(0.45)).frame(width: 1.5, height: 10).offset(x: nFrac * w - 0.75)
+                // while dragging, faint marks where the ticks are felt
+                if moved {
+                    ForEach(1..<20, id: \.self) { i in
+                        Capsule().fill(Color.white.opacity(0.28)).frame(width: 1, height: 5)
+                            .offset(x: w * CGFloat(i) / 20 - 0.5, y: 8)
+                    }
+                    .transition(.opacity)
+                }
+                Capsule().fill(Color.white.opacity(0.5)).frame(width: 2, height: moved ? 14 : 10).offset(x: nFrac * w - 1)
                 Circle()
                     .fill(Color.white)
-                    .frame(width: moved ? 26 : 22, height: moved ? 26 : 22)
-                    .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
-                    .offset(x: frac * w - (moved ? 13 : 11))
+                    .overlay(Circle().stroke(Color.black.opacity(0.12), lineWidth: 0.5))
+                    .frame(width: 24, height: 24)
+                    .scaleEffect(moved ? 1.18 : 1)
+                    .shadow(color: .black.opacity(moved ? 0.45 : 0.35), radius: moved ? 4 : 2, y: 1)
+                    .offset(x: frac * w - 12)
                 if moved && bubble {
-                    Text(valueText)
+                    Text(bubbleText)
                         .font(.system(size: 13, weight: .semibold).monospacedDigit())
                         .padding(.horizontal, 9).padding(.vertical, 4)
                         .background(Color(white: 0.2), in: Capsule())
                         .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
                         .foregroundStyle(.white)
-                        .offset(x: min(max(frac * w - 22, 0), w - 46), y: -34)
+                        .offset(x: min(max(frac * w - 24, 0), w - 50), y: -36)
+                        .transition(.scale(scale: 0.6, anchor: .bottom).combined(with: .opacity))
                     if fine < 1 {
                         Text(fine < 0.3 ? "Fine ×0.2" : "Fine ×0.5")
                             .font(.system(size: 10, weight: .medium))
@@ -106,60 +140,14 @@ struct ScrubSlider: View {
                 }
             }
             .frame(height: geo.size.height)
+            .animation(.spring(response: 0.28, dampingFraction: 0.72), value: moved)
             .contentShape(Rectangle())
             // simultaneous, so a vertical swipe on a slider still scrolls the list it is in; the list only stops
             // scrolling (onActive) once a drag has turned out to be sideways
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
                     .updating($touching) { _, state, _ in state = true }
-                    .onChanged { v in
-                        if !dragging {
-                            dragging = true
-                            moved = false
-                            ignoring = false
-                            // a second touch shortly after a tap means reset
-                            if let t = lastTap, Date().timeIntervalSince(t) < 0.4, abs(v.startLocation.x - lastTapX) < 44 {
-                                value = neutralValue
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                ignoring = true
-                                lastTap = nil
-                            }
-                            base = value
-                            acc = 0
-                            lastX = v.startLocation.x
-                        }
-                        if ignoring { return }
-                        let dx = v.location.x - v.startLocation.x
-                        if !moved {
-                            // dead zone: taps never nudge the value. Then the first real movement decides: sideways
-                            // is this slider, up/down is a scroll of the list it sits in (the slider then lets go).
-                            let dy = v.location.y - v.startLocation.y
-                            guard abs(dx) > 6 || abs(dy) > 6 else { return }
-                            if abs(dy) >= abs(dx) { ignoring = true; return }
-                            moved = true
-                            lastX = v.location.x
-                            onActive?(true)
-                            return
-                        }
-                        let dy = abs(v.location.y - v.startLocation.y)
-                        fine = dy < 36 ? 1 : (dy < 96 ? 0.5 : 0.2)
-                        acc += Double((v.location.x - lastX) / w) * span * fine
-                        lastX = v.location.x
-                        // past either end the slider stays at the end, and turning back moves it at once: the
-                        // overshoot is not kept (EndStop; before, nothing moved until the finger undid it)
-                        acc = clamp(base + acc) - base
-                        var nv = clamp(base + acc)
-                        if abs(nv - neutralValue) < span * 0.012 {
-                            nv = neutralValue
-                            if !wasAtNeutral { UISelectionFeedbackGenerator().selectionChanged() }
-                            wasAtNeutral = true
-                        } else {
-                            wasAtNeutral = false
-                        }
-                        let f = pow(10.0, Double(decimals))
-                        nv = (nv * f).rounded() / f
-                        if nv != value { value = nv }
-                    }
+                    .onChanged { v in drag(v, width: w) }
                     .onEnded { v in
                         if !moved && !ignoring && abs(v.translation.height) < 12 {
                             lastTap = Date()
@@ -172,6 +160,7 @@ struct ScrubSlider: View {
                         moved = false
                         ignoring = false
                         fine = 1
+                        detent = nil
                     }
             )
         }
@@ -186,6 +175,7 @@ struct ScrubSlider: View {
                 moved = false
                 ignoring = false
                 fine = 1
+                detent = nil
                 lastTap = nil
             }
         }
@@ -199,9 +189,69 @@ struct ScrubSlider: View {
         }
     }
 
+    private func drag(_ v: DragGesture.Value, width w: CGFloat) {
+        if !dragging {
+            dragging = true
+            moved = false
+            ignoring = false
+            detent = nil
+            haptics.prepare()
+            // a second touch shortly after a tap means reset
+            if let t = lastTap, Date().timeIntervalSince(t) < 0.4, abs(v.startLocation.x - lastTapX) < 44 {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { value = neutralValue }
+                haptics.atNeutral()
+                ignoring = true
+                lastTap = nil
+            }
+            lastX = v.startLocation.x
+            lastTick = tickIndex(value)
+        }
+        if ignoring { return }
+        let dx = v.location.x - v.startLocation.x
+        if !moved {
+            // dead zone: taps never nudge the value. Then the first real movement decides: sideways
+            // is this slider, up/down is a scroll of the list it sits in (the slider then lets go).
+            let dy = v.location.y - v.startLocation.y
+            guard abs(dx) > 6 || abs(dy) > 6 else { return }
+            if abs(dy) >= abs(dx) { ignoring = true; return }
+            moved = true
+            lastX = v.location.x
+            onActive?(true)
+            return
+        }
+        let dy = abs(v.location.y - v.startLocation.y)
+        fine = dy < 36 ? 1 : (dy < 96 ? 0.5 : 0.2)
+        let step = v.location.x - lastX
+        lastX = v.location.x
+        // the neutral detent and the end stops (DetentDrag): no snap zone, no overshoot kept
+        var d = detent ?? DetentDrag(value: value, neutral: neutralValue, range: range, hold: Double(detentPoints))
+        d.move(points: Double(step), perPoint: span / Double(w) * fine)
+        detent = d
+        let f = pow(10.0, Double(decimals))
+        let nv = (d.value * f).rounded() / f
+        guard nv != value else { return }
+        let old = value
+        value = nv
+        if nv == neutralValue && old != neutralValue {
+            haptics.atNeutral()
+        } else if (nv == range.lowerBound || nv == range.upperBound) && old != nv {
+            haptics.atEnd()
+        } else {
+            let t = tickIndex(nv)
+            if t != lastTick { haptics.ticked() }
+        }
+        lastTick = tickIndex(nv)
+    }
+
+    /// Which tick interval the value is in (ticks every twentieth of the range, counted from neutral).
+    private func tickIndex(_ v: Double) -> Int { Int(((v - neutralValue) / tickStep).rounded(.towardZero)) + (v < neutralValue ? -1 : 0) }
+
     private var valueText: String {
         decimals == 0 ? "\(Int(value.rounded()))" : String(format: "%.\(decimals)f", value)
     }
+
+    /// The bubble shows the direction too (+12, -0.35), as the value buttons do in Photos.
+    private var bubbleText: String { value > neutralValue && neutralValue == 0 ? "+" + valueText : valueText }
 
     private func clamp(_ v: Double) -> Double { min(max(v, range.lowerBound), range.upperBound) }
 }
