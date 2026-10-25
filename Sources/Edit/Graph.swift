@@ -24,7 +24,7 @@ extension EditSession {
         let g2 = v(s.blackAndWhite ? 0 : s.vibrance / 100, s.blackAndWhite ? 0 : s.saturation / 100,
                    s.texture / 100, s.clarity / 100)
         let g3 = v(s.dehaze / 100, s.sharpness / 100 * 0.9, s.sharpenMasking / 100, s.noiseReduction / 100)
-        let g4 = v(s.colorNoise / 100, 0, 0, 0)
+        let g4 = v(s.colorNoise / 100, s.brightness / 100, 0, 0)
         let g6 = v(Double(source.air.x), Double(source.air.y), Double(source.air.z), Double(source.darkNorm))
 
         var args: [Any] = [source.base, source.l1, source.l2, source.chroma]

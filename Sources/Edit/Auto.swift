@@ -4,7 +4,8 @@ import CoreImage
 /// One-tap "Auto" (rewritten 15 Oct 2026): every value comes from this photo's own pixels, nothing is a fixed
 /// amount added to every photo.
 /// - Exposure meters the subject when Vision finds one (else a centre-weighted average) and respects the scene's
-///   key: a bright scene that is not clipping stays bright, a dark scene with light sources stays dark.
+///   key: a bright scene that is not clipping stays bright, a dark scene with light sources stays dark. Brightening is
+///   shared (25 Oct): Exposure as far as the bright end allows, Brightness (mid-tones only) the rest.
 /// - Highlights / Shadows / Whites / Blacks move only as far as the measured tones need, and in HDR the
 ///   highlights above SDR white that the screen can show are left alone.
 /// - Contrast follows the tonal spread (flat gets more, already contrasty gets none), Vibrance the existing
@@ -17,7 +18,7 @@ import CoreImage
 extension EditSession {
     /// The fields Auto sets (and the Auto button restores).
     static let autoKeys: [WritableKeyPath<EditSettings, Double>] =
-        [\.exposure, \.contrast, \.highlights, \.shadows, \.whites, \.blacks, \.vibrance, \.temperature, \.tint]
+        [\.exposure, \.brightness, \.contrast, \.highlights, \.shadows, \.whites, \.blacks, \.vibrance, \.temperature, \.tint]
 
     func autoSettings(source: ImageSource, current: EditSettings) -> EditSettings {
         Self.autoSettings(grid: source.stats, subject: autoSubjectWeights(source), current: current)
@@ -91,10 +92,29 @@ extension EditSession {
         }
         var ev = log2(0.16 / max(meter, 1e-4)) * 0.75
         if ev < 0 && high < white * 0.98 { ev *= 0.4 }          // bright but not clipping: a high-key scene, keep it bright
-        if ev > 0 && top > 0.5 * white { ev *= 0.5 }            // dark with bright lights: night/low key, keep it dark
-        if ev > 0 { ev = min(ev, max(0, log2(white * 1.6 / max(top, 1e-4)))) }   // don't blow the brightest parts out
+        // dark with bright lights (night, low key): keep it dark. Lights are small and the rest is dark: before 25 Oct any
+        // photo whose brightest 0.3 % passed half white counted, so a dull day under a bright sky was lifted only half way
+        let brightShare = Float(lum.filter { $0 > 0.3 * white }.count) / Float(lum.count)
+        let lowKey = ev > 0 && top > 0.5 * white && brightShare < 0.05 && median < 0.04
+        if lowKey { ev *= 0.5 }
         if median < 0.002 { ev = min(ev, 1.5) }                  // nearly black frame: don't lift sensor noise into grey
         ev = max(-2, min(2, ev))
+        // Brightening is shared (owner, 25 Oct: pushed with Exposure a dull photo looked over-exposed): Exposure only as far
+        // as the bright end allows (the brightest parts not blown, the 98.5th percentile below the highlight shoulder at
+        // 0.85), Brightness the rest, which lifts the mid-tones and leaves the highlights. A low-key scene keeps its dark.
+        s.brightness = 0
+        if ev > 0 {
+            let room = max(0, min(log2(white * 1.6 / max(top, 1e-4)), log2(white * 0.85 / max(high, 1e-4))))
+            let rest = ev - min(ev, room)
+            ev = min(ev, room)
+            if rest > 0.05 && !lowKey {
+                // how much of Brightness reaches the metered tone (the kernel's mid-tone weight, at that tone after Exposure)
+                func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { let t = min(max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t) }
+                let bb = log2(max(meter * exp2(ev), 1e-5) / 0.18)
+                let reach = max(smooth(-7.5, -2.5, bb) * (1 - smooth(-0.5, 2.4, bb)), 0.35)
+                s.brightness = Double(min(100, rest / reach * 100)).rounded()
+            }
+        }
         s.exposure = (Double(ev) * 20).rounded() / 20
         let k = exp2(Float(s.exposure))
         let h = high * k, l = low * k
