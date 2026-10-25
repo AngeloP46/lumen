@@ -1449,8 +1449,14 @@ do {
         check(mean(bd, mids) < mean(base, mids) * 0.8, "Brightness -100 should darken the mid-tones")
         // tones keep their order: the mean of each tenth of the photo's tones still rises from one tenth to the next
         let order = base.indices.sorted { base[$0] < base[$1] }
-        let tenths = (0..<10).map { t in mean(bu, Array(order[(t * order.count / 10)..<((t + 1) * order.count / 10)])) }
-        check(zip(tenths, tenths.dropFirst()).allSatisfy { $0 <= $1 + 1e-4 }, "Brightness must keep darker tones darker (\(tenths))")
+        var tenths: [Float] = []
+        for t in 0..<10 {
+            let lo = t * order.count / 10, hi = (t + 1) * order.count / 10
+            tenths.append(mean(bu, Array(order[lo..<hi])))
+        }
+        var inOrder = true
+        for t in 1..<tenths.count where tenths[t] + 1e-4 < tenths[t - 1] { inOrder = false }
+        check(inOrder, "Brightness must keep darker tones darker (\(tenths))")
         // a mask over the whole photo with its own Brightness does what the global slider does
         var masked = EditSettings()
         var m = Mask.make(.luminance)
@@ -1458,7 +1464,9 @@ do {
         m.adjust.brightness = 100
         masked.masks = [m]
         let lm = lum(masked)
-        let diff = zip(lm, bu).map { abs($0 - $1) }.reduce(0, +) / Float(max(lm.count, 1))
+        var total: Float = 0
+        for (a, b) in zip(lm, bu) { total += abs(a - b) }
+        let diff = total / Float(max(lm.count, 1))
         check(diff < 0.01, "a mask's Brightness over the whole photo should match the global slider (mean difference \(diff))")
     } else { check(false, "Brightness: no photo could be opened") }
 }
