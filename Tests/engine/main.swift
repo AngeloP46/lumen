@@ -1417,6 +1417,76 @@ do {
     } else { check(false, "SourceGeometry check: no photo could be opened") }
 }
 
+// Brightness (owner, 25 Oct: Apple's slider "adds much more brightness without pushing everything into overexposed"):
+// the mid-tones go up a lot, near-white and black barely move (unlike Exposure), -100 darkens, tones keep their order,
+// and a mask's own Brightness does inside the mask what the global one does.
+do {
+    if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f),
+       let src = session.makeSource(maxEdge: 600, materialize: true) {
+        func lum(_ s: EditSettings) -> [Float] {
+            let img = session.develop(s, source: src, geometry: false, lens: .off)
+            let e = img.extent.integral, n = Int(e.width) * Int(e.height)
+            var px = [Float](repeating: 0, count: n * 4)
+            LumenGPU.context.render(img, toBitmap: &px, rowBytes: Int(e.width) * 16, bounds: e, format: .RGBAf, colorSpace: nil)
+            var out = [Float](repeating: 0, count: n)
+            for i in 0..<n {
+                let r: Float = px[i * 4], g: Float = px[i * 4 + 1], b: Float = px[i * 4 + 2]
+                out[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            }
+            return out
+        }
+        func mean(_ a: [Float], _ idx: [Int]) -> Float {
+            guard !idx.isEmpty else { return 0 }
+            var t: Float = 0
+            for i in idx { t += a[i] }
+            return t / Float(idx.count)
+        }
+        func pick(_ a: [Float], _ lo: Float, _ hi: Float) -> [Int] {
+            var out: [Int] = []
+            for i in a.indices where a[i] > lo && a[i] < hi { out.append(i) }
+            return out
+        }
+        let base = lum(EditSettings())
+        var up = EditSettings(); up.brightness = 100
+        var down = EditSettings(); down.brightness = -100
+        var ex = EditSettings(); ex.exposure = 1
+        let bu = lum(up), bd = lum(down), eu = lum(ex)
+        let mids = pick(base, 0.08, 0.25), highs = pick(base, 0.75, 0.97), deep = pick(base, -1, 0.003)
+        let midBase: Float = max(mean(base, mids), 1e-6)
+        let midGain: Float = mean(bu, mids) / midBase
+        let expGain: Float = mean(eu, mids) / midBase
+        let highUp: Float = mean(bu, highs) - mean(base, highs)
+        let highExp: Float = mean(eu, highs) - mean(base, highs)
+        print(String(format: "BRIGHTNESS mids x%.2f (exposure +1: x%.2f); highs +%.3f (exposure +1: +%.3f); %d mid, %d high, %d deep px",
+                     Double(midGain), Double(expGain), Double(highUp), Double(highExp), mids.count, highs.count, deep.count))
+        check(mids.count > 100 && midGain > 1.5, "Brightness +100 should lift the mid-tones a lot (x\(midGain), \(mids.count) px)")
+        if highs.count > 50 { check(highUp < 0.06, "Brightness should leave near-white almost alone (+\(highUp))") }
+        if deep.count > 50 { check(mean(bu, deep) < 0.006, "Brightness should keep black black (\(mean(bu, deep)))") }
+        check(mean(bd, mids) < midBase * 0.8, "Brightness -100 should darken the mid-tones")
+        // tones keep their order: the mean of each tenth of the photo's tones still rises from one tenth to the next
+        let order = base.indices.sorted { base[$0] < base[$1] }
+        var tenths: [Float] = []
+        for t in 0..<10 {
+            let lo = t * order.count / 10, hi = (t + 1) * order.count / 10
+            tenths.append(mean(bu, Array(order[lo..<hi])))
+        }
+        var inOrder = true
+        for t in 1..<tenths.count where tenths[t] + 1e-4 < tenths[t - 1] { inOrder = false }
+        check(inOrder, "Brightness must keep darker tones darker (\(tenths))")
+        // a mask over the whole photo with its own Brightness does what the global slider does
+        var masked = EditSettings()
+        var m = Mask.make(.luminance)
+        m.components[0].lumLow = 0; m.components[0].lumHigh = 1; m.components[0].lumLowFeather = 0; m.components[0].lumHighFeather = 0
+        m.adjust.brightness = 100
+        masked.masks = [m]
+        let lm = lum(masked)
+        var total: Float = 0
+        for (a, b) in zip(lm, bu) { total += abs(a - b) }
+        let diff = total / Float(max(lm.count, 1))
+        check(diff < 0.01, "a mask's Brightness over the whole photo should match the global slider (mean difference \(diff))")
+    } else { check(false, "Brightness: no photo could be opened") }
+}
+
 // UI refresh (2026-10-10): a switched-off tool renders as untouched; brush strokes keep their own softness
 do {
     if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f),
@@ -1497,11 +1567,18 @@ do {
     check(night.exposure <= 1.0, "Auto brightened a night scene with lights too much: \(night.exposure)")
     // subject metering: a dark subject in a bright frame is exposed brighter than the frame alone suggests
     // (subject off-centre, so centre weighting alone would meter the bright surroundings)
+    // (the lift is Exposure plus Brightness since 25 Oct: Brightness +100 is about +1 EV in the mid-tones)
+    func lift(_ s: EditSettings) -> Double { s.exposure + s.brightness / 100 }
     let backlit = grid { x, _ in grey(x < 12 ? 0.03 : 0.45) }
     let subject = (0..<(32 * 24)).map { i -> Float in i % 32 < 12 ? 1 : 0 }
-    check(auto(backlit, subject: subject).exposure > auto(backlit).exposure + 0.3, "Auto ignored the subject")
+    check(lift(auto(backlit, subject: subject)) > lift(auto(backlit)) + 0.3, "Auto ignored the subject")
     let speck = (0..<(32 * 24)).map { $0 == 5 ? Float(1) : 0 }
-    check(auto(backlit, subject: speck).exposure == auto(backlit).exposure, "A tiny subject must fall back to centre metering")
+    check(lift(auto(backlit, subject: speck)) == lift(auto(backlit)), "A tiny subject must fall back to centre metering")
+    // a dull photo under a bright sky: Exposure stops before the sky goes white, Brightness lifts the rest (owner, 25 Oct)
+    let dull = auto(grid { _, y in grey(y < 4 ? 0.7 : 0.05) })
+    check(dull.exposure < 0.4 && dull.brightness > 20,
+          "Auto should brighten a dull photo with Brightness, not push the sky white with Exposure (exposure \(dull.exposure), brightness \(dull.brightness))")
+    check(lift(night) <= 1.0 && night.brightness == 0, "A night scene keeps its dark: no Brightness (\(night.brightness))")
     // HDR: highlights the HDR range can show are left alone
     let bright = grid { x, _ in grey(x < 8 ? 2.2 : 0.16) }
     check(auto(bright, hdr: true).highlights > auto(bright).highlights + 30,

@@ -36,7 +36,7 @@ extension EditSession {
                 CIVector(x: a.shadows / 100, y: a.whites / 100, z: a.blacks / 100, w: 0),
                 CIVector(x: a.temperature / 100, y: a.tint / 100, z: a.saturation / 100, w: 0),
                 CIVector(x: a.clarity / 100, y: a.texture / 100, z: a.dehaze / 100, w: 0),
-                CIVector(x: a.sharpness / 100 * 0.9, y: a.noise / 100, z: 0, w: 0),
+                CIVector(x: a.sharpness / 100 * 0.9, y: a.noise / 100, z: a.brightness / 100, w: 0),
             ]
             for i in 0..<5 where vs[i].x != 0 || vs[i].y != 0 || vs[i].z != 0 {
                 planes[i] = k.accum.apply(extent: ext, arguments: [planes[i], mask, vs[i]]) ?? planes[i]
