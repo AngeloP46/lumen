@@ -634,12 +634,19 @@ struct MaskPanel: View {
 
 // MARK: - On-photo overlay (handles, brush, picker)
 
+/// Mask handles are drawn 30 pt but take hold within 48 pt (owner, 25 Oct: hard to grab), the same on screen at any zoom.
+private let handleHit: CGFloat = 48
+
 private struct HandleDot: View {
+    /// The shape's real edge is off screen: this handle waits at the screen's edge on its line (drawn dashed).
+    var away = false
     var body: some View {
         Circle()
             .fill(Color.black.opacity(0.35))
-            .overlay(Circle().stroke(Color.white, lineWidth: 2))
+            .overlay(Circle().stroke(Color.white, style: StrokeStyle(lineWidth: 2, dash: away ? [4, 3] : [])))
             .frame(width: 30, height: 30)
+            .frame(width: handleHit, height: handleHit)
+            .contentShape(Circle())
     }
 }
 
@@ -653,6 +660,8 @@ private struct PinDot: View {
                 .font(.system(size: 10, weight: .bold)).foregroundStyle(.white))
             .shadow(color: .black.opacity(0.5), radius: 2)
             .frame(width: 30, height: 30)
+            .frame(width: handleHit, height: handleHit)
+            .contentShape(Circle())
     }
 }
 
@@ -665,6 +674,8 @@ private struct RotateDot: View {
             .overlay(Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 11, weight: .bold)).foregroundStyle(.white))
             .frame(width: 30, height: 30)
+            .frame(width: handleHit, height: handleHit)
+            .contentShape(Circle())
     }
 }
 
@@ -677,6 +688,8 @@ struct MaskOverlay: View {
     let geo: SourceGeometry
     @State private var drawing = false
     @State private var cursor: CGPoint?
+    /// A radial's size handle being dragged: the radius (screen points) and the finger when it started.
+    @State private var radiusDrag: (startR: CGFloat, start: CGPoint)?
 
     var body: some View {
         ZStack {
@@ -831,10 +844,12 @@ struct MaskOverlay: View {
             .rotationEffect(.degrees(deg))
             .position(centre)
             .allowsHitTesting(false)
-        PinDot().accessibilityElement(children: .ignore).accessibilityIdentifier("mask-pin").position(centre)
-            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
-                .onChanged { v in
-                    guard !vm.pinching else { return }; let p = free(v.location); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } })
+        // a handle on every side (owner, 25 Oct: with big circles, zoomed out, the right and bottom ones were off screen or
+        // under the panel); each keeps on screen and changes the size by how far the finger moves
+        radiusHandle(c, centre: centre, dir: u, r: rx, px: pxW, across: true)
+        radiusHandle(c, centre: centre, dir: CGPoint(x: -u.x, y: -u.y), r: rx, px: pxW, across: true)
+        radiusHandle(c, centre: centre, dir: v, r: ry, px: pxH, across: false)
+        radiusHandle(c, centre: centre, dir: CGPoint(x: -v.x, y: -v.y), r: ry, px: pxH, across: false)
         // turn: a knob just below the centre pin (thumb side), clear of the edge handle; drag it round the centre.
         // A small ellipse puts it just outside its lower edge instead.
         let knobR: CGFloat = ry > 110 ? 60 : ry + 40
@@ -852,13 +867,40 @@ struct MaskOverlay: View {
                     if geo.mirrored { d = -d }
                     vm.updateComponent(c.id) { $0.angle = (d * 2).rounded() / 2 }
                 })
-        handle(at: CGPoint(x: centre.x + u.x * rx, y: centre.y + u.y * rx)) { loc in
-            let d = (loc.x - centre.x) * u.x + (loc.y - centre.y) * u.y
-            vm.updateComponent(c.id) { $0.x1 = max(0.02, min(3, Double(abs(d) / max(pxW, 1)))) }
+        // the move pin last, on top: with a small ellipse the handles' grab areas reach it
+        PinDot().accessibilityElement(children: .ignore).accessibilityIdentifier("mask-pin").position(centre)
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
+                .onChanged { v in
+                    guard !vm.pinching else { return }; let p = free(v.location); vm.updateComponent(c.id) { $0.x0 = p.x; $0.y0 = p.y } })
+    }
+
+    /// One of a radial's four size handles. On the ellipse's edge, or, when that is off screen, at the screen's edge on
+    /// the same line (drawn dashed). Dragged, it changes the radius by how far the finger moves along its line, so a
+    /// handle waiting at the screen's edge never jumps.
+    private func radiusHandle(_ c: MaskComponent, centre: CGPoint, dir: CGPoint, r: CGFloat, px: CGFloat, across: Bool) -> some View {
+        // what can be seen and reached: clear of the top buttons and the canvas's edges
+        let vis = CGRect(x: 24, y: 64, width: max(xform.canvas.width - 48, 1), height: max(xform.canvas.height - 88, 1))
+        var t = r
+        if vis.contains(centre) {
+            if dir.x > 0.001 { t = min(t, (vis.maxX - centre.x) / dir.x) }
+            if dir.x < -0.001 { t = min(t, (vis.minX - centre.x) / dir.x) }
+            if dir.y > 0.001 { t = min(t, (vis.maxY - centre.y) / dir.y) }
+            if dir.y < -0.001 { t = min(t, (vis.minY - centre.y) / dir.y) }
         }
-        handle(at: CGPoint(x: centre.x + v.x * ry, y: centre.y + v.y * ry)) { loc in
-            let d = (loc.x - centre.x) * v.x + (loc.y - centre.y) * v.y
-            vm.updateComponent(c.id) { $0.y1 = max(0.02, min(3, Double(abs(d) / max(pxH, 1)))) }
-        }
+        t = max(t, 0)
+        return HandleDot(away: t < r - 1)
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier(across ? "mask-size-across" : "mask-size-down")
+            .position(x: centre.x + dir.x * t, y: centre.y + dir.y * t)
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("maskSpace"))
+                .onChanged { g in
+                    guard !vm.pinching else { return }
+                    if radiusDrag == nil { radiusDrag = (r, g.startLocation) }
+                    guard let s = radiusDrag else { return }
+                    let d = (g.location.x - s.start.x) * dir.x + (g.location.y - s.start.y) * dir.y
+                    let size = max(0.02, min(3, Double(max(s.startR + d, 1) / max(px, 1))))
+                    vm.updateComponent(c.id) { if across { $0.x1 = size } else { $0.y1 = size } }
+                }
+                .onEnded { _ in radiusDrag = nil })
     }
 }
