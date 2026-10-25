@@ -1508,6 +1508,7 @@ do {
         }
         if let sh = sheet(items, cell: 400, cols: 3) { saveJPEG(sh, "mask-outside.jpg") }
     } else { check(false, "mask outside: no photo could be opened") }
+}
 
 // Brightness (owner, 25 Oct: Apple's slider "adds much more brightness without pushing everything into overexposed"):
 // the mid-tones go up a lot, near-white and black barely move (unlike Exposure), -100 darkens, tones keep their order,
