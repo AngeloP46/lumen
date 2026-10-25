@@ -1428,25 +1428,41 @@ do {
             let e = img.extent.integral, n = Int(e.width) * Int(e.height)
             var px = [Float](repeating: 0, count: n * 4)
             LumenGPU.context.render(img, toBitmap: &px, rowBytes: Int(e.width) * 16, bounds: e, format: .RGBAf, colorSpace: nil)
-            return (0..<n).map { 0.2126 * px[$0 * 4] + 0.7152 * px[$0 * 4 + 1] + 0.0722 * px[$0 * 4 + 2] }
+            var out = [Float](repeating: 0, count: n)
+            for i in 0..<n {
+                let r: Float = px[i * 4], g: Float = px[i * 4 + 1], b: Float = px[i * 4 + 2]
+                out[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            }
+            return out
         }
-        func mean(_ a: [Float], _ idx: [Int]) -> Float { idx.isEmpty ? 0 : idx.map { a[$0] }.reduce(0, +) / Float(idx.count) }
+        func mean(_ a: [Float], _ idx: [Int]) -> Float {
+            guard !idx.isEmpty else { return 0 }
+            var t: Float = 0
+            for i in idx { t += a[i] }
+            return t / Float(idx.count)
+        }
+        func pick(_ a: [Float], _ lo: Float, _ hi: Float) -> [Int] {
+            var out: [Int] = []
+            for i in a.indices where a[i] > lo && a[i] < hi { out.append(i) }
+            return out
+        }
         let base = lum(EditSettings())
         var up = EditSettings(); up.brightness = 100
         var down = EditSettings(); down.brightness = -100
         var ex = EditSettings(); ex.exposure = 1
         let bu = lum(up), bd = lum(down), eu = lum(ex)
-        let mids = base.indices.filter { base[$0] > 0.08 && base[$0] < 0.25 }
-        let highs = base.indices.filter { base[$0] > 0.75 && base[$0] < 0.97 }
-        let deep = base.indices.filter { base[$0] < 0.003 }
-        let midGain = mean(bu, mids) / max(mean(base, mids), 1e-6)
+        let mids = pick(base, 0.08, 0.25), highs = pick(base, 0.75, 0.97), deep = pick(base, -1, 0.003)
+        let midBase: Float = max(mean(base, mids), 1e-6)
+        let midGain: Float = mean(bu, mids) / midBase
+        let expGain: Float = mean(eu, mids) / midBase
+        let highUp: Float = mean(bu, highs) - mean(base, highs)
+        let highExp: Float = mean(eu, highs) - mean(base, highs)
         print(String(format: "BRIGHTNESS mids x%.2f (exposure +1: x%.2f); highs +%.3f (exposure +1: +%.3f); %d mid, %d high, %d deep px",
-                     Double(midGain), Double(mean(eu, mids) / max(mean(base, mids), 1e-6)),
-                     Double(mean(bu, highs) - mean(base, highs)), Double(mean(eu, highs) - mean(base, highs)), mids.count, highs.count, deep.count))
+                     Double(midGain), Double(expGain), Double(highUp), Double(highExp), mids.count, highs.count, deep.count))
         check(mids.count > 100 && midGain > 1.5, "Brightness +100 should lift the mid-tones a lot (x\(midGain), \(mids.count) px)")
-        if highs.count > 50 { check(mean(bu, highs) - mean(base, highs) < 0.06, "Brightness should leave near-white almost alone (+\(mean(bu, highs) - mean(base, highs)))") }
+        if highs.count > 50 { check(highUp < 0.06, "Brightness should leave near-white almost alone (+\(highUp))") }
         if deep.count > 50 { check(mean(bu, deep) < 0.006, "Brightness should keep black black (\(mean(bu, deep)))") }
-        check(mean(bd, mids) < mean(base, mids) * 0.8, "Brightness -100 should darken the mid-tones")
+        check(mean(bd, mids) < midBase * 0.8, "Brightness -100 should darken the mid-tones")
         // tones keep their order: the mean of each tenth of the photo's tones still rises from one tenth to the next
         let order = base.indices.sorted { base[$0] < base[$1] }
         var tenths: [Float] = []
