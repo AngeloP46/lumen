@@ -1143,8 +1143,24 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         let after = (c.value as? String) ?? ""
         XCTAssertNotEqual(before, after, "dragging on the curve should bend it")
-        XCTAssertEqual(after.split(separator: " ").count, 3, "the drag should add one point: \(after)")
+        // an untouched curve shows five points along the line (owner, 25 Oct, like Darkroom): the drag moves the middle one
+        let pts = after.split(separator: " ")
+        XCTAssertEqual(pts.count, 5, "the five starting points are saved once one moves: \(after)")
+        if pts.count == 5 {
+            let mid = pts[2].split(separator: ",").compactMap { Double($0) }
+            XCTAssertTrue(mid.count == 2 && abs(mid[0] - 0.5) < 0.05 && mid[1] > 0.55, "the middle point should be the one raised: \(after)")
+        }
         shot("curve-bent")
+        // press and hold that point: a Remove button shows (two steps, so resting on a point never deletes it)
+        c.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)).press(forDuration: 1.2)
+        let remove = el("curve-remove-point")
+        XCTAssertTrue(remove.waitForExistence(timeout: 3), "holding a point should offer to remove it")
+        XCTAssertEqual((c.value as? String) ?? "", after, "holding alone must not change the curve")
+        shot("curve-remove-offer")
+        remove.tap()
+        sleep(1)
+        let removed = (c.value as? String) ?? ""
+        XCTAssertNotEqual(removed, after, "Remove point should take the point away: \(removed)")
     }
 
     // MARK: library
@@ -1644,7 +1660,29 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(el("mask-rotate").exists, "radial mask should have a turn handle")
         let pin = el("mask-pin").frame, knob = el("mask-rotate").frame
         XCTAssertGreaterThan(knob.midY, pin.midY + 20, "the radial turn knob should sit below the pin, within thumb reach (pin \(pin), knob \(knob))")
+        // a size handle on every side, each with a 48 pt grab area (owner, 25 Oct: hard to grab with big circles)
+        let across = app.descendants(matching: .any).matching(identifier: "mask-size-across")
+        let down = app.descendants(matching: .any).matching(identifier: "mask-size-down")
+        XCTAssertEqual(across.count, 2, "two handles for the width")
+        XCTAssertEqual(down.count, 2, "two handles for the height")
+        if across.count > 0 { XCTAssertGreaterThanOrEqual(across.element(boundBy: 0).frame.width, 47, "the grab area should be 48 pt") }
         shot("radial-handles")
+        // zoomed right out with a big circle, the size handles still sit on screen
+        el("photo").pinch(withScale: 0.45, velocity: -1)
+        sleep(1)
+        let photo = el("photo").frame
+        for i in 0..<down.count {
+            let f = down.element(boundBy: i).frame
+            XCTAssertTrue(photo.insetBy(dx: -1, dy: -1).contains(CGPoint(x: f.midX, y: f.midY)), "a size handle went off the photo area: \(f) not in \(photo)")
+        }
+        // dragging one changes the size by how far the finger moves (no jump to where it landed)
+        let h = across.element(boundBy: 0)
+        let before = h.frame
+        h.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: h.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 30, dy: 0)))
+        sleep(1)
+        shot("radial-zoomed-out")
+        XCTAssertNotEqual(h.frame.midX, before.midX, "dragging a size handle should resize the ellipse")
     }
 
     /// "drawn <top> <bottom> of <view height>" from the photo's accessibility value.
