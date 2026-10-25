@@ -914,7 +914,8 @@ struct EditorView: View {
         case .changed:
             guard let b = cropPinch else { return }
             let rel = (x: b.rel.x + Double((p.x - b.centre.x) / b.frame.width), y: b.rel.y + Double((p.y - b.centre.y) / b.frame.height))
-            let r = CropMath.zoomed(b.rect, factor: Double(spread / b.spread), anchor: (b.anchor.x, b.anchor.y), rel: rel)
+            let z = CropMath.zoomed(b.rect, factor: Double(spread / b.spread), anchor: (b.anchor.x, b.anchor.y), rel: rel)
+            let r = vm.cropKeptOnPhoto(from: b.rect, to: z)
             vm.setCropFrame(r.l, r.t, r.r, r.b)
         case .ended:
             cropPinch = nil

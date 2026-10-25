@@ -197,6 +197,14 @@ extension EditSession {
         let kfit = 1 / (cos(theta) + sin(theta) * max(w / h, h / w))
         img = Self.rotateAboutCenter(img, by: -CGFloat(s.straighten) * .pi / 180) // original centre is now the origin
 
+        if s.cropVersion != nil {
+            // the crop is a share of the whole turned picture, kept on real photo by CropFit (the Crop tool shows it all)
+            let u = applyCrop ? s.cropUsed(source: input.extent.size) : CropRect.full
+            let rect = CGRect(x: -w / 2 + CGFloat(u.l) * w, y: -h / 2 + CGFloat(1 - u.b) * h,
+                              width: CGFloat(u.w) * w, height: CGFloat(u.h) * h).integral
+            return Self.normalized(img.cropped(to: rect))
+        }
+
         let w0 = w * kfit, h0 = h * kfit
         var l = 0.0, t = 0.0, r = 1.0, b = 1.0
         if applyCrop {
@@ -424,7 +432,8 @@ struct Homography: Equatable {
         let c: [(Double, Double)] = [(-0.5 * (1 + kv), -0.5 * (1 + kh)), (0.5 * (1 + kv), -0.5 * (1 - kh)),
                                      (0.5 * (1 - kv), 0.5 * (1 - kh)), (-0.5 * (1 - kv), 0.5 * (1 + kh))]
         func quad(_ k: Double) -> [Pt] { c.map { Pt(x: 0.5 + $0.0 * sx * k + ox, y: 0.5 + $0.1 * sy * k + oy) } }
-        guard s.tFill else { return quad(1) }
+        // crop version 2 keeps the crop on photo instead (CropFit); only older edits zoom the perspective here
+        guard s.tFill, s.cropVersion == nil else { return quad(1) }
         // Fill frame: the smallest extra zoom (about the centre) at which the photo covers the whole frame,
         // i.e. every frame corner lands inside the transformed photo
         func covers(_ k: Double) -> Bool {
@@ -486,6 +495,8 @@ struct SourceGeometry: Equatable {
     var flipV = false
     /// crop fractions of the straightened picture: x = left, y = top, width = right - left, height = bottom - top
     var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
+    /// Older edits (no crop version): the crop is a share of the largest same-shaped rectangle inside the straightened picture.
+    var shareOfInscribed = false
 
     init(source: CGSize, settings s: EditSettings, applyCrop: Bool = true) {
         self.source = source
@@ -494,7 +505,11 @@ struct SourceGeometry: Equatable {
         warp = Homography.corners(s).map { Homography.squareTo($0) }
         flipH = s.flipH
         flipV = s.flipV
-        if applyCrop {
+        shareOfInscribed = s.cropVersion == nil
+        if applyCrop && !shareOfInscribed {
+            let u = s.cropUsed(source: source)
+            crop = CGRect(x: u.l, y: u.t, width: u.w, height: u.h)
+        } else if applyCrop {
             // the same limits EditSession.geometry applies
             let l = min(max(s.cropL, 0), 0.95), t = min(max(s.cropT, 0), 0.95)
             let r = min(max(s.cropR, l + 0.04), 1), b = min(max(s.cropB, t + 0.04), 1)
@@ -508,6 +523,7 @@ struct SourceGeometry: Equatable {
     private var inscribed: CGSize {
         let w = turned.width, h = turned.height
         guard w > 0, h > 0 else { return .zero }
+        guard shareOfInscribed else { return turned }
         let th = CGFloat(abs(straighten)) * .pi / 180
         let k = 1 / (cos(th) + sin(th) * max(w / h, h / w))
         return CGSize(width: w * k, height: h * k)
@@ -557,5 +573,45 @@ struct SourceGeometry: Equatable {
         guard o.width > 0, o.height > 0, source.width > 0, source.height > 0 else { return p }
         let q = CGPoint(x: CGFloat(p.x) * o.width, y: (1 - CGFloat(p.y)) * o.height).applying(forward.inverted())
         return unpre(Pt(x: Double(q.x / source.width), y: Double(1 - q.y / source.height)))
+    }
+}
+
+extension EditSettings {
+    /// The part of the crop frame that is photo (see `CropFit`), for a photo of `source` size before any geometry.
+    func cropRegion(source: CGSize) -> [CropFit.P] {
+        CropFit.region(source: (Double(source.width), Double(source.height)), turns: quarterTurns, flipH: flipH, flipV: flipV,
+                       straighten: straighten, warp: Homography.corners(self)?.map { ($0.x, $0.y) })
+    }
+
+    /// The crop frame used (fractions of the turned picture): the one asked for, kept on photo while Keep inside the photo
+    /// (`tFill`) is on, 1.5 px inside its edge so a turned or warped picture's soft edge never shows.
+    func cropUsed(source: CGSize) -> CropRect {
+        let l = min(max(cropL, 0), 0.95), t = min(max(cropT, 0), 0.95)
+        let asked = CropRect(l: l, t: t, r: min(max(cropR, l + 0.04), 1), b: min(max(cropB, t + 0.04), 1))
+        guard tFill, source.width > 0, source.height > 0 else { return asked }
+        let sideways = ((quarterTurns % 2) + 2) % 2 == 1
+        let fw = Double(sideways ? source.height : source.width), fh = Double(sideways ? source.width : source.height)
+        return CropFit.fit(asked, in: cropRegion(source: source), margin: (1.5 / fw, 1.5 / fh))
+    }
+
+    /// Settings from before crop version 2, converted so the same part of the photo stays framed.
+    func withUpgradedCrop(source: CGSize) -> EditSettings {
+        guard cropVersion == nil, source.width > 0, source.height > 0 else { return self }
+        var s = self
+        let sideways = ((quarterTurns % 2) + 2) % 2 == 1
+        let frame = (w: Double(sideways ? source.height : source.width), h: Double(sideways ? source.width : source.height))
+        // how much Fill frame zoomed the perspective (the corners with and without it)
+        var zoom = 1.0
+        if let a = Homography.corners(self) {
+            var plain = self; plain.tFill = false
+            if let b = Homography.corners(plain) {
+                let da = hypot(a[2].x - a[0].x, a[2].y - a[0].y), db = hypot(b[2].x - b[0].x, b[2].y - b[0].y)
+                if db > 1e-9 { zoom = da / db }
+            }
+        }
+        let r = CropFit.upgraded(CropRect(l: cropL, t: cropT, r: cropR, b: cropB), frame: frame, straighten: straighten, fillZoom: zoom)
+        s.cropL = r.l; s.cropT = r.t; s.cropR = r.r; s.cropB = r.b
+        s.cropVersion = 2
+        return s
     }
 }

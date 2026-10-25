@@ -73,7 +73,13 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var autoMaskFailed: Set<String> = []
 
     // Crop editing: the whole straightened picture is shown with a frame on top
-    @Published var cropEditing = false { didSet { requestRender() } }
+    @Published var cropEditing = false {
+        didSet {
+            // older edits switch to the exact crop the first time the Crop tool opens them (the same part stays framed)
+            if cropEditing && settings.cropVersion == nil && sourceSize.width > 0 { settings = settings.withUpgradedCrop(source: sourceSize) }
+            requestRender()
+        }
+    }
 
     // Full-resolution source used while zoomed in (100% view)
     @Published private(set) var detailLoading = false

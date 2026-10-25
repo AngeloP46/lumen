@@ -443,5 +443,47 @@ do {
     check(z5.l < half.l && near(z5.w, half.w), "crop zoom: dragging the held point right moves the frame left \(z5)")
 }
 
+// ---- the crop kept on real photo (crop rework part 2), 25 Oct
+do {
+    func near(_ a: Double, _ b: Double, _ e: Double = 1e-6) -> Bool { abs(a - b) < e }
+    // no straighten, no transform: the whole frame is photo
+    let plain = CropFit.region(source: (3, 2), turns: 0, flipH: false, flipV: false, straighten: 0, warp: nil)
+    check(CropFit.contains(plain, .full), "crop fit: an untouched photo is all photo")
+    check(CropFit.fit(.full, in: plain) == .full, "crop fit: nothing to fit without straighten or perspective")
+    // straighten 5 degrees on 3:2: the whole frame is the largest same-shaped centred rectangle (the old kfit)
+    let tilted = CropFit.region(source: (3, 2), turns: 0, flipH: false, flipV: false, straighten: 5, warp: nil)
+    let th = 5 * Double.pi / 180, kfit = 1 / (cos(th) + sin(th) * 1.5)
+    let f = CropFit.fit(.full, in: tilted)
+    check(near(f.w, kfit, 1e-5) && near(f.h, kfit, 1e-5) && near((f.l + f.r) / 2, 0.5, 1e-5) && near((f.t + f.b) / 2, 0.5, 1e-5),
+          "crop fit: straighten keeps the same shape, centred, as big as fits (\(f), kfit \(kfit))")
+    check(CropFit.contains(tilted, f, tolerance: 1e-6), "crop fit: the fitted frame is all photo")
+    // a wide free crop can reach further than the centred same-shaped rectangle (the photo's corners are still photo)
+    let wide = CropRect(l: 0, t: 0.35, r: 1, b: 0.65)
+    let fw = CropFit.fit(wide, in: tilted)
+    check(fw.w > kfit + 0.02 && CropFit.contains(tilted, fw, tolerance: 1e-6), "crop fit: a wide crop keeps more width (\(fw.w) vs \(kfit))")
+    // a crop off to one side slides back onto the photo before it shrinks
+    let side = CropRect(l: 0.6, t: 0.3, r: 1.0, b: 0.7)
+    let fs = CropFit.fit(side, in: tilted)
+    check(near(fs.w, side.w, 1e-6) && fs.r < 1 && CropFit.contains(tilted, fs, tolerance: 1e-6), "crop fit: slides before shrinking (\(fs))")
+    // a lopsided perspective: the frame moves off-centre to keep more photo than zooming about the middle would
+    let quad: [CropFit.P] = [(0.1, 0), (1, 0), (1, 1), (0.1, 1)]
+    let shifted = CropFit.region(source: (3, 2), turns: 0, flipH: false, flipV: false, straighten: 0, warp: quad)
+    let fq = CropFit.fit(.full, in: shifted)
+    check(near(fq.w, 0.9, 1e-4) || fq.w > 0.89, "crop fit: a frame cut on one side keeps 90 % of the width (\(fq))")
+    // a drag stops at the photo's edge, on the way to where the finger went
+    let start = CropFit.fit(.full, in: tilted)
+    let stop = CropFit.limit(from: start, to: CropRect(l: start.l - 0.3, t: start.t, r: start.r, b: start.b), in: tilted)
+    check(CropFit.contains(tilted, stop, tolerance: 1e-6) && stop.l <= start.l && stop.l > start.l - 0.3, "crop fit: a handle stops at the edge (\(stop))")
+    // turns: a quarter turn swaps the frame; flips mirror the region
+    let turned = CropFit.region(source: (3, 2), turns: 1, flipH: false, flipV: false, straighten: 4, warp: nil)
+    check(CropFit.contains(turned, CropFit.fit(.full, in: turned), tolerance: 1e-6), "crop fit: works on a turned photo")
+    // older edits: converted so the same part stays framed
+    let old = CropRect(l: 0.1, t: 0.2, r: 0.9, b: 0.8)
+    let up = CropFit.upgraded(old, frame: (3, 2), straighten: 5, fillZoom: 1)
+    check(near(up.w, 0.8 * kfit) && near((up.l + up.r) / 2, 0.5) && CropFit.contains(tilted, up, tolerance: 1e-6),
+          "crop fit: an older straightened crop maps inside the photo, same place (\(up))")
+    check(CropFit.upgraded(old, frame: (3, 2), straighten: 0, fillZoom: 1) == old, "crop fit: nothing changes for an older crop without straighten")
+}
+
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)

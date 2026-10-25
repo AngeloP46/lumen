@@ -255,8 +255,8 @@ struct CropPanel: View {
                 .padding(.horizontal, 14).padding(.vertical, 4)
                 Toggle(isOn: Binding(get: { vm.settings.tFill }, set: { vm.settings.tFill = $0 })) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Fill frame").font(.system(size: 13))
-                        Text("Zooms in just enough to hide the black edges").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text("Keep the crop inside the photo").font(.system(size: 13))
+                        Text("No empty corners after straightening or perspective").font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 2)
@@ -332,7 +332,17 @@ extension EditorViewModel {
         setCropAspect(oriented)
     }
 
-    var cropRect: CropRect { CropRect(l: settings.cropL, t: settings.cropT, r: settings.cropR, b: settings.cropB) }
+    /// The crop frame as the Crop tool shows it: the frame used (kept on photo), not necessarily the one asked for.
+    var cropRect: CropRect {
+        settings.cropVersion == nil ? CropRect(l: settings.cropL, t: settings.cropT, r: settings.cropR, b: settings.cropB)
+                                    : settings.cropUsed(source: sourceSize)
+    }
+
+    /// A frame moved from `start` (all photo) towards `target`: it stops at the photo's edge while Keep inside is on.
+    func cropKeptOnPhoto(from start: CropRect, to target: CropRect) -> CropRect {
+        guard settings.tFill, settings.cropVersion != nil, sourceSize.width > 0 else { return target }
+        return CropFit.limit(from: start, to: target, in: settings.cropRegion(source: sourceSize))
+    }
 }
 
 // MARK: - On-photo frame
@@ -511,7 +521,7 @@ struct CropOverlay: View {
         let dx = Double(v.translation.width / startImage.width), dy = Double(v.translation.height / startImage.height)
         if moving {
             // the photo follows the finger, so the frame moves the other way over it
-            let r = CropMath.panned(start, dx: -dx, dy: -dy)
+            let r = vm.cropKeptOnPhoto(from: start, to: CropMath.panned(start, dx: -dx, dy: -dy))
             vm.setCropFrame(r.l, r.t, r.r, r.b)
             return
         }
@@ -529,7 +539,8 @@ struct CropOverlay: View {
             if e.contains(.right) { r = max(min(p.x, 1), l + minSize) }
             if e.contains(.top) { t = min(max(p.y, 0), b - minSize) }
             if e.contains(.bottom) { b = max(min(p.y, 1), t + minSize) }
-            vm.setCropFrame(l, t, r, b)
+            let k = vm.cropKeptOnPhoto(from: start, to: CropRect(l: l, t: t, r: r, b: b))
+            vm.setCropFrame(k.l, k.t, k.r, k.b)
             return
         }
 
@@ -574,6 +585,7 @@ struct CropOverlay: View {
             if e.contains(.top) { t = anchor - h; b = anchor } else { t = anchor; b = anchor + h }
             l = cx - w / 2; r = cx + w / 2
         }
-        vm.setCropFrame(max(l, 0), max(t, 0), min(r, 1), min(b, 1))
+        let k = vm.cropKeptOnPhoto(from: start, to: CropRect(l: max(l, 0), t: max(t, 0), r: min(r, 1), b: min(b, 1)))
+        vm.setCropFrame(k.l, k.t, k.r, k.b)
     }
 }
