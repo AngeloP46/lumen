@@ -75,9 +75,11 @@ Bundle ID: com.lumenraw.app
 ## Screenshots (ready, 25 Oct)
 Six 6.9-inch screenshots (1320 x 2868, the size App Store Connect asks for first; it scales them for smaller iPhones),
 made from Angelo's own iPhone screens with a caption each, in `C:\Users\pc user\Projects\app development\deliverables\appstore-screenshots\`:
-01 Edit RAW files on your iPhone (Heal on the McLaren) · 02 Masks that find the background · 03 Remove people with one tap ·
-04 Gone, with the background filled in · 05 Grade shadows, midtones and highlights · 06 Presets for a quick look.
-Made by `make_screenshots.py` (this folder) from the website's screenshots with the site's fonts; rerun it after new phone
+01 Edit RAW files on your iPhone (the colour page on a Lamborghini RAW) · 02 Blur the background, keep the subject sharp (Lens Blur)
+· 03 Remove people with one tap · 04 Clean up noisy high-ISO photos (AI Denoise at work) · 05 Grade shadows, midtones and highlights ·
+06 Presets for a quick look. Made from the phone screens of 25 Oct (`deliverablesppstore-source`). Only the Remove people shot has a
+person in it: use someone who agreed, or yourself, before submitting.
+Made by `make_screenshots.py` (this folder) from those phone screens with the site's fonts; rerun it after new phone
 screenshots. No iPad screenshots needed (iPhone only). An app preview video is optional; skip it for 1.0.
 
 ## Other App Store Connect fields

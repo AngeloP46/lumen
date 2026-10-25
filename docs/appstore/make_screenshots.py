@@ -1,6 +1,6 @@
 """App Store screenshots for Lumen RAW (6.9-inch, 1320 x 2868) from Angelo's own iPhone screenshots.
 
-Usage: python make_screenshots.py <folder with the phone screenshots> <Manrope.ttf> <DMSans.ttf> <output folder>
+Usage: python make_screenshots.py <folder with the phone screenshots (PNG, WebP or JPEG)> <Manrope.ttf> <DMSans.ttf> <output folder>
 Each picture: a short caption on the website's dark blue backdrop, the real screenshot below it in a phone frame.
 Only real app screens and Angelo's own photos are used (see COMPLIANCE.md section 4).
 """
@@ -11,12 +11,12 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 src, manrope, dmsans, out = sys.argv[1:5]
 W, H = 1320, 2868
 SHOTS = [
-    ("editor-car", "Edit RAW files\non your iPhone", "Sony, Canon, Nikon, Fujifilm, DNG and ProRAW"),
-    ("mask-car", "Masks that find\nthe background", "Subject, people, sky, landscape, depth and brush"),
-    ("person-detect-full", "Remove people\nwith one tap", "Lumen finds them and shows them in red"),
-    ("person-after-full", "Gone, with the\nbackground filled in", "Heal runs on the phone. Nothing is uploaded."),
-    ("grade-car", "Grade shadows,\nmidtones and highlights", "Colour wheels, curves and a colour mixer"),
-    ("presets", "Presets for\na quick look", "Save your own and paste edits onto other photos"),
+    ("colour-lambo", "Edit RAW files\non your iPhone", "Sony, Canon, Nikon, Fujifilm, DNG and ProRAW"),
+    ("lensblur-car", "Blur the background,\nkeep the subject sharp", "Lens Blur finds the subject for you"),
+    ("heal-person", "Remove people\nwith one tap", "Lumen finds them and shows them in red"),
+    ("denoise", "Clean up noisy\nhigh-ISO photos", "AI Denoise runs on the phone. Nothing is uploaded."),
+    ("grade-tree", "Grade shadows,\nmidtones and highlights", "Colour wheels, curves and a colour mixer"),
+    ("presets-tree", "Presets for\na quick look", "Save your own and paste edits onto other photos"),
 ]
 
 
@@ -57,7 +57,8 @@ for i, (name, title, sub) in enumerate(SHOTS, 1):
     d = ImageDraw.Draw(canvas)
     d.multiline_text((W / 2, 250), title, font=title_f, fill="#f8f9ff", anchor="ma", align="center", spacing=18)
     d.text((W / 2, 530), sub, font=sub_f, fill="#9fb4d8", anchor="ma")
-    shot = Image.open(os.path.join(src, name + ".webp")).convert("RGB")
+    path = next(os.path.join(src, name + ext) for ext in (".png", ".webp", ".jpg") if os.path.exists(os.path.join(src, name + ext)))
+    shot = Image.open(path).convert("RGB")
     p = phone(shot, 2160)
     shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     ImageDraw.Draw(shadow).rounded_rectangle(((W - p.width) // 2 + 10, 690, (W + p.width) // 2 - 10, 690 + p.height),
