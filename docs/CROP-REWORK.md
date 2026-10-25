@@ -65,3 +65,27 @@ the crop is a rectangle that must stay inside it. The default and Fill frame bec
 shape that fits, positioned anywhere; a freely shaped crop can reach any corner that is still real photo; straighten and
 perspective changes shrink or slide the crop only as much as needed, and it grows back if the angle is reduced. Old edits are
 converted once. Needs a logic test of the fit maths and engine tests of the output size.
+
+## What was built
+**Part 1 (interaction):** `CropStage` (stage inset 28 pt at the sides, 58 at the top, 16 at the bottom; the frame is fitted
+to it, up to 8x) and `CropStageCanvas` (animated zoom and pan). Pinch zooms the photo under the frame and one finger inside
+it moves the photo (`CropMath.zoomed`, `CropMath.panned`). Handles: 48 pt grab zones that reach outside the frame
+(`CropOverlay.handle(at:in:)`), dragged by how far the finger moved, with edge bars; the picture holds still while a handle
+is held (`cropFrozen`) and refits when it is let go. `RulerDial` for straighten: ticks that follow the finger, 9 pt per
+degree, a click each degree, double-tap resets, Auto beside it. The histogram is hidden in Crop.
+
+**Part 2 (exact fit, `Sources/Edit/CropFit.swift`, crop version 2):**
+- `EditSettings.cropVersion` = 2 for new edits: the crop is a share of the whole turned picture (before, a share of the
+  largest same-shaped rectangle inside the straightened picture).
+- `CropFit.region` is the part of that frame that is photo (the flipped, turned, straightened and transformed picture: a
+  convex polygon). `CropFit.fit` keeps the asked frame when it is all photo; otherwise it slides it, and only then shrinks it
+  (same shape), 1.5 px inside the edge. `EditSettings.cropUsed` is what renders; the asked frame is stored, so a crop grows
+  back when the angle is reduced. Handles, the moved photo and a pinch stop at the photo's edge (`CropFit.limit`).
+- Transform's "Fill frame" is now "Keep the crop inside the photo" (`tFill`). In version 2 it no longer zooms the
+  perspective; the crop stays on photo instead, so the straighten and perspective zooms no longer multiply.
+- Older edits render exactly as before (the version is absent in their files; the tolerant loader keeps it absent). The
+  first time the Crop tool shows them they are converted (`withUpgradedCrop`, no undo step of its own) so the same part
+  stays framed.
+- Tests: logic (straighten equals the old result, a wide crop beats it, slide before shrink, a lopsided perspective, the
+  edge limit, turned photos, conversion), engine (converted crops keep their output size within 3 px; an 8° wide crop has
+  no empty corner and is wider than the old fit), UI (the frame shrinks when straightened and grows back at 0°).

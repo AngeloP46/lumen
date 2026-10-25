@@ -43,7 +43,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var histogram: HistogramData?
     @Published private(set) var imageSize: CGSize = .zero
     /// Size of the preview source (the uncropped, unturned photo masks are stored against).
-    @Published private(set) var sourceSize: CGSize = .zero
+    @Published private(set) var sourceSize: CGSize = .zero { didSet { upgradeCropIfNeeded() } }
     @Published private(set) var isLoading = true
     @Published private(set) var loadFailed = false
     @Published var isExporting = false
@@ -73,13 +73,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var autoMaskFailed: Set<String> = []
 
     // Crop editing: the whole straightened picture is shown with a frame on top
-    @Published var cropEditing = false {
-        didSet {
-            // older edits switch to the exact crop the first time the Crop tool opens them (the same part stays framed)
-            if cropEditing && settings.cropVersion == nil && sourceSize.width > 0 { settings = settings.withUpgradedCrop(source: sourceSize) }
-            requestRender()
-        }
-    }
+    @Published var cropEditing = false { didSet { upgradeCropIfNeeded(); requestRender() } }
 
     // Full-resolution source used while zoomed in (100% view)
     @Published private(set) var detailLoading = false
@@ -759,6 +753,17 @@ final class EditorViewModel: ObservableObject {
         // HDR changes how the file is decoded; heals are painted in while decoding
         if settings.hdr != old.hdr || settings.effective.heals != old.effective.heals { reloadSource() }
         else if settings.effective.aiDenoise != old.effective.aiDenoise { denoiseChanged() }
+        upgradeCropIfNeeded()   // an undo, paste or preset in the Crop tool can bring back an older crop
+    }
+
+    /// Older edits switch to the exact crop (crop version 2) while the Crop tool shows them, so the same part stays framed;
+    /// the switch is not an undo step of its own.
+    private func upgradeCropIfNeeded() {
+        guard cropEditing, settings.cropVersion == nil, sourceSize.width > 0 else { return }
+        let was = applyingHistory
+        applyingHistory = true
+        settings = settings.withUpgradedCrop(source: sourceSize)
+        applyingHistory = was
     }
 
     private func scheduleSave() {

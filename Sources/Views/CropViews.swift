@@ -370,11 +370,12 @@ struct CropOverlay: View {
 
     private let minSize = 0.06
 
+    /// The frame used (kept on photo: it shrinks while straightening and grows back), not necessarily the one asked for.
     private var frame: CGRect {
         let r = xform.rect
-        let s = vm.settings
-        return CGRect(x: r.minX + CGFloat(s.cropL) * r.width, y: r.minY + CGFloat(s.cropT) * r.height,
-                      width: CGFloat(s.cropR - s.cropL) * r.width, height: CGFloat(s.cropB - s.cropT) * r.height)
+        let c = vm.cropRect
+        return CGRect(x: r.minX + CGFloat(c.l) * r.width, y: r.minY + CGFloat(c.t) * r.height,
+                      width: CGFloat(c.w) * r.width, height: CGFloat(c.h) * r.height)
     }
 
     var body: some View {
@@ -393,8 +394,7 @@ struct CropOverlay: View {
         .coordinateSpace(name: "cropSpace")
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("crop-frame")
-        .accessibilityValue(String(format: "l %.2f t %.2f r %.2f b %.2f",
-                                   vm.settings.cropL, vm.settings.cropT, vm.settings.cropR, vm.settings.cropB))
+        .accessibilityValue(String(format: "l %.2f t %.2f r %.2f b %.2f", vm.cropRect.l, vm.cropRect.t, vm.cropRect.r, vm.cropRect.b))
         // the frame's place on screen, for the UI tests
         .overlay { frameMarker(f) }
     }

@@ -1442,10 +1442,13 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         let angle = Double(valueOf("slider-Straighten")) ?? 0
         XCTAssertGreaterThan(angle, 0.5, "dragging the ruler left should straighten by a positive angle, got \(angle)")
+        // the frame shows the part kept on photo: smaller once straightened, whole again at 0 degrees
+        XCTAssertNotEqual(valueOf("crop-frame"), full, "straightening should shrink the frame to stay on the photo")
         shot("crop-straightened")
         el("slider-Straighten").doubleTap()
         sleep(1)
         XCTAssertEqual(valueOf("slider-Straighten"), "0.0", "double-tap should reset the straighten angle")
+        XCTAssertEqual(valueOf("crop-frame"), full, "the frame should grow back when the angle goes back to 0")
         // a 1:1 ratio changes the frame; the panel's Reset puts it back
         app.buttons["1:1"].tap()
         sleep(1)

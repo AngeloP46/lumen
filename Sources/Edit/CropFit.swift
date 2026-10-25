@@ -157,6 +157,7 @@ enum CropFit {
         let th = abs(straighten) * .pi / 180
         let kfit = 1 / (cos(th) + sin(th) * max(frame.w / frame.h, frame.h / frame.w))
         let k = kfit / max(fillZoom, 1e-6)
+        guard abs(k - 1) > 1e-12 else { return r }   // no straighten or Fill frame zoom: the same numbers, exactly
         func f(_ v: Double) -> Double { 0.5 + (v - 0.5) * k }
         return CropRect(l: f(r.l), t: f(r.t), r: f(r.r), b: f(r.b))
     }
