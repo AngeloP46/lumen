@@ -13,6 +13,13 @@ enum CropMath {
     /// The smallest side (fraction of the picture) the frame may have; the same limit `EditSession.geometry` applies.
     static let minSide = 0.04
 
+    /// The biggest frame of `r`'s shape, centred: what "back to 1x" frames (before it is kept on the photo).
+    static func fullShape(_ r: CropRect) -> CropRect {
+        guard r.w > 0, r.h > 0 else { return .full }
+        let s = min(1 / r.w, 1 / r.h), w = r.w * s, h = r.h * s
+        return CropRect(l: (1 - w) / 2, t: (1 - h) / 2, r: (1 + w) / 2, b: (1 + h) / 2)
+    }
+
     /// Moved by (dx, dy) in picture fractions, kept inside the picture. Size is unchanged.
     static func panned(_ r: CropRect, dx: Double, dy: Double) -> CropRect {
         let l = min(max(r.l + dx, 0), 1 - r.w), t = min(max(r.t + dy, 0), 1 - r.h)

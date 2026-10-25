@@ -94,6 +94,14 @@ ruler (2 units a tick), Fill frame, Reset; six sliders and a description before.
 shows a fine grid (`vm.cropGuides`) to line verticals and the horizon up against. The picture is no longer drawn behind the
 top buttons (`CropStage.clearTop`). "Fill frame" is the tile's name again (Angelo's word for it); it keeps the crop on photo.
 
+**Part 4 (25 Oct, Angelo on 0.1.665: Scale was capped at 150, he pinched further, then the ruler was "confused about what
+is 0"):** one zoom. Pinching is the zoom; the Crop tab's zoom tile shows it ("2.4×", `vm.cropZoom`: the biggest frame of the
+crop's shape over the frame now) and takes it back to 1× (`cropZoomToFit`); a badge shows the zoom while pinching. Scale and
+the moves show in Perspective only with Fill frame off (placing the photo on a bigger canvas is all they are for) or when a
+photo already uses them. And no control keeps a hidden overshoot at a limit any more (`EndStop`): every slider, both rulers,
+the crop pinch, moving the photo under the frame, the crop handles (all step by step), moving a zoomed photo, curve points,
+the Depth mask's soft edges and the panel handle stay at the limit and respond at once when the finger turns back.
+
 - Tests: logic (straighten equals the old result, a wide crop beats it, slide before shrink, a lopsided perspective, the
   edge limit, turned photos, conversion), engine (converted crops keep their output size within 3 px; an 8° wide crop has
   no empty corner and is wider than the old fit), UI (the frame shrinks when straightened and grows back at 0°).

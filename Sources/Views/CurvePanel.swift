@@ -173,12 +173,14 @@ struct CurvePanel: View {
                 }
                 guard let d = drag, d.index < p.count else { return }
                 let i = d.index
-                var np = CurvePoint(x: d.start.x + Double(v.translation.width / w),
-                                    y: min(max(d.start.y - Double(v.translation.height / h), 0), 1))
+                let tx = Double(v.translation.width / w), ty = Double(v.translation.height / h)
+                var np = CurvePoint(x: d.start.x + tx, y: min(max(d.start.y - ty, 0), 1))
                 if i == 0 { np.x = 0 } else if i == p.count - 1 { np.x = 1 } else {
                     np.x = min(max(np.x, p[i - 1].x + 0.01), p[i + 1].x - 0.01)
                 }
                 p[i] = np
+                // held at an edge or a neighbour: moving back responds at once (no overshoot kept, as with EndStop)
+                if i > 0 && i < p.count - 1 { drag = (i, CurvePoint(x: np.x - tx, y: np.y + ty)) } else { drag = (i, CurvePoint(x: d.start.x, y: np.y + ty)) }
                 readout = np
                 vm.settings.curves.set(channel, p)
             }

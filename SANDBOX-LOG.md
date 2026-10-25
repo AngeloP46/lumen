@@ -330,3 +330,8 @@ chips choose what the perspective ruler changes, big tiles, a fine grid while a 
 No Store code involved; crop stays free. Before it, a fix: the crop port's merge (#148) had been committed with Windows line
 endings (CRLF) in 16 files; they are LF again (no content change), so merges from main stop conflicting on every line. Commit
 sandbox merges with the repository's normal settings (never `core.autocrlf=false` on this Windows clone).
+
+## 25 Oct 2026: one zoom in Crop, no hidden overshoot at limits (main crop-one-zoom)
+Merged from main: pinching is the crop's only zoom (zoom tile "2.4×" back to 1×, badge while pinching; Scale and Move show in
+Perspective only with Fill frame off), and `EndStop`: sliders, rulers, crop drags and pinch, photo pan, curve points, Depth
+soft edges and the panel handle respond at once when the finger turns back at a limit. No Store code involved.
