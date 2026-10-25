@@ -1,7 +1,10 @@
 # Lumen – project notes for Claude
 
 ## Quality work before the App Store (from 22 Oct 2026)
-- **25 Oct:** SideStore **0.1.665** = Crop | Straighten | Perspective tabs like Photomator (#150) on top of **0.1.657** = the crop rework (#147, see `Views/CropViews.swift` below and `docs/CROP-REWORK.md`), after
+- **25 Oct:** SideStore **0.1.684** (#157: the canvas fills the whole texture at its own size and crops the photo to its place on
+  screen; owner's phone showed a mask's tint around the photo until the next zoom, the picture itself is clean on the Mac:
+  engine test 'mask outside'), **0.1.679** (#155: Brightness, below), **0.1.673** (#153: one zoom in Crop, `EndStop`, below),
+  **0.1.692** (#160: sliders, below), **0.1.665** = Crop | Straighten | Perspective tabs like Photomator (#150) on top of **0.1.657** = the crop rework (#147, see `Views/CropViews.swift` below and `docs/CROP-REWORK.md`), after
   0.1.626 (mask overlay and clipping kept to the photo), 0.1.629 (Acknowledgements, privacy manifest), 0.1.639 (photo centred),
   0.1.644 (Grade opens taller). The sandbox has all of them (crop: #148). Open: A22 and A8 still need a few days of phone use.
 - **Status 24 Oct (night):** batches 0-2, 4-10, 13-17 and Copy/Paste are on main and published: SideStore **0.1.620**. Angelo
@@ -29,6 +32,25 @@
 - When porting a NEW feature, keep or add the sandbox's Pro gating where it fits, and ask Angelo if it is unclear whether it should be free or Pro. Never copy paywall/StoreKit/watermark code or the APP_STORE flag into main, and never push to main from `Lumen-Sandbox`.
 - Tell Angelo which of the two each change has reached.
 - App Store pricing, Free vs Pro, claims and the marketing plan: `MARKETING.md` on the sandbox branch (`Lumen-Sandbox\MARKETING.md`). Keep it out of main.
+
+## Brightness, Auto, end stops (25 Oct 2026)
+- **Brightness** (owner: Exposure made a dull photo look over-exposed; Apple's slider brightens nicely): `EditSettings.brightness`
+  and `LocalAdjust.brightness` (`@Defaulted`, older files and masks read 0), Light under Exposure and every mask's Adjust tab.
+  Kernel (`lmDevelopTone`): `br = g4.y + pe.z`, `delta += br * lmStep(-7.5, -2.5, l1) * (1 - lmStep(-0.5, 2.4, l1))`: up to
+  +/-1 EV in the mid-tones, nothing at white or in the deepest shadows, on each pixel's own level (on the local base it lifted
+  small bright patches into white). Engine: +100 lifts mids x1.92 (Exposure +1: x2.00), near-white +0.013 (Exposure: +0.203).
+  Why Exposure feels harsh: it multiplies all the light and the highlight shoulder only starts at 0.85.
+- **Auto** (`Auto.swift`): Exposure only as far as the bright end allows (top not blown, 98.5th percentile below 0.85 white),
+  Brightness the rest (scaled by how much of it reaches the metered tone); low-key (keep dark) now needs small lights in a dark
+  frame (< 5 % bright, median < 0.04): before, any bright sky made Auto halve its lift. `autoKeys` include Brightness.
+- **Sliders** (0.1.692, owner: "the smallest value I can select is 3"): `ScrubSlider` snapped everything within 1.2 % of
+  the span to neutral; now `DetentDrag` (in `Sources/EndStop.swift`, logic tests) rests at neutral for 12 pt of finger travel
+  with a click and carries on, so 1, 2 and +0.05 EV can be chosen. `SliderHaptics`: click at neutral, soft bump at the ends,
+  light ticks every twentieth of the range. While dragging the track thickens and shows tick marks; the bubble shows +12.
+- **EndStop** (`Sources/EndStop.swift`): a drag past a limit stays at the limit and responds at once on the way back (no hidden
+  overshoot). Used by `ScrubSlider`, `RulerDial`, photo pan, curve points, Depth soft edges, the panel handle; the crop pinch,
+  photo move and handles work step by step. Crop has one zoom: pinch; the Crop tab's zoom tile (`crop-zoom`, `vm.cropZoom`)
+  shows it and goes back to 1x (`cropZoomToFit`); Scale / Move show in Perspective only with Fill frame off.
 
 ## AI Denoise (0.1.360, 20 Oct; owner asked for it)
 - Model: **SCUNet** colour real-noise (cszn/SCUNet, Apache-2.0), run on the **GPU** (`.cpuAndGPU`; CI sets
