@@ -1494,6 +1494,10 @@ final class LumenUITests: XCTestCase {
         XCTAssertGreaterThan(wheel.frame.width, 139, "the single wheel should be big (\(wheel.frame))")
         XCTAssertTrue(el("slider-Hue").exists, "the zone tab should have a full-width Hue slider")
         XCTAssertTrue(el("slider-Grade luminance").exists, "the zone tab should have a Luminance slider")
+        // it opens tall enough for the wheel and all three sliders, none hidden behind the tool bar (owner, 25 Oct)
+        let bar = el("tool-Light").frame, lum = el("slider-Grade luminance").frame
+        XCTAssertLessThanOrEqual(lum.maxY, bar.minY + 2, "Luminance is above the tool bar, not cut off (\(lum) vs \(bar))")
+        XCTAssertLessThanOrEqual(wheel.frame.maxY, bar.minY, "the whole wheel shows (\(wheel.frame) vs \(bar))")
         shot("grade-midtones")
         el("grade-tab-All").tap()
         sleep(1)
