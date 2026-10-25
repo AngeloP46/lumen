@@ -316,3 +316,10 @@ the original copy once at a time, the Heal model on the GPU and loaded alone, li
 AI Denoise model at 256 px tiles and kept loaded). Each port was checked with `app-store-sandbox.yml -f checks_only=true`. The RAW format
 matrix workflow (sandbox only) had not compiled since `LoadedModel.swift` joined the engine files; its compile list is fixed and its run
 passes. Not submitted; the App Store version waits for Apple Developer enrolment and Angelo's instruction.
+
+## 25 Oct 2026: crop rework (main #147)
+Merged from main: the crop rework (stage with a margin, pinch and move the photo under the frame, 48 pt handles, the straighten
+dial; crop version 2 keeps the crop on real photo exactly, "Keep the crop inside the photo") and the
+SideStore screenshots. One conflict, in `EditorView`'s photo area: in Crop the stage draws the photo itself, so the canvas and the
+free-user watermark are not drawn there (`tool != .crop`); exports are watermarked as before. Crop stays free. The RAW format
+matrix compiles `CropMath.swift` and `CropFit.swift` (Graph uses them). Checked with `app-store-sandbox.yml -f checks_only=true`.
