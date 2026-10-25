@@ -340,3 +340,8 @@ soft edges and the panel handle respond at once when the finger turns back at a 
 Merged from main: Brightness under Exposure (mid-tones up or down, white and black kept) and in masks' Adjust; Auto shares
 its brightening between Exposure and Brightness. Light stays free, so Brightness is free; inside a mask it is part of Masks
 (Pro) like every mask adjustment. No Store code changed.
+
+## 25 Oct 2026: canvas draws nothing outside the photo (main #157, SideStore 0.1.684)
+Merged from main: the canvas fills the whole texture at its own size and crops the photo to its place on screen (a mask's
+tint showed around the photo on the owner's phone until the next zoom); a picture of the wrong shape is noted in Send
+diagnostics. Shared code only.

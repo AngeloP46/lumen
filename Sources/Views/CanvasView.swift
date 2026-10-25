@@ -164,6 +164,18 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
     var hdrOn = false
     private var headroomTimer: Timer?
     private var lastHeadroom: (current: CGFloat, potential: CGFloat) = (1, 1)
+    private var shapeNoted = false
+
+    /// The picture drawn should have the photo's shape; if it ever does not (a picture with more than the photo in it is
+    /// one way the area around the photo could take a mask's tint), the diagnostics log says so once per editor.
+    private func noteShape(_ ext: CGRect, _ shape: CGSize) {
+        guard !shapeNoted, shape.width > 0, shape.height > 0, ext.height > 0 else { return }
+        if abs(ext.width / ext.height - shape.width / shape.height) > 0.02 {
+            shapeNoted = true
+            Diagnostics.shared.note(String(format: "canvas: picture %.0fx%.0f drawn into a %.0fx%.0f photo shape",
+                                           ext.width, ext.height, shape.width, shape.height))
+        }
+    }
 
     /// While HDR is on, checks the screen's EDR headroom about once a second (it follows brightness and ambient light).
     /// iPhones report a current headroom of 1 until something brighter than white is on screen, so the potential
@@ -220,7 +232,10 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
         BlackBox.shared.count("draw")
         guard let queue = LumenGPU.queue, let drawable = view.currentDrawable,
               let cb = queue.makeCommandBuffer() else { return }
-        let size = view.drawableSize
+        // the texture's own size, not view.drawableSize: while the view is being resized (a panel, a zoom) the two can
+        // differ for a frame, and a part of the texture left undrawn kept an older frame (owner, 25 Oct: the area around
+        // the photo stayed red with a mask until the next zoom; the picture itself was checked clean on the Mac)
+        let size = CGSize(width: drawable.texture.width, height: drawable.texture.height)
         guard size.width > 1, size.height > 1 else { return }
         let bounds = CGRect(origin: .zero, size: size)
         var out = CIImage(color: .black).cropped(to: bounds)
@@ -247,6 +262,9 @@ final class CanvasRenderer: NSObject, MTKViewDelegate {
             let h = placed.extent.height
             // Core Image's origin is bottom-left; position by the photo's top-left corner in view space.
             placed = placed.transformed(by: CGAffineTransform(translationX: r.minX * sf, y: size.height - (r.minY * sf + h)))
+            // nothing is drawn outside the photo's place on screen, whatever the picture holds
+            placed = placed.cropped(to: CGRect(x: r.minX * sf, y: size.height - (r.minY * sf + h), width: r.width * sf, height: h).insetBy(dx: -1, dy: -1))
+            noteShape(ext, xf.image)
             if DemoMode.isOn {
                 DemoMode.log(String(format: "drew image %.0fx%.0f at y %.0f-%.0f", ext.width, ext.height,
                                     r.minY, r.minY + h / max(sf, 0.001)))
