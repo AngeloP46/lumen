@@ -267,7 +267,7 @@ struct EditorView: View {
         case .crop: return ToolSpec(compact: 200, roomy: 240)
         case .heal: return ToolSpec(compact: 150, roomy: 150)
         case .lensBlur: return ToolSpec(compact: 230, roomy: 270)
-        case .grade: return ToolSpec(compact: 250, roomy: 262)
+        case .grade: return ToolSpec(compact: 330, roomy: 350)   // a zone tab: tabs, the wheel and three sliders (was 250: the sliders were cut off)
         case .curve: return ToolSpec(compact: 280, roomy: 340)   // the curve fills its panel: bigger is easier
         case .light: return ToolSpec(compact: 100, roomy: 0, rows: 6, header: 44)
         case .color:
@@ -327,7 +327,9 @@ struct EditorView: View {
         }
 
         let key = useShared ? "shared" : tool.rawValue + (tool == .masks ? vm.maskTab.rawValue : "")
-        let minH: CGFloat = sp.rows > 0 ? sp.compact : min(sp.compact, 120)
+        // Grade needs its tabs, wheel and three sliders: it never opens shorter than that, not even when a smaller shared height
+        // was dragged on another tool (owner, 25 Oct: the wheel and sliders were cut off). Pulling it far below closes it.
+        let minH: CGFloat = sp.rows > 0 || tool == .grade ? sp.compact : min(sp.compact, 120)
         let maxH = max(avail * 0.78, minH)
         let base = panelUser[key] ?? auto
         var h = min(max(panelLive ?? base, minH), maxH)
