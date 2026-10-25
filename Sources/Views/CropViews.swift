@@ -369,72 +369,15 @@ struct CropOverlay: View {
 
     var body: some View {
         let f = frame
-        ZStack {
-            // dim everything outside the frame
-            Path { p in
-                p.addRect(xform.rect)
-                p.addRect(f)
-            }
-            .fill(Color.black.opacity(0.62), style: FillStyle(eoFill: true))
-            .allowsHitTesting(false)
-
-            // composition grid (chosen in the crop panel); denser while a handle is held
-            Path { p in
-                func lines(_ fr: [CGFloat]) {
-                    for k in fr {
-                        let x = f.minX + f.width * k, y = f.minY + f.height * k
-                        p.move(to: CGPoint(x: x, y: f.minY)); p.addLine(to: CGPoint(x: x, y: f.maxY))
-                        p.move(to: CGPoint(x: f.minX, y: y)); p.addLine(to: CGPoint(x: f.maxX, y: y))
-                    }
-                }
-                switch grid {
-                case "none": break
-                case "golden": lines([0.382, 0.618])
-                case "grid": lines((1..<9).map { CGFloat($0) / 9 })
-                case "diagonal":
-                    p.move(to: CGPoint(x: f.minX, y: f.minY)); p.addLine(to: CGPoint(x: f.maxX, y: f.maxY))
-                    p.move(to: CGPoint(x: f.maxX, y: f.minY)); p.addLine(to: CGPoint(x: f.minX, y: f.maxY))
-                default: lines(mode != nil ? [1.0 / 6, 2.0 / 6, 3.0 / 6, 4.0 / 6, 5.0 / 6] : [1.0 / 3, 2.0 / 3])
-                }
-            }
-            .stroke(Color.white.opacity(0.4), lineWidth: 0.7)
-            .allowsHitTesting(false)
-
+        return ZStack {
+            dim(f)
+            gridLines(f)
             Rectangle().stroke(Color.white, lineWidth: 1.4)
                 .frame(width: f.width, height: f.height)
                 .position(x: f.midX, y: f.midY)
                 .allowsHitTesting(false)
-
-            // corner brackets and edge bars: where to take hold
-            Path { p in
-                let len: CGFloat = min(28, min(f.width, f.height) / 3)
-                for (cx, cy, sx, sy) in [(f.minX, f.minY, 1.0, 1.0), (f.maxX, f.minY, -1.0, 1.0),
-                                         (f.minX, f.maxY, 1.0, -1.0), (f.maxX, f.maxY, -1.0, -1.0)] {
-                    p.move(to: CGPoint(x: cx + CGFloat(sx) * len, y: cy)); p.addLine(to: CGPoint(x: cx, y: cy))
-                    p.addLine(to: CGPoint(x: cx, y: cy + CGFloat(sy) * len))
-                }
-                let bar = min(18, min(f.width, f.height) / 5)
-                p.move(to: CGPoint(x: f.midX - bar, y: f.minY)); p.addLine(to: CGPoint(x: f.midX + bar, y: f.minY))
-                p.move(to: CGPoint(x: f.midX - bar, y: f.maxY)); p.addLine(to: CGPoint(x: f.midX + bar, y: f.maxY))
-                p.move(to: CGPoint(x: f.minX, y: f.midY - bar)); p.addLine(to: CGPoint(x: f.minX, y: f.midY + bar))
-                p.move(to: CGPoint(x: f.maxX, y: f.midY - bar)); p.addLine(to: CGPoint(x: f.maxX, y: f.midY + bar))
-            }
-            .stroke(Color.white, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
-            .shadow(color: Color.black.opacity(0.5), radius: 2)
-            .allowsHitTesting(false)
-
-            Color.clear.contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("cropSpace"))
-                    .onChanged { v in
-                        if afterPinch { return }
-                        if mode == nil && !moving { begin(at: v.startLocation) }
-                        update(v)
-                    }
-                    .onEnded { _ in
-                        let wasResizing = mode != nil
-                        mode = nil; moving = false; afterPinch = false
-                        if wasResizing { onResize(false) }
-                    })
+            handles(f)
+            touchLayer
         }
         .frame(width: xform.canvas.width, height: xform.canvas.height)
         .coordinateSpace(name: "cropSpace")
@@ -443,12 +386,86 @@ struct CropOverlay: View {
         .accessibilityValue(String(format: "l %.2f t %.2f r %.2f b %.2f",
                                    vm.settings.cropL, vm.settings.cropT, vm.settings.cropR, vm.settings.cropB))
         // the frame's place on screen, for the UI tests
-        .overlay {
-            Color.clear.frame(width: f.width, height: f.height).position(x: f.midX, y: f.midY)
-                .allowsHitTesting(false)
-                .accessibilityElement(children: .ignore)
-                .accessibilityIdentifier("crop-box")
+        .overlay { frameMarker(f) }
+    }
+
+    /// Everything outside the frame, dimmed.
+    private func dim(_ f: CGRect) -> some View {
+        Path { p in
+            p.addRect(xform.rect)
+            p.addRect(f)
         }
+        .fill(Color.black.opacity(0.62), style: FillStyle(eoFill: true))
+        .allowsHitTesting(false)
+    }
+
+    /// The composition grid (chosen in the crop panel); denser while a handle is held.
+    private func gridLines(_ f: CGRect) -> some View {
+        let fractions: [CGFloat]
+        switch grid {
+        case "none": fractions = []
+        case "golden": fractions = [0.382, 0.618]
+        case "grid": fractions = (1..<9).map { CGFloat($0) / 9 }
+        case "diagonal": fractions = []
+        default: fractions = mode != nil ? [1.0 / 6, 2.0 / 6, 3.0 / 6, 4.0 / 6, 5.0 / 6] : [1.0 / 3, 2.0 / 3]
+        }
+        return Path { p in
+            for k in fractions {
+                let x = f.minX + f.width * k, y = f.minY + f.height * k
+                p.move(to: CGPoint(x: x, y: f.minY)); p.addLine(to: CGPoint(x: x, y: f.maxY))
+                p.move(to: CGPoint(x: f.minX, y: y)); p.addLine(to: CGPoint(x: f.maxX, y: y))
+            }
+            if grid == "diagonal" {
+                p.move(to: CGPoint(x: f.minX, y: f.minY)); p.addLine(to: CGPoint(x: f.maxX, y: f.maxY))
+                p.move(to: CGPoint(x: f.maxX, y: f.minY)); p.addLine(to: CGPoint(x: f.minX, y: f.maxY))
+            }
+        }
+        .stroke(Color.white.opacity(0.4), lineWidth: 0.7)
+        .allowsHitTesting(false)
+    }
+
+    /// Corner brackets and edge bars: where to take hold.
+    private func handles(_ f: CGRect) -> some View {
+        let len: CGFloat = min(28, min(f.width, f.height) / 3)
+        let bar: CGFloat = min(18, min(f.width, f.height) / 5)
+        let corners: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [(f.minX, f.minY, 1, 1), (f.maxX, f.minY, -1, 1),
+                                                               (f.minX, f.maxY, 1, -1), (f.maxX, f.maxY, -1, -1)]
+        return Path { p in
+            for (cx, cy, sx, sy) in corners {
+                p.move(to: CGPoint(x: cx + sx * len, y: cy)); p.addLine(to: CGPoint(x: cx, y: cy))
+                p.addLine(to: CGPoint(x: cx, y: cy + sy * len))
+            }
+            p.move(to: CGPoint(x: f.midX - bar, y: f.minY)); p.addLine(to: CGPoint(x: f.midX + bar, y: f.minY))
+            p.move(to: CGPoint(x: f.midX - bar, y: f.maxY)); p.addLine(to: CGPoint(x: f.midX + bar, y: f.maxY))
+            p.move(to: CGPoint(x: f.minX, y: f.midY - bar)); p.addLine(to: CGPoint(x: f.minX, y: f.midY + bar))
+            p.move(to: CGPoint(x: f.maxX, y: f.midY - bar)); p.addLine(to: CGPoint(x: f.maxX, y: f.midY + bar))
+        }
+        .stroke(Color.white, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+        .shadow(color: Color.black.opacity(0.5), radius: 2)
+        .allowsHitTesting(false)
+    }
+
+    private func frameMarker(_ f: CGRect) -> some View {
+        Color.clear.frame(width: f.width, height: f.height).position(x: f.midX, y: f.midY)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier("crop-box")
+    }
+
+    /// One finger: a handle resizes the frame, anywhere else moves the photo under it.
+    private var touchLayer: some View {
+        Color.clear.contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("cropSpace"))
+                .onChanged { v in
+                    if afterPinch { return }
+                    if mode == nil && !moving { begin(at: v.startLocation) }
+                    update(v)
+                }
+                .onEnded { _ in
+                    let wasResizing = mode != nil
+                    mode = nil; moving = false; afterPinch = false
+                    if wasResizing { onResize(false) }
+                })
     }
 
     // MARK: Gesture
