@@ -86,6 +86,14 @@ degree, a click each degree, double-tap resets, Auto beside it. The histogram is
 - Older edits render exactly as before (the version is absent in their files; the tolerant loader keeps it absent). The
   first time the Crop tool shows them they are converted (`withUpgradedCrop`, no undo step of its own) so the same part
   stays framed.
+**Part 3 (25 Oct evening, Angelo: "perspective still looks really average, look at how Photomator does it"):** the panel is
+Crop | Straighten | Perspective, like Photomator and Photos. Crop: ratio chips, then big tiles (rotate, flip, portrait or
+landscape, grid, Reset). Straighten: the ruler (numbers every 5°, pointer below), Auto, Fill frame, Reset. Perspective: chips
+choose what the ruler changes (Vertical, Horizontal, Aspect, Scale, Move ↔, Move ↕; a changed one shows its value), the same
+ruler (2 units a tick), Fill frame, Reset; six sliders and a description before. While a finger is on either ruler the frame
+shows a fine grid (`vm.cropGuides`) to line verticals and the horizon up against. The picture is no longer drawn behind the
+top buttons (`CropStage.clearTop`). "Fill frame" is the tile's name again (Angelo's word for it); it keeps the crop on photo.
+
 - Tests: logic (straighten equals the old result, a wide crop beats it, slide before shrink, a lopsided perspective, the
   edge limit, turned photos, conversion), engine (converted crops keep their output size within 3 px; an 8° wide crop has
   no empty corner and is wider than the old fit), UI (the frame shrinks when straightened and grows back at 0°).

@@ -1327,9 +1327,18 @@ final class LumenUITests: XCTestCase {
         valueOf("crop-frame").split(separator: " ").compactMap { Double($0) }
     }
 
+    /// The crop panel remembers its tab between launches: each test picks the one it needs.
+    func cropTab(_ name: String) {
+        let t = el("crop-tab-\(name)")
+        XCTAssertTrue(t.waitForExistence(timeout: 10), "the crop panel should have a \(name) tab")
+        t.tap()
+        sleep(1)
+    }
+
     func testRotatingKeepsTheCrop() {
         launch(open: 0, tool: "Crop", extra: ["-lumenDemoCrop", "1"])
-        sleep(2)   // the demo picks the 1:1 ratio after a moment
+        cropTab("Crop")
+        sleep(1)   // the demo picks the 1:1 ratio after a moment
         let f0 = cropFrame()
         XCTAssertEqual(f0.count, 4)
         guard f0.count == 4 else { return }
@@ -1432,7 +1441,8 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(el("crop-frame").waitForExistence(timeout: 10), "crop frame should be shown in the Crop tool")
         let full = valueOf("crop-frame")
         XCTAssertEqual(full, "l 0.00 t 0.00 r 1.00 b 1.00", "a fresh photo starts with the whole picture framed")
-        // straighten slider: drag raises it, double-tap resets it
+        // straighten ruler (its own tab): drag raises it, double-tap resets it
+        cropTab("Straighten")
         let s = el("slider-Straighten")
         XCTAssertTrue(s.waitForExistence(timeout: 10), "straighten slider should exist")
         XCTAssertEqual(valueOf("slider-Straighten"), "0.0")
@@ -1450,6 +1460,7 @@ final class LumenUITests: XCTestCase {
         XCTAssertEqual(valueOf("slider-Straighten"), "0.0", "double-tap should reset the straighten angle")
         XCTAssertEqual(valueOf("crop-frame"), full, "the frame should grow back when the angle goes back to 0")
         // a 1:1 ratio changes the frame; the panel's Reset puts it back
+        cropTab("Crop")
         app.buttons["1:1"].tap()
         sleep(1)
         let square = valueOf("crop-frame")
@@ -1715,25 +1726,39 @@ final class LumenUITests: XCTestCase {
 
     func testCropFlipTransformTabsAndAutoLevel() {
         launch(open: 0, tool: "Crop")
+        cropTab("Crop")
         XCTAssertTrue(el("crop-flip-h").waitForExistence(timeout: 10), "the crop page should have flip buttons")
         el("crop-flip-h").tap()
         sleep(1)
         shot("crop-flipped")
+        cropTab("Straighten")
         el("crop-auto-level").tap()
         sleep(4)
         XCTAssertTrue(events().contains { $0.contains("auto level") }, "Auto should try to level the photo")
         if app.buttons["OK"].exists { app.buttons["OK"].tap() }   // "couldn't find a horizon" is fine on a test photo
-        el("crop-tab-Transform").tap()
-        sleep(1)
+        // Perspective (owner, 25 Oct: like Photomator): chips choose what the ruler changes
+        cropTab("Perspective")
+        XCTAssertTrue(el("persp-vertical").waitForExistence(timeout: 5), "the Perspective tab should offer Vertical")
+        XCTAssertTrue(el("persp-horizontal").exists && el("persp-aspect").exists && el("persp-scale").exists,
+                      "Horizontal, Aspect (stretch) and Scale should be there")
+        XCTAssertEqual(valueOf("transform-fill"), "on", "Fill frame starts on")
+        el("persp-vertical").tap()
         let v = el("slider-Vertical")
-        XCTAssertTrue(v.waitForExistence(timeout: 5), "the Transform tab should have perspective sliders")
-        XCTAssertTrue(el("slider-Aspect").exists && el("slider-Scale").exists, "Aspect (stretch) and Scale should be there")
-        v.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.1, thenDragTo: v.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5)))
+        XCTAssertTrue(v.waitForExistence(timeout: 5), "the ruler should change Vertical")
+        v.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: v.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)))
         sleep(1)
-        XCTAssertNotEqual(valueOf("reset-Vertical"), "0", "dragging Vertical should change it")
+        let vertical = Double(valueOf("slider-Vertical")) ?? 0
+        XCTAssertGreaterThan(vertical, 5, "dragging the ruler left should raise Vertical, got \(vertical)")
         shot("crop-transform")
-        el("crop-tab-Crop").tap()
+        el("persp-horizontal").tap()
+        XCTAssertTrue(el("slider-Horizontal").waitForExistence(timeout: 5), "choosing Horizontal moves the ruler to it")
+        XCTAssertEqual(valueOf("slider-Horizontal"), "0")
+        el("transform-reset").tap()
+        sleep(1)
+        el("persp-vertical").tap()
+        XCTAssertEqual(valueOf("slider-Vertical"), "0", "Reset should put the perspective back")
+        cropTab("Crop")
     }
 
     func testClippingWarningAndBeforeAfterSplit() {
