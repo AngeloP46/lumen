@@ -1,6 +1,7 @@
 import CoreImage
 import CoreML
 import CoreText
+import CoreVideo
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
