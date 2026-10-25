@@ -349,3 +349,8 @@ diagnostics. Shared code only.
 ## 25 Oct 2026: sliders (main #160, SideStore 0.1.692)
 Merged from main: a detent at neutral instead of a snap zone (values next to 0 can be chosen), slider haptics and a livelier
 look; tests and notes for 0.1.673-0.1.684 (#158). Shared code only.
+
+## 26 Oct 2026: curves, two-swipe exit, radial handles (main #163, #164; SideStore 0.1.700, 0.1.703)
+Merged from main: Darkroom-style curves (whole end points, five starting points, zone names, hold a point to remove it),
+the editor defers the bottom-edge swipe (two swipes to leave), radial masks with a size handle on every side kept on
+screen and 48 pt grab areas. Curves are Pro here as before; nothing Store-specific changed.
