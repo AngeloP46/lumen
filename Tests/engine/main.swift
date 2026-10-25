@@ -1462,6 +1462,28 @@ do {
                 print(String(format: "mask outside (%.0f px, %@): %d empty px, %d red, worst %.3f", Double(edge), name, empty, red, Double(worst)))
                 check(red == 0, "the Background mask should not paint the empty canvas red (\(Int(edge)) px, \(name): \(red) of \(empty) empty pixels red, worst \(worst))")
                 if edge == 900, let cg = smallRender(drawn, width: 400) { items.append((name, cg)) }
+                // drawn as CanvasRenderer.draw does: moved to the origin, scaled (Lanczos below 0.7, a plain scale above), placed
+                // on a black screen bigger than the photo; the screen around it must stay black at every zoom
+                guard name == "plain" || name == "straighten 8" else { continue }
+                for k: CGFloat in [0.45, 0.69, 0.71, 1.0, 1.3] {
+                    var placed = shown.transformed(by: CGAffineTransform(translationX: -ie.minX, y: -ie.minY))
+                    placed = k < 0.7 ? placed.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0])
+                                     : placed.transformed(by: CGAffineTransform(scaleX: k, y: k))
+                    let pw = placed.extent.width, ph = placed.extent.height
+                    placed = placed.transformed(by: CGAffineTransform(translationX: 60, y: 40))
+                    let screen = CGRect(x: 0, y: 0, width: (pw + 120).rounded(), height: (ph + 80).rounded())
+                    let out2 = placed.composited(over: CIImage(color: .black).cropped(to: screen))
+                    // a strip down the left margin and one across the bottom margin: no photo there
+                    for strip in [CGRect(x: 2, y: 2, width: 40, height: screen.height - 4), CGRect(x: 2, y: 2, width: screen.width - 4, height: 30)] {
+                        let m = Int(strip.width) * Int(strip.height)
+                        var px = [Float](repeating: 0, count: m * 4)
+                        LumenGPU.context.render(out2, toBitmap: &px, rowBytes: Int(strip.width) * 16, bounds: strip, format: .RGBAf, colorSpace: nil)
+                        let reds = (0..<m).filter { px[$0 * 4] > 0.05 }.count
+                        let top = (0..<m).map { px[$0 * 4] }.max() ?? 0
+                        print(String(format: "mask outside on screen (%.0f px, %@, zoom %.2f): %d of %d margin px red, worst %.3f", Double(edge), name, Double(k), reds, m, Double(top)))
+                        check(reds == 0, "the screen around the photo must stay black with a Background mask (\(Int(edge)) px, \(name), scale \(k)): \(reds) of \(m) red, worst \(top)")
+                    }
+                }
             }
         }
         if let sh = sheet(items, cell: 400, cols: 3) { saveJPEG(sh, "mask-outside.jpg") }
