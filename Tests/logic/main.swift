@@ -415,5 +415,33 @@ do {
     check(CarefulMode.pruned((0..<50).map { now.addingTimeInterval(-Double($0)) }, now: now).count == 20, "careful: the list never grows past 20")
 }
 
+// ---- crop frame moves (pinch and drag of the photo under the frame), 25 Oct
+do {
+    func near(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-9 }
+    let full = CropRect.full
+    // dragging the photo moves the frame the other way and keeps its size; it stops at the picture's edge
+    let half = CropRect(l: 0.25, t: 0.25, r: 0.75, b: 0.75)
+    let p1 = CropMath.panned(half, dx: 0.1, dy: -0.05)
+    check(near(p1.l, 0.35) && near(p1.r, 0.85) && near(p1.t, 0.2) && near(p1.b, 0.7), "crop pan: moved by the drag \(p1)")
+    let p2 = CropMath.panned(half, dx: 0.9, dy: 0.9)
+    check(near(p2.r, 1) && near(p2.b, 1) && near(p2.w, 0.5) && near(p2.h, 0.5), "crop pan: stops at the edge and keeps its size \(p2)")
+    // zooming in 2x about the middle halves the frame, centred
+    let z1 = CropMath.zoomed(full, factor: 2, anchor: (0.5, 0.5), rel: (0.5, 0.5))
+    check(near(z1.l, 0.25) && near(z1.r, 0.75) && near(z1.t, 0.25) && near(z1.b, 0.75), "crop zoom: 2x about the middle \(z1)")
+    // the point under the fingers stays at the same place in the frame
+    let z2 = CropMath.zoomed(full, factor: 4, anchor: (0.8, 0.3), rel: (0.8, 0.3))
+    check(near(z2.l + 0.8 * z2.w, 0.8) && near(z2.t + 0.3 * z2.h, 0.3) && near(z2.w, 0.25), "crop zoom: the held point stays put \(z2)")
+    // zooming out cannot go past the whole picture, and keeps the shape of a 3:2 frame
+    let wide = CropRect(l: 0, t: 0.1667, r: 1, b: 0.8333)
+    let z3 = CropMath.zoomed(wide, factor: 0.5, anchor: (0.5, 0.5), rel: (0.5, 0.5))
+    check(near(z3.w, 1) && near(z3.h / z3.w, wide.h / wide.w) && z3.l >= 0 && z3.r <= 1 && z3.t >= 0 && z3.b <= 1, "crop zoom: out stops at the picture, same shape \(z3)")
+    // zooming in cannot go below the smallest frame
+    let z4 = CropMath.zoomed(half, factor: 100, anchor: (0.5, 0.5), rel: (0.5, 0.5))
+    check(z4.w >= CropMath.minSide - 1e-9 && z4.h >= CropMath.minSide - 1e-9, "crop zoom: stops at the smallest frame \(z4)")
+    // moving the fingers moves the photo with them: the held point ends up further along in the frame
+    let z5 = CropMath.zoomed(half, factor: 1, anchor: (0.5, 0.5), rel: (0.6, 0.5))
+    check(z5.l < half.l && near(z5.w, half.w), "crop zoom: dragging the held point right moves the frame left \(z5)")
+}
+
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)

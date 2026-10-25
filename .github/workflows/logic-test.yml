@@ -24,6 +24,6 @@ jobs:
         run: |
           swift --version
           swiftc -swift-version 5 -o logic-test \
-            Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/Paste.swift Sources/Edit/LoadedModel.swift Sources/Library/EditsFile.swift Sources/Edit/CopyPlan.swift Sources/Edit/SingleFlight.swift Sources/HeavyWork.swift \
+            Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/Paste.swift Sources/Edit/LoadedModel.swift Sources/Library/EditsFile.swift Sources/Edit/CopyPlan.swift Sources/Edit/SingleFlight.swift Sources/Edit/CropMath.swift Sources/HeavyWork.swift \
             Tests/logic/main.swift
           ./logic-test

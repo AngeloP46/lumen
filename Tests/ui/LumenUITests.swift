@@ -1372,6 +1372,60 @@ final class LumenUITests: XCTestCase {
         shot("library-recovered")
     }
 
+    /// Pinching the photo zooms it under the frame (the frame covers less of it); dragging inside moves the photo.
+    func testCropPinchZoomsThePhotoAndDragMovesIt() {
+        launch(open: 0, tool: "Crop")
+        XCTAssertTrue(el("crop-frame").waitForExistence(timeout: 10))
+        sleep(1)
+        let box0 = el("crop-box").frame
+        el("crop-frame").pinch(withScale: 2.2, velocity: 2)
+        sleep(2)
+        let f1 = cropFrame()
+        XCTAssertEqual(f1.count, 4)
+        guard f1.count == 4 else { return }
+        XCTAssertLessThan(f1[2] - f1[0], 0.7, "pinching in should leave the frame over a smaller part of the photo: \(f1)")
+        // the frame stays big on screen: the photo zoomed instead
+        let box1 = el("crop-box").frame
+        XCTAssertGreaterThan(box1.width, box0.width * 0.8, "the frame should keep its size on screen (\(box0) -> \(box1))")
+        shot("crop-pinched")
+        // dragging inside moves the photo under the frame: the frame moves the other way over the photo
+        let c = el("crop-box")
+        c.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: c.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)))
+        sleep(1)
+        let f2 = cropFrame()
+        XCTAssertEqual(f2.count, 4)
+        guard f2.count == 4 else { return }
+        XCTAssertGreaterThan(f2[0], f1[0] + 0.03, "dragging the photo left should move the frame right over it: \(f1) -> \(f2)")
+        XCTAssertEqual(f2[2] - f2[0], f1[2] - f1[0], accuracy: 0.01, "moving the photo keeps the frame's size")
+    }
+
+    /// A corner can be taken from outside the frame, and after the finger lifts the frame grows back to fill the stage.
+    func testCropCornerHandleIsEasyToGrabAndFrameRefills() {
+        launch(open: 0, tool: "Crop")
+        XCTAssertTrue(el("crop-box").waitForExistence(timeout: 10))
+        sleep(1)
+        let box = el("crop-box").frame
+        let win = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(box.minX, 20, "the frame keeps a margin from the screen's edge (\(box))")
+        // start 18 pt outside the bottom-right corner, pull towards the middle
+        let from = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.maxX + 18, dy: box.maxY + 18))
+        let to = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.midX + 20, dy: box.midY + 20))
+        from.press(forDuration: 0.1, thenDragTo: to)
+        sleep(2)
+        let f = cropFrame()
+        XCTAssertEqual(f.count, 4)
+        guard f.count == 4 else { return }
+        XCTAssertLessThan(f[2], 0.75, "dragging the corner in should shrink the frame: \(f)")
+        XCTAssertLessThan(f[3], 0.75, "dragging the corner in should shrink the frame: \(f)")
+        XCTAssertEqual(f[0], 0, accuracy: 0.02, "the opposite corner must not move: \(f)")
+        XCTAssertEqual(f[1], 0, accuracy: 0.02, "the opposite corner must not move: \(f)")
+        // once released, the frame fills the stage again (the photo zoomed under it)
+        let after = el("crop-box").frame
+        XCTAssertGreaterThan(after.width, win.width * 0.55, "the frame should grow back to fill the stage (\(after))")
+        shot("crop-corner-dragged")
+    }
+
     func testCropToolShowsFrameAndStraightenResets() {
         launch(open: 0, tool: "Crop")
         XCTAssertTrue(el("panel").waitForExistence(timeout: 10), "crop panel should be open")
@@ -1382,11 +1436,12 @@ final class LumenUITests: XCTestCase {
         let s = el("slider-Straighten")
         XCTAssertTrue(s.waitForExistence(timeout: 10), "straighten slider should exist")
         XCTAssertEqual(valueOf("slider-Straighten"), "0.0")
-        s.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        // the ruler follows the finger: dragging it left brings the higher angles under the pointer
+        s.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: s.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)))
         sleep(1)
         let angle = Double(valueOf("slider-Straighten")) ?? 0
-        XCTAssertGreaterThan(angle, 0.5, "dragging right should straighten by a positive angle, got \(angle)")
+        XCTAssertGreaterThan(angle, 0.5, "dragging the ruler left should straighten by a positive angle, got \(angle)")
         shot("crop-straightened")
         el("slider-Straighten").doubleTap()
         sleep(1)
