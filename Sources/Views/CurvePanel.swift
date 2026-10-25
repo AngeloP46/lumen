@@ -23,7 +23,7 @@ struct CurvePanel: View {
     private static let zones: [(Double, String)] = [(0, "Blacks"), (0.25, "Shadows"), (0.5, "Midtones"), (0.75, "Highlights"), (1, "Whites")]
     /// Room round the plot so a point at a corner is drawn whole, and a band above it for the zone names.
     private static let pad: CGFloat = 14
-    private static let labelBand: CGFloat = 16
+    private static let labelBand: CGFloat = 28   // tall enough that a point at the top corner clears the names
 
     private var channelColor: Color { Self.channels.first { $0.0 == channel }?.2 ?? .white }
 
