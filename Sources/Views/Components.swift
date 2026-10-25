@@ -145,6 +145,9 @@ struct ScrubSlider: View {
                         fine = dy < 36 ? 1 : (dy < 96 ? 0.5 : 0.2)
                         acc += Double((v.location.x - lastX) / w) * span * fine
                         lastX = v.location.x
+                        // past either end the slider stays at the end, and turning back moves it at once: the
+                        // overshoot is not kept (EndStop; before, nothing moved until the finger undid it)
+                        acc = clamp(base + acc) - base
                         var nv = clamp(base + acc)
                         if abs(nv - neutralValue) < span * 0.012 {
                             nv = neutralValue

@@ -1384,8 +1384,9 @@ final class LumenUITests: XCTestCase {
     /// Pinching the photo zooms it under the frame (the frame covers less of it); dragging inside moves the photo.
     func testCropPinchZoomsThePhotoAndDragMovesIt() {
         launch(open: 0, tool: "Crop")
+        cropTab("Crop")
         XCTAssertTrue(el("crop-frame").waitForExistence(timeout: 10))
-        sleep(1)
+        XCTAssertEqual(valueOf("crop-zoom"), "1.0", "a fresh crop is at 1x")
         let box0 = el("crop-box").frame
         el("crop-frame").pinch(withScale: 2.2, velocity: 2)
         sleep(2)
@@ -1407,6 +1408,13 @@ final class LumenUITests: XCTestCase {
         guard f2.count == 4 else { return }
         XCTAssertGreaterThan(f2[0], f1[0] + 0.03, "dragging the photo left should move the frame right over it: \(f1) -> \(f2)")
         XCTAssertEqual(f2[2] - f2[0], f1[2] - f1[0], accuracy: 0.01, "moving the photo keeps the frame's size")
+        // the zoom tile reads the pinch, and takes the crop back to 1x
+        let zoom = Double(valueOf("crop-zoom")) ?? 0
+        XCTAssertGreaterThan(zoom, 1.3, "the zoom tile should show how far the pinch zoomed in, got \(zoom)")
+        el("crop-zoom").tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("crop-frame"), "l 0.00 t 0.00 r 1.00 b 1.00", "the zoom tile should go back to the whole photo")
+        XCTAssertEqual(valueOf("crop-zoom"), "1.0")
     }
 
     /// A corner can be taken from outside the frame, and after the finger lifts the frame grows back to fill the stage.
@@ -1739,9 +1747,17 @@ final class LumenUITests: XCTestCase {
         // Perspective (owner, 25 Oct: like Photomator): chips choose what the ruler changes
         cropTab("Perspective")
         XCTAssertTrue(el("persp-vertical").waitForExistence(timeout: 5), "the Perspective tab should offer Vertical")
-        XCTAssertTrue(el("persp-horizontal").exists && el("persp-aspect").exists && el("persp-scale").exists,
-                      "Horizontal, Aspect (stretch) and Scale should be there")
+        XCTAssertTrue(el("persp-horizontal").exists && el("persp-aspect").exists, "Horizontal and Aspect (stretch) should be there")
         XCTAssertEqual(valueOf("transform-fill"), "on", "Fill frame starts on")
+        // one zoom (owner, 25 Oct): with Fill frame on, pinching zooms; Scale and the moves show only with it off
+        XCTAssertFalse(el("persp-scale").exists, "with Fill frame on there is no second zoom (Scale)")
+        el("transform-fill").tap()
+        sleep(1)
+        XCTAssertTrue(el("persp-scale").waitForExistence(timeout: 5) && el("persp-moveX").exists,
+                      "with Fill frame off, Scale and Move are there to place the photo on a bigger canvas")
+        el("transform-fill").tap()
+        sleep(1)
+        XCTAssertEqual(valueOf("transform-fill"), "on")
         el("persp-vertical").tap()
         let v = el("slider-Vertical")
         XCTAssertTrue(v.waitForExistence(timeout: 5), "the ruler should change Vertical")
