@@ -335,3 +335,8 @@ sandbox merges with the repository's normal settings (never `core.autocrlf=false
 Merged from main: pinching is the crop's only zoom (zoom tile "2.4×" back to 1×, badge while pinching; Scale and Move show in
 Perspective only with Fill frame off), and `EndStop`: sliders, rulers, crop drags and pinch, photo pan, curve points, Depth
 soft edges and the panel handle respond at once when the finger turns back at a limit. No Store code involved.
+
+## 25 Oct 2026: Brightness (main #155, SideStore 0.1.679)
+Merged from main: Brightness under Exposure (mid-tones up or down, white and black kept) and in masks' Adjust; Auto shares
+its brightening between Exposure and Brightness. Light stays free, so Brightness is free; inside a mask it is part of Masks
+(Pro) like every mask adjustment. No Store code changed.
