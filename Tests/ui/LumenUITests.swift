@@ -1143,8 +1143,24 @@ final class LumenUITests: XCTestCase {
         sleep(1)
         let after = (c.value as? String) ?? ""
         XCTAssertNotEqual(before, after, "dragging on the curve should bend it")
-        XCTAssertEqual(after.split(separator: " ").count, 3, "the drag should add one point: \(after)")
+        // an untouched curve shows five points along the line (owner, 25 Oct, like Darkroom): the drag moves the middle one
+        let pts = after.split(separator: " ")
+        XCTAssertEqual(pts.count, 5, "the five starting points are saved once one moves: \(after)")
+        if pts.count == 5 {
+            let mid = pts[2].split(separator: ",").compactMap { Double($0) }
+            XCTAssertTrue(mid.count == 2 && abs(mid[0] - 0.5) < 0.05 && mid[1] > 0.55, "the middle point should be the one raised: \(after)")
+        }
         shot("curve-bent")
+        // press and hold that point: a Remove button shows (two steps, so resting on a point never deletes it)
+        c.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)).press(forDuration: 1.2)
+        let remove = el("curve-remove-point")
+        XCTAssertTrue(remove.waitForExistence(timeout: 3), "holding a point should offer to remove it")
+        XCTAssertEqual((c.value as? String) ?? "", after, "holding alone must not change the curve")
+        shot("curve-remove-offer")
+        remove.tap()
+        sleep(1)
+        let removed = (c.value as? String) ?? ""
+        XCTAssertNotEqual(removed, after, "Remove point should take the point away: \(removed)")
     }
 
     // MARK: library
