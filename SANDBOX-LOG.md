@@ -323,3 +323,10 @@ dial; crop version 2 keeps the crop on real photo exactly, "Keep the crop inside
 SideStore screenshots. One conflict, in `EditorView`'s photo area: in Crop the stage draws the photo itself, so the canvas and the
 free-user watermark are not drawn there (`tool != .crop`); exports are watermarked as before. Crop stays free. The RAW format
 matrix compiles `CropMath.swift` and `CropFit.swift` (Graph uses them). Checked with `app-store-sandbox.yml -f checks_only=true`.
+
+## 25 Oct 2026: Straighten and Perspective tabs (main crop-perspective); line endings
+Merged from main: the crop panel is Crop | Straighten | Perspective like Photomator (a ruler for straighten and for perspective,
+chips choose what the perspective ruler changes, big tiles, a fine grid while a ruler turns, no picture behind the top buttons).
+No Store code involved; crop stays free. Before it, a fix: the crop port's merge (#148) had been committed with Windows line
+endings (CRLF) in 16 files; they are LF again (no content change), so merges from main stop conflicting on every line. Commit
+sandbox merges with the repository's normal settings (never `core.autocrlf=false` on this Windows clone).
