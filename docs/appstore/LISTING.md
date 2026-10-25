@@ -41,6 +41,8 @@ Everything runs on the iPhone. Your photos are never uploaded.
 Edits never change the original file. Copy edits from one photo and paste them onto others, or pick which tools to paste.
 
 Pro: £1.49 a month after a 7-day free trial, £9.99 a year, or £29.99 once. Free edits export without a watermark. Pro edits can be made and saved for free; Pro is needed to export them without the watermark.
+
+Terms of Use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 ```
 
 ## Keywords (100 max, commas, no spaces)
@@ -70,6 +72,17 @@ Neither is published: Angelo's go is needed before deploying to Netlify.
 
 Bundle ID: com.lumenraw.app
 
-## Screenshots
-CI captures them on every sandbox push (artifact `app-store-shots`, see `docs/APPSTORE-ASSETS.md` §10). Masks and Heal
-need real-phone captures (no AI in the simulator).
+## Screenshots (ready, 25 Oct)
+Six 6.9-inch screenshots (1320 x 2868, the size App Store Connect asks for first; it scales them for smaller iPhones),
+made from Angelo's own iPhone screens with a caption each, in `C:\Users\pc user\Projects\app development\deliverables\appstore-screenshots\`:
+01 Edit RAW files on your iPhone (Heal on the McLaren) · 02 Masks that find the background · 03 Remove people with one tap ·
+04 Gone, with the background filled in · 05 Grade shadows, midtones and highlights · 06 Presets for a quick look.
+Made by `make_screenshots.py` (this folder) from the website's screenshots with the site's fonts; rerun it after new phone
+screenshots. No iPad screenshots needed (iPhone only). An app preview video is optional; skip it for 1.0.
+
+## Other App Store Connect fields
+- Category: Photo & Video (secondary: Graphics & Design)
+- Copyright: © 2026 Angelo Parodi
+- Content rights: no third-party content · Age rating: 4+ · App Privacy: Data Not Collected (details in `COMPLIANCE.md`)
+- Icon: comes from the build (1024 x 1024, no transparency: checked).
+- Review notes: the text in `COMPLIANCE.md` section 7.
