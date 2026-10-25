@@ -1543,11 +1543,18 @@ do {
     check(night.exposure <= 1.0, "Auto brightened a night scene with lights too much: \(night.exposure)")
     // subject metering: a dark subject in a bright frame is exposed brighter than the frame alone suggests
     // (subject off-centre, so centre weighting alone would meter the bright surroundings)
+    // (the lift is Exposure plus Brightness since 25 Oct: Brightness +100 is about +1 EV in the mid-tones)
+    func lift(_ s: EditSettings) -> Double { s.exposure + s.brightness / 100 }
     let backlit = grid { x, _ in grey(x < 12 ? 0.03 : 0.45) }
     let subject = (0..<(32 * 24)).map { i -> Float in i % 32 < 12 ? 1 : 0 }
-    check(auto(backlit, subject: subject).exposure > auto(backlit).exposure + 0.3, "Auto ignored the subject")
+    check(lift(auto(backlit, subject: subject)) > lift(auto(backlit)) + 0.3, "Auto ignored the subject")
     let speck = (0..<(32 * 24)).map { $0 == 5 ? Float(1) : 0 }
-    check(auto(backlit, subject: speck).exposure == auto(backlit).exposure, "A tiny subject must fall back to centre metering")
+    check(lift(auto(backlit, subject: speck)) == lift(auto(backlit)), "A tiny subject must fall back to centre metering")
+    // a dull photo under a bright sky: Exposure stops before the sky goes white, Brightness lifts the rest (owner, 25 Oct)
+    let dull = auto(grid { _, y in grey(y < 4 ? 0.7 : 0.05) })
+    check(dull.exposure < 0.4 && dull.brightness > 20,
+          "Auto should brighten a dull photo with Brightness, not push the sky white with Exposure (exposure \(dull.exposure), brightness \(dull.brightness))")
+    check(lift(night) <= 1.0 && night.brightness == 0, "A night scene keeps its dark: no Brightness (\(night.brightness))")
     // HDR: highlights the HDR range can show are left alone
     let bright = grid { x, _ in grey(x < 8 ? 2.2 : 0.16) }
     check(auto(bright, hdr: true).highlights > auto(bright).highlights + 30,
