@@ -22,7 +22,7 @@ ICON = RAW + "icon.png"
 TINT = "#5B96FF"   # Lumen's blue, as on the website
 WEBSITE = "https://lumen-raweditor.netlify.app/"
 # The App Store screenshots (Angelo's own iPhone screens), 660 x 1434 copies kept in sidestore/screenshots
-SHOTS = ["01-editor-car", "02-mask-car", "03-person-detect-full", "04-person-after-full", "05-grade-car", "06-presets"]
+SHOTS = ["01-colour-lambo", "02-lensblur-car", "03-heal-person", "04-denoise", "05-grade-tree", "06-presets-tree"]
 DESCRIPTION = """Lumen edits the RAW files from your camera and iPhone on the phone itself, with nothing uploaded.
 
 Light, colour and tone: exposure, highlights, shadows, whites, blacks, white balance, curves, a colour mixer and colour grading wheels.
