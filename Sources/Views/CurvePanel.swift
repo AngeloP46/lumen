@@ -11,6 +11,11 @@ struct CurvePanel: View {
     @State private var channel = 0
     @State private var drag: (index: Int, start: CurvePoint)?
     @State private var readout: CurvePoint?
+    /// Press and hold a point (owner, 25 Oct): after a moment a "Remove point" button shows over it. Two steps, so a
+    /// finger resting on a point before dragging it never deletes it.
+    @State private var removeAsk: Int?
+    @State private var holdTimer: DispatchWorkItem?
+    @State private var pressMoved = false
 
     private static let channels: [(Int, String, Color)] = [(0, "RGB", .white), (1, "Red", .red), (2, "Green", .green), (3, "Blue", .blue)]
     /// What an untouched channel shows: blacks, shadows, midtones, highlights, whites, on the line.
@@ -85,6 +90,25 @@ struct CurvePanel: View {
                                 .allowsHitTesting(false)
                         }
                     }
+                    .overlay {
+                        if let i = removeAsk, i < shown(channel).count {
+                            let c = Self.place(shown(channel)[i], Self.plot(size))
+                            Button {
+                                removeAt(i)
+                            } label: {
+                                Label("Remove point", systemImage: "trash")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .padding(.horizontal, 12).padding(.vertical, 7)
+                                    .background(Color(white: 0.18), in: Capsule())
+                                    .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.5))
+                                    .foregroundStyle(Color(red: 1, green: 0.42, blue: 0.4))
+                            }
+                            .position(x: min(max(c.x, 70), size.width - 70), y: c.y > 60 ? c.y - 32 : c.y + 32)
+                            .transition(.scale(scale: 0.7).combined(with: .opacity))
+                            .accessibilityIdentifier("curve-remove-point")
+                        }
+                    }
+                    .animation(.spring(response: 0.25, dampingFraction: 0.8), value: removeAsk)
                     .contentShape(Rectangle())
                     .gesture(dragGesture(size))
                     .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { v in removePoint(near: v.location, size) })
@@ -197,8 +221,21 @@ struct CurvePanel: View {
                 let w = r.width, h = r.height
                 var p = shown(channel)
                 if drag == nil {
+                    removeAsk = nil
+                    pressMoved = false
                     if let (i, d) = nearest(p, to: v.startLocation, size), d < 36 {
                         drag = (i, p[i])
+                        // held still on a point that can go (not an end, not an untouched curve's starter): offer Remove
+                        if i > 0 && i < p.count - 1 && !isNeutral(channel) {
+                            holdTimer?.cancel()
+                            let work = DispatchWorkItem {
+                                guard drag?.index == i, !pressMoved else { return }
+                                removeAsk = i
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            }
+                            holdTimer = work
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+                        }
                     } else {
                         // a new point goes *on* the curve where you touched, so nothing jumps
                         let x = min(max(Double((v.startLocation.x - r.minX) / w), 0.02), 0.98)
@@ -209,9 +246,18 @@ struct CurvePanel: View {
                         p.sort { $0.x < $1.x }
                         guard let i = p.firstIndex(of: np) else { return }
                         drag = (i, np)
+                        pressMoved = true                   // a new point follows the finger at once
+                        vm.settings.curves.set(channel, p)  // and is there for the next step of the drag
                     }
                 }
                 guard let d = drag, d.index < p.count else { return }
+                // a finger still resting on the point (waiting for Remove) does not move it
+                if !pressMoved {
+                    guard hypot(v.translation.width, v.translation.height) > 4 else { return }
+                    pressMoved = true
+                    holdTimer?.cancel()
+                    removeAsk = nil
+                }
                 let i = d.index
                 let tx = Double(v.translation.width / w), ty = Double(v.translation.height / h)
                 var np = CurvePoint(x: d.start.x + tx, y: min(max(d.start.y - ty, 0), 1))
@@ -225,6 +271,7 @@ struct CurvePanel: View {
                 vm.settings.curves.set(channel, p)
             }
             .onEnded { _ in
+                holdTimer?.cancel()
                 drag = nil
                 readout = nil
                 // back on the line: untouched again (no curve to render, no edited dot)
@@ -235,8 +282,14 @@ struct CurvePanel: View {
     }
 
     private func removePoint(near loc: CGPoint, _ size: CGSize) {
+        guard let (i, d) = nearest(shown(channel), to: loc, size), d < 36 else { return }
+        removeAt(i)
+    }
+
+    private func removeAt(_ i: Int) {
         var p = shown(channel)
-        guard let (i, d) = nearest(p, to: loc, size), d < 36, i > 0, i < p.count - 1 else { return }
+        removeAsk = nil
+        guard i > 0, i < p.count - 1 else { return }
         p.remove(at: i)
         vm.settings.curves.set(channel, Self.onLine(p) ? ToneCurves.identity : p)
     }
