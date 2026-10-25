@@ -221,6 +221,8 @@ struct ColorSample: Codable, Equatable, Hashable {
 /// Adjustments that only apply inside a mask. Same scale as the global sliders.
 struct LocalAdjust: Codable, Equatable, Hashable {
     var exposure: Double = 0
+    /// Mid-tones up or down, white and black kept (25 Oct 2026); absent in older masks, which read 0
+    @Defaulted<DefaultZero> var brightness: Double
     var contrast: Double = 0
     var highlights: Double = 0
     var shadows: Double = 0
@@ -377,6 +379,10 @@ extension KeyedDecodingContainer {
 struct EditSettings: Codable, Equatable {
     // Light
     var exposure: Double = 0       // EV, -5...5
+    /// -100...100: lifts or lowers the mid-tones and leaves white and black where they are, like Apple's Brightness
+    /// (owner, 25 Oct 2026: Exposure brightens everything, so a dull photo pushed with it looks over-exposed). Absent in
+    /// older edits, which read 0.
+    @Defaulted<DefaultZero> var brightness: Double
     var contrast: Double = 0       // -100...100
     var highlights: Double = 0
     var shadows: Double = 0
@@ -498,7 +504,7 @@ extension EditSettings {
         let d = EditSettings()
         switch s {
         case .light:
-            exposure = d.exposure; contrast = d.contrast; highlights = d.highlights
+            exposure = d.exposure; brightness = d.brightness; contrast = d.contrast; highlights = d.highlights
             shadows = d.shadows; whites = d.whites; blacks = d.blacks
         case .color:
             temperature = d.temperature; tint = d.tint; vibrance = d.vibrance; saturation = d.saturation
@@ -531,7 +537,7 @@ extension EditSettings {
     mutating func take(_ s: EditSection, from o: EditSettings) {
         switch s {
         case .light:
-            exposure = o.exposure; contrast = o.contrast; highlights = o.highlights
+            exposure = o.exposure; brightness = o.brightness; contrast = o.contrast; highlights = o.highlights
             shadows = o.shadows; whites = o.whites; blacks = o.blacks
         case .color:
             temperature = o.temperature; tint = o.tint; vibrance = o.vibrance; saturation = o.saturation
@@ -570,7 +576,7 @@ extension EditSettings {
             GradeZone(hue: y.sat > 0 ? y.hue : x.hue, sat: m(x.sat, y.sat), lum: m(x.lum, y.lum))
         }
         var r = b
-        r.exposure = m(a.exposure, b.exposure); r.contrast = m(a.contrast, b.contrast)
+        r.exposure = m(a.exposure, b.exposure); r.brightness = m(a.brightness, b.brightness); r.contrast = m(a.contrast, b.contrast)
         r.highlights = m(a.highlights, b.highlights); r.shadows = m(a.shadows, b.shadows)
         r.whites = m(a.whites, b.whites); r.blacks = m(a.blacks, b.blacks)
         r.temperature = m(a.temperature, b.temperature); r.tint = m(a.tint, b.tint)

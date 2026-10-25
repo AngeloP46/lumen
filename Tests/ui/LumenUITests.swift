@@ -1026,6 +1026,23 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(valueOf("photo").contains("overlay true"), "overlay should return on the Shape tab: \(valueOf("photo"))")
     }
 
+    /// Brightness (owner, 25 Oct): under Exposure in Light, and in a mask's Adjust tab too.
+    func testBrightnessSliderInLightAndMasks() {
+        launch(open: 0, tool: "Light", extra: ["-lumenDemoSlider", "list"])
+        let b = el("slider-Brightness")
+        XCTAssertTrue(b.waitForExistence(timeout: 10), "Light should have a Brightness slider")
+        XCTAssertGreaterThan(b.frame.minY, el("slider-Exposure").frame.minY, "Brightness sits under Exposure")
+        b.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: b.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+        sleep(1)
+        XCTAssertNotEqual(valueOf("reset-Brightness"), "0", "dragging Brightness should change it")
+        shot("brightness-light")
+        app.terminate()
+        launch(open: 1, tool: "Masks", extra: ["-lumenDemoMask", "linear", "-lumenDemoMaskTab", "adjust", "-lumenDemoSlider", "list"])
+        XCTAssertTrue(el("slider-Brightness").waitForExistence(timeout: 10), "a mask's Adjust tab should have Brightness too")
+        shot("brightness-mask")
+    }
+
     func testMaskAdjustPanelStaysAboveToolBar() {
         launch(open: 1, tool: "Masks", extra: ["-lumenDemoMask", "linear", "-lumenDemoMaskTab", "adjust"])
         sleep(2)

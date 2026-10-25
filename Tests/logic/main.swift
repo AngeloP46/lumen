@@ -415,6 +415,27 @@ do {
     check(CarefulMode.pruned((0..<50).map { now.addingTimeInterval(-Double($0)) }, now: now).count == 20, "careful: the list never grows past 20")
 }
 
+// ---- Brightness (owner, 25 Oct): older edits and masks read 0 straight away, and it belongs to Light everywhere
+do {
+    var old = encoded(EditSettings()); old["brightness"] = nil
+    let o = EditsFile.load(data(old))
+    check(o.settings.brightness == 0 && !o.report.migrated, "brightness: an older file reads 0, without the slow path (migrated \(o.report.migrated))")
+    var b = EditSettings(); b.brightness = 30
+    var c = EditSettings(); c.take(.light, from: b)
+    check(c.brightness == 30, "brightness: copying Light takes it")
+    check(c.hasEdits(.light), "brightness: counts as a Light edit (tool bar dot, Edits sheet)")
+    c.reset(.light)
+    check(c.brightness == 0, "brightness: Light's Reset clears it")
+    check(b.historyLabel(from: EditSettings()) == "Brightness +30", "brightness: History names it (\(b.historyLabel(from: EditSettings())))")
+    var off = b; off.setOn(.light, false)
+    check(off.effective.brightness == 0 && off.brightness == 30, "brightness: switching Light off keeps it but stops it applying")
+    check(EditSettings.blend(EditSettings(), b, 0.5).brightness == 15, "brightness: preset Strength mixes it")
+    var la = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(LocalAdjust()))) as? [String: Any] ?? [:]
+    la["brightness"] = nil
+    let back = try? JSONDecoder().decode(LocalAdjust.self, from: data(la))
+    check(back?.brightness == 0 && back?.isNeutral == true, "brightness: an older mask's adjustments read 0")
+}
+
 // ---- end stops (owner, 25 Oct: past a limit and back, the control seemed to forget where 0 was)
 do {
     var base = 140.0

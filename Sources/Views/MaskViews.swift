@@ -398,6 +398,7 @@ struct MaskPanel: View {
     private func localItems(_ m: Mask) -> [ParamItem] {
         [
             local(m, "Exposure", \.exposure, range: -5...5, decimals: 2, section: "Light"),
+            local(m, "Brightness", \.brightness, section: "Light"),
             local(m, "Contrast", \.contrast, section: "Light"),
             local(m, "Highlights", \.highlights, section: "Light"),
             local(m, "Shadows", \.shadows, section: "Light"),
