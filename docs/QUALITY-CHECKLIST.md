@@ -134,6 +134,12 @@ closures: the flight recorder is in since 0.1.546), A23 (reload storms). Version
 | 0.1.606 | the canvas draws with a context that keeps no intermediate results; Lumen's own let-go does not redraw at once; AI Denoise does not start with under 1500 MB free (it says so) |
 | 0.1.608 | AI Denoise model at 256 px tiles (was 512); the loaded model is kept for the session instead of let go and loaded again (only a memory warning lets it go); Detail warms it only with 2400 MB free; a clean needs 1100 MB free |
 | 0.1.620 | careful mode works without a popup (owner: users shouldn't see it); the Heal model needs 1200 MB free to load, not 2800 (0.1.608 refused three heals with 2764 MB free; on the GPU it loads for ~150 MB) |
+| 0.1.626 | masks: the overlay and the clipping warning stay on the photo (kernels give nothing outside it); the editor lets go of its copies on close |
+| 0.1.629 | App Store groundwork shared with main: Acknowledgements (model licences, Apache 2.0 text), privacy manifest, no export-encryption question, iPhone only |
+| 0.1.634 | SideStore page: screenshots, description, tint, release notes from the PR title |
+| 0.1.639 | the photo sits in the middle of the space above the panel in every tool (a wide photo sat on the panel) |
+| 0.1.644 | Grade opens taller (its compact height is 330 pt) |
+| 0.1.657 | crop rework (#147, `docs/CROP-REWORK.md`): the photo zooms and moves under a frame that stays big, 48 pt handles, a straighten dial; crop version 2 keeps the crop on real photo exactly ("Keep the crop inside the photo"), older edits converted when Crop opens them |
 
 **Phone evidence, 0.1.581 (Angelo, 23 Oct 16:49-16:51):** heavy, quick editing (undo/redo and HDR toggles, three people removed, four heals, the
 zoomed-in copy built three times, AI masks on every change): **no closure, peak 1932 MB** (0.1.552 and earlier reached 3.0-3.4 GB and closed). The Heal model
