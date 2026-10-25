@@ -436,6 +436,38 @@ do {
     check(back?.brightness == 0 && back?.isNeutral == true, "brightness: an older mask's adjustments read 0")
 }
 
+// ---- the slider's neutral detent (owner, 25 Oct: "the smallest value I can select is 3, any less and it reverts to 0")
+do {
+    // from 0 the very next values can be chosen (before: anything within 2.4 of 0 snapped back to it)
+    var a = DetentDrag(value: 0, neutral: 0, range: -100...100)
+    a.move(points: 1, perPoint: 0.6)
+    check(abs(a.value - 0.6) < 1e-9, "detent: leaving 0 moves at once, so 1 can be chosen (\(a.value))")
+    var e = DetentDrag(value: 0, neutral: 0, range: -5...5)
+    e.move(points: 2, perPoint: 0.03)
+    check(abs(e.value - 0.06) < 1e-9, "detent: Exposure can be nudged by hundredths (before: nothing within 0.12 EV) (\(e.value))")
+    // coming back through 0 rests there for a stretch of finger travel, then carries on
+    var b = DetentDrag(value: 5, neutral: 0, range: -100...100)
+    b.move(points: -10, perPoint: 0.6)
+    check(b.value == 0, "detent: passing through 0 rests there (\(b.value))")
+    b.move(points: -8, perPoint: 0.6)
+    check(b.value == 0, "detent: still resting within the hold (\(b.value))")
+    b.move(points: -6, perPoint: 0.6)
+    check(abs(b.value + 1.2) < 1e-9, "detent: then carries on past 0 (\(b.value))")
+    // the ends: pushed past, then back, it moves at once
+    var c = DetentDrag(value: 95, neutral: 0, range: -100...100)
+    c.move(points: 50, perPoint: 0.6)
+    check(c.value == 100, "detent: stops at the end (\(c.value))")
+    c.move(points: -5, perPoint: 0.6)
+    check(abs(c.value - 97) < 1e-9, "detent: back from the end at once (\(c.value))")
+    // neutral at the low end (Grain): resting at 0, pushing on stays at 0, back up moves at once
+    var g = DetentDrag(value: 10, neutral: 0, range: 0...100)
+    g.move(points: -30, perPoint: 0.6)
+    g.move(points: -40, perPoint: 0.6)
+    check(g.value == 0, "detent: an end at neutral holds (\(g.value))")
+    g.move(points: 5, perPoint: 0.6)
+    check(abs(g.value - 3) < 1e-9, "detent: and moves again at once (\(g.value))")
+}
+
 // ---- end stops (owner, 25 Oct: past a limit and back, the control seemed to forget where 0 was)
 do {
     var base = 140.0
