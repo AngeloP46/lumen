@@ -76,6 +76,9 @@ struct EditorView: View {
     @State private var zoom: CGFloat = 1
     @State private var pan: CGSize = .zero
     @State private var pinchBase: (zoom: CGFloat, pan: CGSize)?
+    /// Crop tool: the view while a handle is held, and the start of a two-finger zoom of the photo under the frame.
+    @State private var cropFrozen: (zoom: CGFloat, pan: CGSize)?
+    @State private var cropPinch: (rect: CropRect, anchor: Pt, rel: Pt, centre: CGPoint, spread: CGFloat, frame: CGRect)?
     @State private var panBase: CGSize?
     @GestureState private var holding = false
     // reset by SwiftUI when a pan or pinch ends *or is cancelled by the system* (onEnded is not called then)
@@ -236,7 +239,7 @@ struct EditorView: View {
     private func spec(_ t: Tool) -> ToolSpec {
         switch t {
         case .presets: return ToolSpec(compact: vm.presetStrengthAvailable ? 152 : 112, roomy: vm.presetStrengthAvailable ? 152 : 112)
-        case .crop: return ToolSpec(compact: 200, roomy: 240)
+        case .crop: return ToolSpec(compact: 236, roomy: 256)
         case .heal: return ToolSpec(compact: 150, roomy: 150)
         case .lensBlur: return ToolSpec(compact: 230, roomy: 270)
         case .grade: return ToolSpec(compact: 330, roomy: 350)   // a zone tab: tabs, the wheel and three sliders (was 250: the sliders were cut off)
@@ -452,7 +455,7 @@ struct EditorView: View {
         .modifier(ExportWithoutLensDialog(vm: vm))
         .overlay(alignment: .top) { if !chromeHidden { floatingBar } }
         .overlay(alignment: .topLeading) {
-            if showHistogram && !chromeHidden {
+            if showHistogram && !chromeHidden && tool != .crop {   // not while cropping: it covered the frame's corner
                 VStack(alignment: .leading, spacing: 3) {
                     // not a button: it sits over the photo, where a press and hold must still show the original.
                     // The clipping warning is in More → View.
@@ -479,11 +482,13 @@ struct EditorView: View {
             let origin = geo.frame(in: .global).origin
             ZStack {
                 Color.black
-                CanvasView(model: vm.canvas, xform: xform, hdr: vm.settings.hdr)
-                    .allowsHitTesting(false)
+                if tool != .crop {
+                    CanvasView(model: vm.canvas, xform: xform, hdr: vm.settings.hdr)
+                        .allowsHitTesting(false)
+                }
                 if vm.imageSize != .zero {
                     gestureLayer(xform)
-                    if tool == .crop { CropOverlay(vm: vm, xform: xform) }
+                    if tool == .crop { cropStage(geo.size) }
                     if tool == .masks || (tool == .lensBlur && vm.lensBlurRefining) {
                         MaskOverlay(vm: vm, xform: xform, geo: SourceGeometry(source: vm.sourceSize, settings: vm.settings))
                             .allowsHitTesting(!vm.panMode)
@@ -875,10 +880,54 @@ struct EditorView: View {
         }
     }
 
+    // MARK: Crop stage
+
+    /// The picture and the crop frame while the Crop tool is open: the view is worked out from the crop so the frame stays
+    /// big and centred and the picture moves under it. While a handle is held the view stays put (`cropFrozen`) and
+    /// glides to its new size when the finger lifts.
+    private func cropStage(_ canvas: CGSize) -> some View {
+        let t = cropFrozen ?? CropStage.view(canvas: canvas, image: vm.imageSize, crop: vm.cropRect)
+        return CropStageCanvas(model: vm.canvas, vm: vm, canvas: canvas, hdr: vm.settings.hdr,
+                               zoom: t.zoom, panX: t.pan.width, panY: t.pan.height) { began in
+            if began {
+                cropFrozen = CropStage.view(canvas: canvas, image: vm.imageSize, crop: vm.cropRect)
+            } else {
+                withAnimation(.easeOut(duration: 0.3)) { cropFrozen = nil }
+            }
+        }
+        .animation(.easeOut(duration: 0.28), value: vm.settings.cropAspect)
+        .animation(.easeOut(duration: 0.28), value: vm.settings.quarterTurns)
+    }
+
+    /// Two fingers in the Crop tool zoom the photo under the frame: the point between the fingers stays under them.
+    private func cropTwoFingers(_ phase: TwoFingerWatcher.Phase, _ p: CGPoint, _ spread: CGFloat, _ xf: ViewXform) {
+        switch phase {
+        case .began:
+            let t = cropFrozen ?? CropStage.view(canvas: xf.canvas, image: vm.imageSize, crop: vm.cropRect)
+            let cx = ViewXform(canvas: xf.canvas, image: vm.imageSize, zoom: t.zoom, pan: t.pan)
+            let r = cx.rect, c = vm.cropRect
+            let f = CGRect(x: r.minX + CGFloat(c.l) * r.width, y: r.minY + CGFloat(c.t) * r.height,
+                           width: max(CGFloat(c.w) * r.width, 1), height: max(CGFloat(c.h) * r.height, 1))
+            let q = cx.normalised(p)
+            cropPinch = (c, q, Pt(x: Double((p.x - f.minX) / f.width), y: Double((p.y - f.minY) / f.height)), p, max(spread, 1), f)
+            vm.pinching = true
+        case .changed:
+            guard let b = cropPinch else { return }
+            let rel = (x: b.rel.x + Double((p.x - b.centre.x) / b.frame.width), y: b.rel.y + Double((p.y - b.centre.y) / b.frame.height))
+            let z = CropMath.zoomed(b.rect, factor: Double(spread / b.spread), anchor: (b.anchor.x, b.anchor.y), rel: rel)
+            let r = vm.cropKeptOnPhoto(from: b.rect, to: z)
+            vm.setCropFrame(r.l, r.t, r.r, r.b)
+        case .ended:
+            cropPinch = nil
+            vm.pinching = false
+        }
+    }
+
     /// Two fingers: zoom by how far apart they are, around the point between them, and move the photo with that point,
     /// all at once (like Photos). `p` is in canvas coordinates.
     private func twoFingers(_ phase: TwoFingerWatcher.Phase, _ p: CGPoint, _ spread: CGFloat, _ xf: ViewXform) {
-        guard tool != .crop, xf.image != .zero else { return }
+        guard xf.image != .zero else { return }
+        if tool == .crop { cropTwoFingers(phase, p, spread, xf); return }
         switch phase {
         case .began:
             if DemoMode.isOn { DemoMode.log(String(format: "pinch began spread %.0f tool %@", Double(spread), tool?.rawValue ?? "none")) }

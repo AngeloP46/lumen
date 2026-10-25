@@ -71,6 +71,7 @@ enum EditsFile {
         defaults["masks"] = [Any]()
         // Lens Blur reads the absence of these to recognise an old save (old amount scale; a saved choice): the
         // template must not fill them in
+        defaults["cropVersion"] = nil   // absent = an older crop; the template must not make it a new one
         if var lens = defaults["lensBlur"] as? [String: Any] {
             lens["scaleVersion"] = nil; lens["activated"] = nil
             defaults["lensBlur"] = lens
