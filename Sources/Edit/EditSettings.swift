@@ -424,6 +424,10 @@ struct EditSettings: Codable, Equatable {
     var cropT: Double = 0
     var cropR: Double = 1
     var cropB: Double = 1
+    /// 2 (25 Oct 2026): the crop is a share of the whole turned picture and is kept on real photo exactly (`CropFit`).
+    /// Absent in edits saved before: their crop was a share of the straightened picture's largest same-shaped
+    /// rectangle and Fill frame zoomed the perspective; those still render that way until the Crop tool opens them.
+    var cropVersion: Int? = 2
     // Flip and transform (2026-10-11). Applied to the whole photo before the turns, straighten and crop.
     @Defaulted<DefaultFalse> var flipH: Bool
     @Defaulted<DefaultFalse> var flipV: Bool
@@ -433,7 +437,8 @@ struct EditSettings: Codable, Equatable {
     @Defaulted<DefaultHundred> var tScale: Double     // 50...150 %
     @Defaulted<DefaultZero> var tOffX: Double         // -100...100: + moves right
     @Defaulted<DefaultZero> var tOffY: Double         // -100...100: + moves up
-    /// Fill frame (Lightroom's Constrain Crop): zoom the transformed photo just enough that no empty corners show.
+    /// Keep the crop inside the photo (Lightroom's Constrain to Image): no empty corners after straighten or perspective.
+    /// Before crop version 2 it zoomed the transformed photo just enough that no empty corners showed.
     @Defaulted<DefaultTrue> var tFill: Bool
 
     // Sections switched off in the Edits sheet (their values are kept, they just don't apply)
@@ -550,7 +555,7 @@ extension EditSettings {
             lensBlur = o.lensBlur
         case .crop:
             straighten = o.straighten; quarterTurns = o.quarterTurns; cropAspect = o.cropAspect
-            cropL = o.cropL; cropT = o.cropT; cropR = o.cropR; cropB = o.cropB
+            cropL = o.cropL; cropT = o.cropT; cropR = o.cropR; cropB = o.cropB; cropVersion = o.cropVersion
             flipH = o.flipH; flipV = o.flipV
             tVertical = o.tVertical; tHorizontal = o.tHorizontal; tAspect = o.tAspect
             tScale = o.tScale; tOffX = o.tOffX; tOffY = o.tOffY; tFill = o.tFill
@@ -681,7 +686,7 @@ extension EditSettings {
         "lensBlur": "Lens Blur", "hdr": "HDR", "hdrStops": "HDR", "blackAndWhite": "B&W", "noiseReduction": "Noise",
         "colorNoise": "Colour noise", "sharpness": "Sharpen", "sharpenMasking": "Masking", "temperature": "Temp",
         "disabled": "Tools on / off", "quarterTurns": "Rotate", "straighten": "Straighten", "flipH": "Flip", "flipV": "Flip",
-        "cropL": "Crop", "cropT": "Crop", "cropR": "Crop", "cropB": "Crop", "cropAspect": "Crop",
+        "cropL": "Crop", "cropT": "Crop", "cropR": "Crop", "cropB": "Crop", "cropAspect": "Crop", "cropVersion": "Crop",
         "tVertical": "Transform", "tHorizontal": "Transform", "tAspect": "Transform", "tScale": "Transform",
         "tOffX": "Transform", "tOffY": "Transform", "tFill": "Transform",
     ]

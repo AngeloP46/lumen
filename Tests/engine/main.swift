@@ -1392,6 +1392,28 @@ do {
             }
             check(worst < 1e-6, "SourceGeometry round trip (turns \(turns), worst \(worst))")
         }
+        // crop version 2 (25 Oct): an older straightened crop, converted, frames the same part (same output size)
+        for angle in [6.0, -11.0] {
+            var old = EditSettings(); old.cropVersion = nil; old.straighten = angle
+            old.cropL = 0.1; old.cropT = 0.15; old.cropR = 0.85; old.cropB = 0.7
+            let new = old.withUpgradedCrop(source: CGSize(width: W, height: H))
+            let a = session.geometry(black, old).extent.size, b = session.geometry(black, new).extent.size
+            check(new.cropVersion == 2 && abs(a.width - b.width) < 3 && abs(a.height - b.height) < 3,
+                  "an older crop converted to version 2 should frame the same size (straighten \(angle): \(a) vs \(b))")
+        }
+        // and a straightened photo keeps no empty corner while the crop is kept inside the photo
+        var tilt = EditSettings(); tilt.straighten = 8; tilt.cropL = 0; tilt.cropR = 1; tilt.cropT = 0.3; tilt.cropB = 0.7
+        let wideOut = session.geometry(CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: W, height: H)), tilt)
+        var cornerA: Float = 1
+        let we = wideOut.extent
+        for (x, y) in [(we.minX + 1, we.minY + 1), (we.maxX - 2, we.minY + 1), (we.minX + 1, we.maxY - 2), (we.maxX - 2, we.maxY - 2)] {
+            var v = [Float](repeating: 0, count: 4)
+            LumenGPU.context.render(wideOut, toBitmap: &v, rowBytes: 16, bounds: CGRect(x: x, y: y, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+            cornerA = min(cornerA, v[3])
+        }
+        check(cornerA > 0.95, "a wide crop on a straightened photo should have no empty corner (corner alpha \(cornerA))")
+        let kfit = 1 / (cos(8 * Double.pi / 180) + sin(8 * Double.pi / 180) * Double(W / H))
+        check(Double(we.width) > Double(W) * kfit + 20, "a wide crop on a straightened photo should keep more width than the old centred fit (\(we.width) vs \(Double(W) * kfit))")
     } else { check(false, "SourceGeometry check: no photo could be opened") }
 }
 
