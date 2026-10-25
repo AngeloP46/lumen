@@ -1417,6 +1417,52 @@ do {
     } else { check(false, "SourceGeometry check: no photo could be opened") }
 }
 
+// Brightness (owner, 25 Oct: Apple's slider "adds much more brightness without pushing everything into overexposed"):
+// the mid-tones go up a lot, near-white and black barely move (unlike Exposure), -100 darkens, tones keep their order,
+// and a mask's own Brightness does inside the mask what the global one does.
+do {
+    if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f),
+       let src = session.makeSource(maxEdge: 600, materialize: true) {
+        func lum(_ s: EditSettings) -> [Float] {
+            let img = session.develop(s, source: src, geometry: false, lens: .off)
+            let e = img.extent.integral, n = Int(e.width) * Int(e.height)
+            var px = [Float](repeating: 0, count: n * 4)
+            LumenGPU.context.render(img, toBitmap: &px, rowBytes: Int(e.width) * 16, bounds: e, format: .RGBAf, colorSpace: nil)
+            return (0..<n).map { 0.2126 * px[$0 * 4] + 0.7152 * px[$0 * 4 + 1] + 0.0722 * px[$0 * 4 + 2] }
+        }
+        func mean(_ a: [Float], _ idx: [Int]) -> Float { idx.isEmpty ? 0 : idx.map { a[$0] }.reduce(0, +) / Float(idx.count) }
+        let base = lum(EditSettings())
+        var up = EditSettings(); up.brightness = 100
+        var down = EditSettings(); down.brightness = -100
+        var ex = EditSettings(); ex.exposure = 1
+        let bu = lum(up), bd = lum(down), eu = lum(ex)
+        let mids = base.indices.filter { base[$0] > 0.08 && base[$0] < 0.25 }
+        let highs = base.indices.filter { base[$0] > 0.75 && base[$0] < 0.97 }
+        let deep = base.indices.filter { base[$0] < 0.003 }
+        let midGain = mean(bu, mids) / max(mean(base, mids), 1e-6)
+        print(String(format: "BRIGHTNESS mids x%.2f (exposure +1: x%.2f); highs +%.3f (exposure +1: +%.3f); %d mid, %d high, %d deep px",
+                     Double(midGain), Double(mean(eu, mids) / max(mean(base, mids), 1e-6)),
+                     Double(mean(bu, highs) - mean(base, highs)), Double(mean(eu, highs) - mean(base, highs)), mids.count, highs.count, deep.count))
+        check(mids.count > 100 && midGain > 1.5, "Brightness +100 should lift the mid-tones a lot (x\(midGain), \(mids.count) px)")
+        if highs.count > 50 { check(mean(bu, highs) - mean(base, highs) < 0.06, "Brightness should leave near-white almost alone (+\(mean(bu, highs) - mean(base, highs)))") }
+        if deep.count > 50 { check(mean(bu, deep) < 0.006, "Brightness should keep black black (\(mean(bu, deep)))") }
+        check(mean(bd, mids) < mean(base, mids) * 0.8, "Brightness -100 should darken the mid-tones")
+        // tones keep their order: the mean of each tenth of the photo's tones still rises from one tenth to the next
+        let order = base.indices.sorted { base[$0] < base[$1] }
+        let tenths = (0..<10).map { t in mean(bu, Array(order[(t * order.count / 10)..<((t + 1) * order.count / 10)])) }
+        check(zip(tenths, tenths.dropFirst()).allSatisfy { $0 <= $1 + 1e-4 }, "Brightness must keep darker tones darker (\(tenths))")
+        // a mask over the whole photo with its own Brightness does what the global slider does
+        var masked = EditSettings()
+        var m = Mask.make(.luminance)
+        m.components[0].lumLow = 0; m.components[0].lumHigh = 1; m.components[0].lumLowFeather = 0; m.components[0].lumHighFeather = 0
+        m.adjust.brightness = 100
+        masked.masks = [m]
+        let lm = lum(masked)
+        let diff = zip(lm, bu).map { abs($0 - $1) }.reduce(0, +) / Float(max(lm.count, 1))
+        check(diff < 0.01, "a mask's Brightness over the whole photo should match the global slider (mean difference \(diff))")
+    } else { check(false, "Brightness: no photo could be opened") }
+}
+
 // UI refresh (2026-10-10): a switched-off tool renders as untouched; brush strokes keep their own softness
 do {
     if let f = files.first(where: { $0.pathExtension.lowercased() != "arw" }) ?? files.first, let session = EditSession(url: f),

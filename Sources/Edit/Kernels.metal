@@ -98,6 +98,7 @@ inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
     float sharp = g3.y + pe.x;
     float nrL = clamp(g3.w + pe.y, 0.0, 1.5);
     float nrC = g4.x;
+    float br = g4.y + pe.z;                      // brightness (global + local), -1...1
 
     float lpre = clamp(log2(max(lmLum(c), 1e-5) / 0.18), -8.0, 8.0);
 
@@ -149,6 +150,10 @@ inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
         float whh = lmStep(-1.0, 2.8, bb);
         delta += sh * 1.7 * ws * sqrt(ws) + hl * 1.7 * whh;
     }
+    // Brightness (owner, 25 Oct 2026, like Apple's): the mid-tones up or down by up to 1 EV, fading to nothing at white
+    // (bb ~2.5) and in the deepest shadows, so the photo gets brighter without the highlights going white. Measured on
+    // the local base like Shadows / Highlights, so detail keeps its contrast. Monotonic for |br| <= 1.
+    if (br != 0.0) delta += br * lmStep(-7.5, -2.5, bb) * (1.0 - lmStep(-0.5, 2.4, bb));
     if (wh != 0.0) delta += wh * 0.8 * lmStep(0.5, 3.0, l1);
     if (bk != 0.0) delta += bk * 0.8 * (1.0 - lmStep(-6.0, -1.5, l1));
     if (contrast != 0.0) delta += contrast * 0.22 * clamp(l1, -6.0, 4.0);
