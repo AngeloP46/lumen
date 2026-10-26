@@ -152,6 +152,9 @@ struct EditorView: View {
             .onChange(of: wide, initial: true) { _, w in landscape = w }
         }
         .toolbar(.hidden, for: .navigationBar)
+        // leaving the app takes two swipes from the bottom edge while editing, as in Photomator and Darkroom (owner, 25 Oct:
+        // the tool bar is right above the home indicator, so a stray swipe closed the app): the first only wakes the bar
+        .defersSystemGestures(on: .bottom)
         .onAppear {
             vm.start(store: store)
             vm.setLensBlurEditing(tool == .lensBlur)
