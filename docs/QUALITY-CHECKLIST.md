@@ -145,6 +145,8 @@ closures: the flight recorder is in since 0.1.546), A23 (reload storms). Version
 | 0.1.679 | Brightness (Light and masks: mid-tones up to +/-1 EV, white and black kept); Auto shares its lift between Exposure and Brightness and no longer treats a bright sky as a night scene (#155) |
 | 0.1.684 | canvas fills the whole texture at its own size and crops the photo to its place (a mask's tint showed around the photo on the phone); a wrong-shaped picture is noted in Send diagnostics (#157) |
 | 0.1.692 | sliders: a detent at neutral instead of a 1.2 % snap zone (values next to 0 can be chosen), haptics (neutral click, end bump, ticks), a livelier look (#160) |
+| 0.1.700 | curves like Darkroom (corner points whole, five starter points, zone names, ring points, hold a point to remove it); the editor needs two swipes from the bottom edge to leave (#163) |
+| 0.1.703 | radial masks: a size handle on every side, kept on screen, dragged by distance; mask handles take hold within 48 pt (#164) |
 
 **Phone evidence, 0.1.581 (Angelo, 23 Oct 16:49-16:51):** heavy, quick editing (undo/redo and HDR toggles, three people removed, four heals, the
 zoomed-in copy built three times, AI masks on every change): **no closure, peak 1932 MB** (0.1.552 and earlier reached 3.0-3.4 GB and closed). The Heal model
