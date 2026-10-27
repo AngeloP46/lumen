@@ -192,16 +192,18 @@ func runImagingQualityChecks() {
                 check(difference(low, high) < 0.005, "imaging: preview/export low-frequency tones disagree")
             }
         }
-        let flat = image(1280, 64) { _, _ in SIMD3(repeating: 0.18) }
-        if let s = session(flat, "flat") {
-            for edge in [CGFloat(640), CGFloat(1280)] {
-                guard let src = s.makeSource(maxEdge: edge, materialize: true, processingVersion: 2) else {
+        // An exact linear constant isolates analysis from the PNG decoder's own unclamped preview resampling.
+        // Test the entire border too: the small guide must not introduce transparent-black Lanczos fringes.
+        for edge in [640, 1280] {
+                let flat = image(edge, 64) { _, _ in SIMD3(repeating: 0.18) }
+                guard let src = renderSession.analyse(flat, materialize: true, processingVersion: 2) else {
                     check(false, "imaging: flat source unavailable"); continue
                 }
                 let a = pixels(src.l1), b = pixels(src.l2)
-                let error = zip(a, b).map { max(abs($0.0.z - 0.5), abs($0.1.x - 0.5)) }.max() ?? .infinity
+                let reference = pixels(kernels.logLum.apply(extent: src.extent, arguments: [src.base])!)
+                let error = a.indices.map { max(abs(a[$0].z - reference[$0].x), abs(b[$0].x - reference[$0].x)) }.max() ?? .infinity
+                print("IMAGING flat \(edge): guide \(reference.map(\.x).min() ?? 0)...\(reference.map(\.x).max() ?? 0), analysis \(a.map(\.z).min() ?? 0)...\(a.map(\.z).max() ?? 0), error \(error)")
                 check(finite(a) && finite(b) && error < 0.004, "imaging: guided analysis changes a constant at \(edge) (\(error))")
-            }
         }
     }
 
