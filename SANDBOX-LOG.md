@@ -362,3 +362,7 @@ recipes keep processing 1; new/reset recipes use 2 (edits format 2 protects roll
 base retained for Heal/AI residual compatibility. Light/Colour remain free; existing Pro gates unchanged. No Store
 code changed. Prepared while main validation runs; sandbox OFF/ON compile check pending, merge follows main release.
 Existing local MARKETING.md and docs/appstore/LISTING.md edits are unrelated and are not included in this port.
+
+Follow-up: aligned shared code/tests with main bc0c788. Clamp v2 analysis resampling at the photo edge; exact-linear
+constant regressions pass in main's 44-check GPU run 40604409841. Focused engine mode and early render artifact
+upload speed diagnosis. First sandbox OFF/ON builds passed; final compile check follows this commit. No Store changes.

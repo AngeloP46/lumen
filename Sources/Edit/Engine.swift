@@ -559,7 +559,9 @@ final class EditSession: @unchecked Sendable {
         return analyse(materializedOrLazy(decoded, materialize), materialize: materialize, processingVersion: processingVersion)
     }
 
-    private func analyse(_ base: CIImage, materialize: Bool, processingVersion: Int) -> ImageSource? {
+    /// Kept internal so engine invariants can be checked with exact linear fixtures, without encoding/resampling
+    /// a test image first (those operations can introduce their own boundary pixels).
+    func analyse(_ base: CIImage, materialize: Bool, processingVersion: Int) -> ImageSource? {
         guard let k = LumenKernels.shared else { return nil }
         let ext = base.extent
         let E = max(ext.width, ext.height)
@@ -568,8 +570,16 @@ final class EditSession: @unchecked Sendable {
         let f = min(1, 640 / E)
         var small = base
         if f < 1 {
-            small = base.applyingFilter("CILanczosScaleTransform",
-                                        parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0])
+            if processingVersion >= 2 {
+                // Lanczos must see real edge pixels, not transparent black outside the image. A fringe in the
+                // small guide corrupts the coefficients that are later applied to the full-resolution border.
+                let target = ext.applying(CGAffineTransform(scaleX: f, y: f))
+                small = base.clampedToExtent().applyingFilter("CILanczosScaleTransform",
+                    parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0]).cropped(to: target)
+            } else {
+                small = base.applyingFilter("CILanczosScaleTransform",
+                                            parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0])
+            }
             small = Self.normalized(small)
         }
         let sext = small.extent
