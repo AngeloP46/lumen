@@ -1,5 +1,17 @@
 # Lumen – project notes for Claude
 
+## Adjustment engine quality — 27 October 2026 (in progress)
+- Angelo approved implementing the adjustment review and publishing the tested SideStore build. Branch
+  `imaging-quality-v2`, baseline `2ad11b89995c3ff30ea2ec6ba8336486c6aa8006` (0.1.703). See
+  `docs/IMAGING-QUALITY.md`: v2 tone/detail/Dehaze, Bradford relative white balance, P3 gamut mapping, B&W Grade,
+  guided Clarity analysis, honest HDR export failures. UI unchanged; Apple RAW base retained deliberately.
+- Existing saved recipes/history/presets retain processing 1; new/reset recipes use 2. Edits format 2 triggers the
+  prior app's copy-before-save warning after rollback. Code is recoverable from the baseline; new v2 edits cannot
+  render identically in an older engine. Do not delete the app to roll back.
+- Checks and publication pending. Phone: test new/imported or Reset photos (undo restores prior edits), subtle
+  Dehaze, combined tone controls, saturated paint/lights, noise/detail, B&W grading, HDR/export and responsiveness.
+  If a saved older photo feels unchanged, it is intentionally on processing 1 until Reset or a replacement preset.
+
 ## Quality work before the App Store (from 22 Oct 2026)
 - **25 Oct:** SideStore **0.1.684** (#157: the canvas fills the whole texture at its own size and crops the photo to its place on
   screen; owner's phone showed a mask's tint around the photo until the next zoom, the picture itself is clean on the Mac:

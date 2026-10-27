@@ -65,7 +65,7 @@ jobs:
             Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift Sources/Library/EditsFile.swift \
             Sources/Edit/Engine.swift Sources/Edit/LoadedModel.swift Sources/Edit/CropMath.swift Sources/Edit/CropFit.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift Sources/Edit/Denoise.swift \
             Sources/Edit/Histogram.swift Sources/Edit/PhotoInformation.swift Sources/Edit/Auto.swift \
-            Tests/engine/main.swift
+            Tests/engine/main.swift Tests/engine/imaging.swift
       - name: Run
         env:
           ENGINE_TEST_ONLY: ${{ github.event.inputs.only }}

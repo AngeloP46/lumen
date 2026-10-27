@@ -24,7 +24,7 @@ extension EditSession {
         let g2 = v(s.blackAndWhite ? 0 : s.vibrance / 100, s.blackAndWhite ? 0 : s.saturation / 100,
                    s.texture / 100, s.clarity / 100)
         let g3 = v(s.dehaze / 100, s.sharpness / 100 * 0.9, s.sharpenMasking / 100, s.noiseReduction / 100)
-        let g4 = v(s.colorNoise / 100, s.brightness / 100, 0, 0)
+        let g4 = v(s.colorNoise / 100, s.brightness / 100, Double(s.processingVersion), 0)
         let g6 = v(Double(source.air.x), Double(source.air.y), Double(source.air.z), Double(source.darkNorm))
 
         var args: [Any] = [source.base, source.l1, source.l2, source.chroma]
@@ -231,7 +231,7 @@ extension EditSession {
         denoiseAmount = s.effective.aiDenoise / 100   // uses the cleaned copy if it has been made (thumbnails don't make it)
         // small renders are kept in a buffer (a few MB): the AI masks Lens Blur needs are worked out on it without
         // re-running the RAW engine for each step (21 Oct review)
-        guard let src = makeSource(maxEdge: maxEdge, materialize: maxEdge <= 1024) else { return nil }
+        guard let src = makeSource(maxEdge: maxEdge, materialize: maxEdge <= 1024, processingVersion: s.processingVersion) else { return nil }
         // Lens Blur's masks are worked out for thumbnails (on the small source); other AI masks show once the photo
         // has been opened (21 Oct: working them all out for every thumbnail loaded the phone, and the CI simulator
         // enough to cut a UI test's drag short)
@@ -266,6 +266,8 @@ extension EditSession {
         case depthUnavailable
         /// The image rendered but could not be encoded to the chosen format.
         case encode
+        /// An HDR file was requested: never quietly substitute an SDR rendition if gain-map encoding fails.
+        case hdrEncode
 
         var message: String {
             switch self {
@@ -277,6 +279,8 @@ extension EditSession {
                 return "Lens Blur can't be exported because the depth information couldn't be prepared. Turn Lens Blur off, or reopen the photo and try again."
             case .encode:
                 return "The photo could not be written. Try a different format or a smaller size."
+            case .hdrEncode:
+                return "The HDR photo could not be written. Try a smaller size, or switch HDR off in Export to save an SDR photo."
             }
         }
     }
@@ -313,14 +317,14 @@ extension EditSession {
             guard ok else { return .failed(.denoiseMissing) }
         }
         // (Decoding into a buffer first was tried on 19 Oct: same peak, ~1.8 GB more kept afterwards.)
-        guard let src = makeSource(maxEdge: nil, materialize: false) else { return .failed(.decode) }
+        guard let src = makeSource(maxEdge: nil, materialize: false, processingVersion: s.processingVersion) else { return .failed(.decode) }
         Self.healProbe?("export: full-size source ready")
         // AI masks are worked out on a 2560 px copy and scaled up, like the editor's preview (at full size the masks'
         // filters and models each re-ran the RAW engine: 21 Oct review for 48 MP; 22 Oct diagnostics showed every 24 MP
         // batch export doing it too); what is still missing is done at full size
         let needsAI = s.effective.lensBlur.amount > 0 || s.masks.contains { m in
             m.components.contains { [.subject, .background, .sky, .people, .depth, .landscape].contains($0.kind) } }
-        if needsAI, max(nativeSize.width, nativeSize.height) > 2700, let small = makeSource(maxEdge: 2560, materialize: true) {
+        if needsAI, max(nativeSize.width, nativeSize.height) > 2700, let small = makeSource(maxEdge: 2560, materialize: true, processingVersion: s.processingVersion) {
             prepareAutoMasks(s, source: small)
             let (masks, tried) = small.snapshotMasks()
             src.storeDepth(small.depthField)
@@ -335,7 +339,10 @@ extension EditSession {
         var img = develop(s, source: src, geometry: true)
         let q: [CIImageRepresentationOption: Any] = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
         // HDR: the SDR rendition is the base image; the gain-map options need iOS 18 / macOS 15.
-        let wantHDR = includeHDR && s.hdr && format != .tiff && LumenKernels.shared?.applyGain != nil
+        let wantHDR = includeHDR && s.hdr && format != .tiff
+        if wantHDR && (LumenKernels.shared?.applyGain == nil || LumenKernels.shared?.gain == nil || LumenKernels.shared?.gainLocal == nil) {
+            return .failed(.hdrEncode)
+        }
         var hdrImg: CIImage? = wantHDR ? develop(s, source: src, geometry: true, hdrWeight: 1) : nil
         // smaller sizes are made from the full-size result, so they are as sharp as they can be
         let long = max(img.extent.width, img.extent.height)
@@ -353,10 +360,13 @@ extension EditSession {
         defer { Self.healProbe?("export: encoded") }
         switch format {
         case .jpeg:
-            if let hdrImg, #available(iOS 18.0, macOS 15.0, *) {
-                var o = q
-                o[.hdrImage] = hdrImg
-                if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
+            if let hdrImg {
+                if #available(iOS 18.0, macOS 15.0, *) {
+                    var o = q
+                    o[.hdrImage] = hdrImg
+                    if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
+                }
+                return .failed(.hdrEncode)
             }
             if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
             return .failed(.encode)
@@ -370,6 +380,7 @@ extension EditSession {
                           let d = try? ctx.heif10Representation(of: hdrImg, colorSpace: hlg, options: q) {
                     return .data(d)
                 }
+                return .failed(.hdrEncode)
             }
             if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
             return .failed(.encode)
