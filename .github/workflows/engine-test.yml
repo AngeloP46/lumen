@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: 'lens-blur runs focused blur/RAW checks; empty runs the full engine'
+        description: 'imaging runs adjustment quality checks; lens-blur runs blur/RAW checks; empty runs all'
         required: false
         default: ''
   push:
@@ -83,6 +83,7 @@ jobs:
           export LUMEN_TREES_SAMPLE="$PWD/people/building.jpg"
           EXTRA=""
           if [ "$ENGINE_TEST_ONLY" = "lens-blur" ]; then EXTRA="--lens-blur"; fi
+          if [ "$ENGINE_TEST_ONLY" = "imaging" ]; then EXTRA="--imaging"; fi
           ./out/engine-test out/k.metallib samples out/render $EXTRA
           code=$?
           echo "engine-test exit code: $code"
@@ -92,9 +93,14 @@ jobs:
             echo "::endgroup::"
           fi
           exit "$code"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
+        if: always()
+        with:
+          name: engine-renders
+          path: out/render
       - name: Memory budget
         # Separate process, so only the photo's own work is counted (see --memory in Tests/engine/main.swift).
-        if: ${{ always() && github.event.inputs.only != 'lens-blur' }}
+        if: ${{ always() && github.event.inputs.only != 'lens-blur' && github.event.inputs.only != 'imaging' }}
         run: |
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           export LUMEN_DENOISE_MODEL="$PWD/Models/Denoise.mlmodelc"
@@ -103,14 +109,9 @@ jobs:
           ./out/engine-test out/k.metallib samples out/memory --memory
       - name: Memory and timing, iPhone ProRAW
         # The same steps on a 12 MP ProRAW (no AI Denoise: about 5 more minutes on the CI Mac's CPU)
-        if: ${{ always() && github.event.inputs.only != 'lens-blur' }}
+        if: ${{ always() && github.event.inputs.only != 'lens-blur' && github.event.inputs.only != 'imaging' }}
         run: |
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           export LUMEN_HEAL_EXPECT_SIDE=800
           export LUMEN_MEMORY_SKIP_DENOISE=1
           ./out/engine-test out/k.metallib proraw out/memory-proraw --memory
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
-        if: always()
-        with:
-          name: engine-renders
-          path: out/render
