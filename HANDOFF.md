@@ -1,5 +1,11 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## 27 October 2026: adjustment-engine candidate
+Shared processing improvements from personal PR #167 are on `sandbox-imaging-quality-v2`, candidate main 9d6bba0.
+Read `docs/IMAGING-QUALITY.md` for algorithms, legacy recipes and rollback. No Store code or pricing changed.
+OFF/ON compile checks pending; merge after the personal candidate is verified and released. Existing local edits
+in MARKETING.md and docs/appstore/LISTING.md are unrelated and were preserved outside this candidate's commits.
+
 ## Lens Blur phone feedback follow-up — 14 October
 Owner reported amount still 0 and unclear subject selection on 0.1.207. PR #5:
 old untouched zero/default settings migrate once on explicit tool entry to amount 8;

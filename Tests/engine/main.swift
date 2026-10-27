@@ -608,6 +608,8 @@ if args.contains("--lens-blur") {
 }
 
 var opened = 0
+runImagingQualityChecks()
+
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
     let stem = file.deletingPathExtension().lastPathComponent
     let t0 = now()

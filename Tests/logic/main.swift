@@ -72,6 +72,31 @@ do {
 }
 check(EditsFile.decodeSettings(json("not json")) == EditSettings(), "edits file: garbage should give defaults, not crash")
 
+// Processing generations: new edits opt in; every older sidecar/history keeps its original renderer, including
+// the tolerant loader used when a different key is missing or damaged. Rollback is warned by formatVersion.
+do {
+    check(EditSettings().processingVersion == 2, "processing: new recipes should use the improved engine")
+    var old = encoded(rich)
+    old["processingVersion"] = nil
+    old["formatVersion"] = 1
+    let legacy = EditsFile.decodeSettings(data(old))
+    check(legacy.processingVersion == 1 && legacy.exposure == rich.exposure, "processing: old recipe changed renderer or exposure")
+    old["vignetteMidpoint"] = nil
+    let tolerant = EditsFile.decodeSettings(data(old))
+    check(tolerant.processingVersion == 1, "processing: tolerant migration upgraded an old recipe")
+    let roundTrip = EditsFile.decodeSettings(data(encoded(legacy)))
+    check(roundTrip.processingVersion == 1, "processing: saving a legacy recipe upgraded it")
+    var newer = rich; newer.processingVersion = 2
+    check(EditSettings.blend(legacy, newer, 0) == legacy, "processing: preset strength zero must restore complete previous recipe")
+    var unchanged = EditSettings(); unchanged.processingVersion = 1
+    check(unchanged.isDefault, "processing: legacy neutral settings should still count as neutral")
+    check(EditSettings.currentFormat > 1, "processing: older apps need a newer-format warning before saving v2 edits")
+    unchanged.processingVersion = 0
+    check(unchanged.renderingVersion == 1, "processing: unsupported old generation must fall back to legacy")
+    unchanged.processingVersion = 3
+    check(unchanged.renderingVersion == 2, "processing: future generation must not leave the preview blank")
+}
+
 // A1 (open): a mask kind this version doesn't know (a file from a newer version, read after a rollback)
 do {
     var old = encoded(rich)

@@ -354,3 +354,11 @@ look; tests and notes for 0.1.673-0.1.684 (#158). Shared code only.
 Merged from main: Darkroom-style curves (whole end points, five starting points, zone names, hold a point to remove it),
 the editor defers the bottom-edge swipe (two swipes to leave), radial masks with a size handle on every side kept on
 screen and 48 pt grab areas. Curves are Pro here as before; nothing Store-specific changed.
+
+## 27 Oct 2026: adjustment-engine quality (from main candidate #167)
+Shared candidate 9d6bba0: monotone tone composition, bounded detail/noise, gentle Dehaze, Bradford relative white
+balance, edge-aware Clarity analysis, perceptual P3 gamut mapping, B&W grading, honest HDR export failures. Old
+recipes keep processing 1; new/reset recipes use 2 (edits format 2 protects rollback files). UI unchanged. Apple RAW
+base retained for Heal/AI residual compatibility. Light/Colour remain free; existing Pro gates unchanged. No Store
+code changed. Prepared while main validation runs; sandbox OFF/ON compile check pending, merge follows main release.
+Existing local MARKETING.md and docs/appstore/LISTING.md edits are unrelated and are not included in this port.
