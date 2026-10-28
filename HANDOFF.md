@@ -1,5 +1,15 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## Latest: 28 October release and parity complete
+Personal SideStore 0.1.756 published and feed/log/asset verified, main #176 merge737e4fe, sourcef6e3465,
+publish40738521966. Shared sandbox #177 merged a54fa93 after OFF/ON/export-policy/four StoreKit tests pass
+(40737807973). Earlier Clarity #175 also merged/passed. No model inference, Store code or pricing changed.
+All1644 full engine quality checks pass40738195410;132 focused checks and six related UI methods pass too.
+The long memory sequences in40738195410 continue; phone Clarity/reliability verification remains needed.
+See docs/AI-RELIABILITY-2026-10-28.md. Larger-library scheduler, brush/blur/effects/Heal/photographic reviews
+remain queued; the personal main quality checklist is the current task list. Unrelated MARKETING.md and
+docs/appstore/LISTING.md edits remain preserved and uncommitted. Older candidate notes below are historical.
+
 ## 28 October: AI failure-state follow-up (main #176)
 Candidate source f6e3465: missing denoise model/cache fails export explicitly; valid cached denoise works without
 the model. Structurally invalid legacy PNG caches are rejected with bounded metadata validation. Automatic-mask
