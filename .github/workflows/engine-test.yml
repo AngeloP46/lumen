@@ -91,9 +91,10 @@ jobs:
           if [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then EXTRA="--adjustments"; fi
           ./out/engine-test out/k.metallib samples out/render $EXTRA
           code=$?
-          if [ "$code" -eq 0 ] && [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then
+          if [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then
             ./out/engine-test out/k.metallib samples out/memory-subject --memory-subject
-            code=$?
+            memory_code=$?
+            if [ "$memory_code" -ne 0 ]; then code=$memory_code; fi
           fi
           echo "engine-test exit code: $code"
           if [ "$code" -gt 1 ]; then
