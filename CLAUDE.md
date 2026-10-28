@@ -1,6 +1,20 @@
 # Lumen – project notes for Claude
 
-## Latest release: SideStore 0.1.756, 28 October
+## Latest release: SideStore0.1.774, 28 October
+
+Main#180 merged24c29b7 (source6d4f50d, application0a7e2a3), publish40783343904 verified:
+356120040bytes, SHA2569fce6d2106086b02b27239bef8f7b5378cff4612a82223a28fcaa1f8cc0874c1.
+Brush feather compositing, manual/refined/RGBHDR Lens Blur, filtered Grain/Vignette ranges, Heal assets/search
+failures and one-active visible-priority basic/refined thumbnail revision4 are now released. No layout/model/Store
+policy changes. Non-caching materialization gives Subject2399–2432MB versus prior2716MB, same2650MB limit.
+465 focused checks+25 short memory checks pass on shared identical29 compiler/kernel blobs40782782695;
+six related UI cases40781694994 and readiness pass. Sandbox#181 merged079a63f after both builds/policy/four
+StoreKit cases pass40781697900. Full engine/ProRAW memory40783385204 and full UI40783388166 continue.
+Personal parallel brush GPU-heap check failed68MBgrowth versus64MB (shared identical source passed53MB);
+keep this measurement issue queued and do not describe all suites/phone quality as validated. See current
+docs/COMPLETION-CHECKPOINT-2026-10-28.md and docs/ADJUSTMENT-COMPLETION-2026-10-28.md.
+
+## Prior release: SideStore 0.1.756, 28 October
 Main #176 merged 737e4fe (source f6e3465), publication 40738521966 verified against fresh feed, log and GitHub
 asset: 356082659 bytes, SHA256 b13e5cc8200f6b9a1d8493a2d92147de0fbbf8154c5b73089734e695f8cf7365.
 Clarity's bilateral correction is unchanged from 0.1.747. New AI failure-state/export/cache fixes pass 132 focused
