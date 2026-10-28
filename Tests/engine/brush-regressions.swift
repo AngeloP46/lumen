@@ -174,17 +174,20 @@ func runBrushRegressionChecks() {
         print("BRUSH BENCH \(runs) runs after GPU cache release, final component retained: \(footprint()) MB")
     }
     var retained: [Int] = []
-    // Long enough to expose linear per-checkpoint retention even with single-channel surfaces.
-    for repeatIndex in 0..<16 {
+    // Warm the GPU's reusable texture heaps before measuring retention. Early cold allocations vary by the
+    // preceding RAW/model checks; they must not be mistaken for a component retaining its earlier graphs.
+    // Sixteen measured rebuilds after eight warm-ups still expose linear growth, with the same 64 MB bound.
+    for repeatIndex in 0..<24 {
         let before = footprint(), started = ProcessInfo.processInfo.systemUptime
         autoreleasepool {
-            // The benchmark ends at .10: start at .11 so all sixteen iterations really rebuild.
+            // The benchmark ends at .10: start at .11 so every iteration really rebuilds.
             component.strokes[0].points[0].x = repeatIndex % 2 == 0 ? 0.11 : 0.10
             _ = values(mask(component, benchmarkSource))
         }
         let afterBuild = footprint()
         settleGPUResources()
-        let settled = footprint(); retained.append(settled)
+        let settled = footprint()
+        if repeatIndex >= 8 { retained.append(settled) }
         print(String(format: "BRUSH REBUILD %d: %.1f ms, footprint %d -> %d -> %d MB after cache release; cached component rasters %d",
                      repeatIndex + 1, (ProcessInfo.processInfo.systemUptime - started) * 1000,
                      before, afterBuild, settled, benchmarkSource.cachedRasterCount))
@@ -192,8 +195,8 @@ func runBrushRegressionChecks() {
               "brush regression: repeated rebuild retains multiple component-cache entries")
     }
     print("BRUSH BENCH 100-run replacement settled footprints MB: \(retained)")
-    if let first = retained.first, let last = retained.last {
-        check(first >= 0 && last - first < 64,
+    if let first = retained.first, let highest = retained.max() {
+        check(first >= 0 && highest - first < 64,
               "brush regression: replacing one component retains prior 100-run graphs (\(retained) MB)")
     }
 }
