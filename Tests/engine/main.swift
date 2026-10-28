@@ -306,6 +306,16 @@ if args.contains("--ai-state") {
     runMaskRegressionChecks()
     finishChecks()
 }
+if args.contains("--adjustments") {
+    runAIRegressionChecks()
+    runMaskRegressionChecks()
+    runBrushRegressionChecks()
+    runHealReliabilityChecks()
+    runEffectsQualityChecks()
+    runLensQualityChecks()
+    runGeometryQualityChecks()
+    finishChecks()
+}
 if args.contains("--imaging") {
     runImagingQualityChecks()
     runClarityQualityChecks()
@@ -319,7 +329,7 @@ if args.contains("--imaging") {
 // the phone opens it (HDR), the 100 % view's full-size copy, a subject mask, a big heal and a full-size export.
 // iOS closes Lumen at about 3.4 GB (owner's JetsamEvent, 18 Oct: killed at 3388 MB). The Mac counts GPU memory a
 // little differently, so the budget leaves room; the point is to catch a change that suddenly needs much more.
-if args.contains("--memory") {
+if args.contains("--memory") || args.contains("--memory-subject") {
     func footprintMB() -> Int {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
@@ -328,25 +338,31 @@ if args.contains("--memory") {
         }
         return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
-    final class Peak: @unchecked Sendable { var mb = 0; var stop = false; let lock = NSLock() }
+    final class Peak: @unchecked Sendable { var mb = 0; var interval = 0; var stop = false; let lock = NSLock() }
     let peak = Peak()
     Thread.detachNewThread {
         while true {
-            peak.lock.lock(); let done = peak.stop; peak.mb = max(peak.mb, footprintMB()); peak.lock.unlock()
+            let value = footprintMB()
+            peak.lock.lock(); let done = peak.stop
+            peak.mb = max(peak.mb, value); peak.interval = max(peak.interval, value); peak.lock.unlock()
             if done { break }
             usleep(10_000)
         }
     }
     EditSession.healProbe = { step in
-        peak.lock.lock(); let p = peak.mb; peak.mb = footprintMB(); peak.lock.unlock()
+        let current = footprintMB()
+        peak.lock.lock(); let p = max(peak.interval, current); peak.interval = current
+        peak.mb = max(peak.mb, current); peak.lock.unlock()
         print("MEMORY   \(step): \(footprintMB()) MB now, highest since the last step \(p) MB")
     }
     func stepPeak(_ name: String, _ work: () -> Void) -> Int {
-        peak.lock.lock(); peak.mb = footprintMB(); peak.lock.unlock()
+        let initial = footprintMB()
+        peak.lock.lock(); peak.mb = initial; peak.interval = initial; peak.lock.unlock()
         let t = now()
         work()
         LumenGPU.context.clearCaches()
-        peak.lock.lock(); let p = peak.mb; peak.lock.unlock()
+        let final = footprintMB()
+        peak.lock.lock(); let p = max(peak.mb, final); peak.lock.unlock()
         print("MEMORY \(name): peak \(p) MB, after \(footprintMB()) MB, \(String(format: "%.1f", now() - t)) s")
         return p
     }
@@ -376,6 +392,16 @@ if args.contains("--memory") {
         if let d = detail { _ = session.renderCGImage(s, source: d) }
     }
     peaks["subject"] = stepPeak("subject") { if let p = preview { session.ensureSubject(p) } }
+    if args.contains("--memory-subject") {
+        peak.lock.lock(); peak.stop = true; peak.lock.unlock()
+        for name in ["open", "full-size view", "subject"] {
+            let value = peaks[name] ?? Int.max
+            check(value <= budget[name]!, "memory: \(name) peaked at \(value) MB, budget \(budget[name]!) MB")
+        }
+        check(preview?.hasTried(EditSession.aiSubject) == true && preview?.failures.isEmpty == true,
+              "memory: subject analysis did not complete successfully")
+        finishChecks()
+    }
     // the app lets go of the full-size copy before healing (freeMemoryForHeal)
     detail = nil
     // where a heal's memory goes: the full-size decode of the area, and the model itself
@@ -673,6 +699,11 @@ runImagingQualityChecks()
 runClarityQualityChecks()
 runMaskRegressionChecks()
 runAIRegressionChecks()
+runBrushRegressionChecks()
+runHealReliabilityChecks()
+runEffectsQualityChecks()
+runLensQualityChecks()
+runGeometryQualityChecks()
 runThumbnailBatchChecks()
 
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
@@ -2486,7 +2517,11 @@ do {
            let session = EditSession(url: URL(fileURLWithPath: path)),
            let src = session.makeSource(maxEdge: 1200, materialize: true, heals: []) {
             let t0 = now()
-            let people = session.findPeople(earlier: [])
+            let people: [FoundPerson]
+            switch session.findPeople(earlier: []) {
+            case .found(let result): people = result
+            case .failed(let failure): check(false, "Street people search failed: \(failure)"); people = []
+            }
             print("::notice::found \(people.count) people in \(Int((now() - t0) * 1000)) ms: " + people.map {
                 String(format: "box %.2f,%.2f %.2fx%.2f area %.3f main %@", $0.box.minX, $0.box.minY, $0.box.width, $0.box.height,
                        $0.area, $0.main ? "yes" : "no") }.joined(separator: " | "))

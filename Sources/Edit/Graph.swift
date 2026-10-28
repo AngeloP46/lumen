@@ -42,11 +42,24 @@ extension EditSession {
             let gh = v(exp2(s.hdrStops), 0, 0, 0)
             gainImg = gk.apply(extent: ext, arguments: args + [gh])
         }
+        // A missing HDR blur kernel shows an SDR preview; it must not reuse an unblurred or independently
+        // blurred gain field. Export reports the unavailable HDR path explicitly below.
+        if lens != .off, s.lensBlur.amount > 0, k.hdrBlurGain == nil || k.applyRGBGain == nil { gainImg = nil }
 
+        var channelGain = false
         if lens != .off {
             let scale = lens == .preview ? 0.5 : 1
+            let unblurred = img
             img = applyLensBlur(img, settings: s, source: source, scale: scale)
-            if let gi = gainImg { gainImg = applyLensBlur(gi, settings: s, source: source, scale: scale) }
+            if s.lensBlur.amount > 0, let gi = gainImg, let apply = k.applyGain,
+               let ratio = k.hdrBlurGain, k.applyRGBGain != nil,
+               let radiance = apply.apply(extent: ext, arguments: [unblurred, gi, v(1, 0, 0, 0)]) {
+                // Average the light, not its correlated SDR and gain fields separately. RGB ratios retain
+                // differently coloured point lights. The existing output look is still applied to SDR first.
+                let blurredHDR = applyLensBlur(radiance, settings: s, source: source, scale: scale)
+                gainImg = ratio.apply(extent: ext, arguments: [blurredHDR, img, v(exp2(s.hdrStops), s.blackAndWhite ? 1 : 0, 0, 0)])
+                channelGain = gainImg != nil
+            }
         }
 
         if geometry {
@@ -57,7 +70,7 @@ extension EditSession {
         // Vignette, grain and the output curve.
         let fe = img.extent
         let lookNeutral = s.curves.isNeutral && s.hsl.isNeutral && s.grading.isNeutral && !s.blackAndWhite
-        let cell = max(0.8, (0.5 + s.grainSize / 100 * 2.5) * E / 2000)
+        let cell = (0.5 + s.grainSize / 100 * 2.5) * E / 2000
         let f0 = v(s.vignette / 100, s.vignetteMidpoint / 100, s.vignetteFeather / 100, s.vignetteRoundness / 100)
         let f1 = v(Double(fe.width), Double(fe.height), s.grain / 100, cell)
         let f2 = v(s.grainRoughness / 100, lookNeutral ? 0 : 1, 7, 0)
@@ -72,13 +85,36 @@ extension EditSession {
                 img = k.toLinear.apply(extent: fe, arguments: [out]) ?? out
             }
         }
-        if let gi = gainImg, let ag = k.applyGain {
+        if let gi = gainImg, let ag = channelGain ? k.applyRGBGain : k.applyGain {
             img = ag.apply(extent: img.extent, arguments: [img, gi, v(min(max(hdrWeight, 0), 1), 0, 0, 0)]) ?? img
         }
         return img
     }
 
     // MARK: Lens Blur
+
+    /// With no segmented subject the sampled focus plane itself must stay sharp. A detected object instead
+    /// supplies its own exact silhouette; retain the existing gradual depth ramp around that object.
+    func lensFocusEdge(_ blur: LensBlurSettings, source: ImageSource) -> Double {
+        source.cachedMask(Self.subjectKey(blur.subjectPoint)) == nil
+            ? max(blur.rampStart, min(max(blur.focusDistance, 0), 1)) : blur.rampStart
+    }
+
+    /// One initializer shared by the editor and rendering tests. This is a selection, not a second blur ramp.
+    /// The linked renderer maps its unchanged selection back to the exact automatic radius before painting.
+    func initialLensRefinement(_ blur: LensBlurSettings, source: ImageSource) -> Mask {
+        var mask = Mask.make(.depth)
+        mask.name = "Lens Blur background"
+        mask.components[0].lumLow = blur.fullFrom
+        mask.components[0].lumHigh = 1
+        mask.components[0].lumLowFeather = max(blur.fullFrom - lensFocusEdge(blur, source: source), 0)
+        mask.components[0].lumHighFeather = 0
+        if lensFocusEdge(blur, source: source) >= 0.999 { mask.components[0].amount = 0 }
+        var subject = MaskComponent.make(.subject, op: .subtract)
+        subject.subjectPoint = blur.subjectPoint
+        mask.components.append(subject)
+        return mask
+    }
 
     /// Uses only cached analysis; prepareAutoMasks performs the model work off the UI thread.
     func lensBlurMask(_ settings: EditSettings, source: ImageSource) -> CIImage? {
@@ -90,16 +126,20 @@ extension EditSession {
             if mask.components.contains(where: { $0.kind == .depth && $0.amount > 0 }),
                source.cachedMask(Self.aiDepth) == nil { return nil }
             guard let selection = maskImage(mask, source: source, gain: exp2(s.exposure)) else { return nil }
-            if let depth = source.cachedMask(Self.aiDepth), let kernel = LumenKernels.shared?.lensRefinedRamp {
-                let edge = mask.components.first(where: { $0.kind == .depth }).map { $0.lumLow - $0.lumLowFeather } ?? blur.focusDistance
-                return kernel.apply(extent: source.extent, arguments: [depth, selection, CIVector(x: edge, y: 0, z: 0, w: 0)])
+            if mask.components.contains(where: { $0.kind == .depth && $0.amount > 0 }),
+               let depth = source.cachedMask(Self.aiDepth), let kernel = LumenKernels.shared?.lensRefinedRamp {
+                let baselineComponent = initialLensRefinement(blur, source: source).components[0]
+                let baseline = componentImage(baselineComponent, source: source, gain: exp2(s.exposure))
+                return kernel.apply(extent: source.extent,
+                                    arguments: [depth, selection, baseline,
+                                                CIVector(x: lensFocusEdge(blur, source: source), y: 0, z: 0, w: 0)])
             }
             return selection
         }
         guard let depth = source.cachedMask(Self.aiDepth), let kernel = LumenKernels.shared?.lensRamp else { return nil }
         let subject = source.cachedMask(Self.subjectKey(blur.subjectPoint)) ?? Self.constant(0, source.extent)
         return kernel.apply(extent: source.extent,
-                            arguments: [depth, subject, CIVector(x: blur.rampStart, y: 0, z: 0, w: 0)])
+                            arguments: [depth, subject, CIVector(x: lensFocusEdge(blur, source: source), y: 0, z: 0, w: 0)])
     }
 
     func applyLensBlur(_ input: CIImage, settings: EditSettings, source: ImageSource, scale: Double = 1) -> CIImage {
@@ -108,8 +148,7 @@ extension EditSession {
         if let id = s.lensBlur.maskID, let editable = s.masks.first(where: { $0.id == id }) {
             guard editable.amount > 0 else { return input }
         } else {
-            let width = min(max(s.lensBlur.focusWidth, 0.02), 1)
-            guard min(max(s.lensBlur.focusDistance, 0), 1) + width < 0.999 else { return input }
+            guard lensFocusEdge(s.lensBlur, source: source) < 0.999 else { return input }
         }
         // A no-op must bypass Core Image's colour conversions, not just blend with a black mask.
         guard let mask = lensBlurMask(s, source: source) else { return input }
@@ -226,7 +265,7 @@ extension EditSession {
     // MARK: Output
 
     /// Small renders for thumbnails and presets. Automatic (AI) masks are skipped.
-    func renderCGImage(_ s: EditSettings, maxEdge: CGFloat) -> CGImage? {
+    func renderCGImage(_ s: EditSettings, maxEdge: CGFloat, prepareAutomaticMasks: Bool = true) -> CGImage? {
         heals = s.effective.heals
         denoiseAmount = s.effective.aiDenoise / 100   // uses the cleaned copy if it has been made (thumbnails don't make it)
         // small renders are kept in a buffer (a few MB): the AI masks Lens Blur needs are worked out on it without
@@ -235,8 +274,8 @@ extension EditSession {
         // Lens Blur's masks are worked out for thumbnails (on the small source); other AI masks show once the photo
         // has been opened (21 Oct: working them all out for every thumbnail loaded the phone, and the CI simulator
         // enough to cut a UI test's drag short)
-        if s.effective.lensBlur.amount > 0 { prepareAutoMasks(s, source: src) }
-        return renderCGImage(s, source: src)
+        if prepareAutomaticMasks && s.effective.lensBlur.amount > 0 { prepareAutoMasks(s, source: src) }
+        return renderCGImage(prepareAutomaticMasks ? s : ThumbnailFiles.basicRecipe(s), source: src)
     }
 
     /// A thumbnail from a source that is already decoded (the editor's preview): the photo is not decoded again, and the AI
@@ -260,6 +299,8 @@ extension EditSession {
     enum ExportFailure: Equatable {
         /// AI Denoise is on but the cleaned copy could not be made (model not here, iCloud restore, damaged file).
         case denoiseMissing
+        /// Saved Heal/Remove People edits refer to pixels that are missing or cannot be read.
+        case healMissing
         /// The photo could not be decoded (file missing, iCloud not downloaded, damaged).
         case decode
         /// Lens Blur is on but its focus map could not be prepared (depth model absent or failed).
@@ -275,6 +316,8 @@ extension EditSession {
             switch self {
             case .denoiseMissing:
                 return "AI Denoise has to clean this photo again before it can be exported (about a minute; the cleaned copy is not kept in backups). Open it, tap AI Denoise in Detail, then export. Or switch AI Denoise off."
+            case .healMissing:
+                return "A saved Heal fix couldn't be read, so this photo wasn't exported. Reopen the photo and try again, or switch Heal off to export without the fixes."
             case .decode:
                 return "The photo could not be read (the file may be missing)."
             case .depthUnavailable:
@@ -311,6 +354,9 @@ extension EditSession {
     func renderDataOutcome(_ s: EditSettings, format: ExportFormat, quality: Double, maxEdge: CGFloat? = nil,
                            includeHDR: Bool = true, allowClean: Bool = true) -> ExportOutcome {
         heals = s.effective.heals
+        let patches = HealStore.retain(Set(heals.map(\.id)))
+        defer { patches.close() }
+        guard HealStore.unavailable(heals, owner: originalURL).isEmpty else { return .failed(.healMissing) }
         denoiseAmount = s.effective.aiDenoise / 100
         // an export must show the AI Denoise it was asked for: make the cleaned copy now if it isn't there yet
         if denoiseAmount > 0, !hasDenoised {
@@ -338,6 +384,10 @@ extension EditSession {
         // HDR: the SDR rendition is the base image; the gain-map options need iOS 18 / macOS 15.
         let wantHDR = includeHDR && s.hdr && format != .tiff
         if wantHDR && (LumenKernels.shared?.applyGain == nil || LumenKernels.shared?.gain == nil || LumenKernels.shared?.gainLocal == nil) {
+            return .failed(.hdrEncode)
+        }
+        if wantHDR && s.effective.lensBlur.amount > 0 &&
+            (LumenKernels.shared?.hdrBlurGain == nil || LumenKernels.shared?.applyRGBGain == nil) {
             return .failed(.hdrEncode)
         }
         var hdrImg: CIImage? = wantHDR ? develop(s, source: src, geometry: true, hdrWeight: 1) : nil

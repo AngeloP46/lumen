@@ -4,12 +4,12 @@ import CoreImage
 import UniformTypeIdentifiers
 
 private let histQueue = DispatchQueue(label: "lumen.hist", qos: .utility)
-private let workQueue = DispatchQueue(label: "lumen.work", qos: .userInitiated)
+private let workQueue = DispatchQueue(label: "lumen.work", qos: .userInitiated, autoreleaseFrequency: .workItem)
 // AI masks get their own queue: they are seconds of work, and while the previous photo's masks were being
 // worked out the next photo's decode waited behind them on the serial work queue (phone 0.1.465: 5 s to
 // "photo ready"; checklist A7). Memory coordination stays with HeavyWork, so the queue only changes time,
 // never how much runs at once.
-private let aiMaskQueue = DispatchQueue(label: "lumen.aimask", qos: .userInitiated)
+private let aiMaskQueue = DispatchQueue(label: "lumen.aimask", qos: .userInitiated, autoreleaseFrequency: .workItem)
 
 struct ExportResult: Identifiable {
     let id = UUID()
@@ -180,15 +180,23 @@ final class EditorViewModel: ObservableObject {
     /// On closing the photo: the library's thumbnail from the picture already decoded here (A13). It shows the AI masks that
     /// are worked out, and the photo is not decoded again (a 48 MP RAW decode for a thumbnail was ~2 GB at its peak).
     func updateLibraryThumbnail() {
-        guard changedSinceOpen, let store else { return }
+        guard let store, changedSinceOpen || store.needsRefinedThumbnail(item) else { return }
         guard let session, let source else { store.refreshThumbnail(item); return }
         let s = settings, item = item
+        let ticket = store.beginThumbnailUpdate(item)
+        let state = source.snapshotMasks(), required = EditSession.requiredExportMaskKeys(s)
+        let ready = required.allSatisfy { state.tried.contains($0) && !state.failures.contains($0) }
+            && (!required.contains(EditSession.aiDepth) || state.masks[EditSession.aiDepth] != nil)
+            && ThumbnailFiles.hasRequiredDenoise(s, denoiseAvailable: session.hasDenoised)
+            && !reloadFlight.running && sourceHeals == s.effective.heals.map(\.id)
+        let quality: ThumbnailFiles.Quality = ready ? .refined : .basic
+        let rendition = ready ? s : ThumbnailFiles.basicRecipe(s)
         workQueue.async {
-            guard let cg = session.renderThumbnail(s, source: source, maxEdge: 640) else {
-                Task { @MainActor in store.refreshThumbnail(item) }
+            guard let cg = session.renderThumbnail(rendition, source: source, maxEdge: 640) else {
+                Task { @MainActor in store.retryThumbnailUpdate(item, ticket: ticket) }
                 return
             }
-            Task { @MainActor in store.saveThumbnail(cg, for: item) }
+            Task { @MainActor in store.saveThumbnail(cg, for: item, ticket: ticket, quality: quality) }
         }
     }
 
@@ -1170,16 +1178,8 @@ final class EditorViewModel: ObservableObject {
             if select { selectMask(id); maskTab = .shape }
             return
         }
-        var m = Mask.make(.depth)
-        m.name = "Lens Blur background"
-        m.components[0].lumLow = settings.lensBlur.fullFrom
-        m.components[0].lumHigh = 1
-        m.components[0].lumLowFeather = settings.lensBlur.fullFrom - settings.lensBlur.rampStart
-        m.components[0].lumHighFeather = 0
-        if m.components[0].lumLow >= 0.999 { m.components[0].amount = 0 }
-        var subject = MaskComponent.make(.subject, op: .subtract)
-        subject.subjectPoint = settings.lensBlur.subjectPoint
-        m.components.append(subject)
+        guard let session, let source else { return }
+        let m = session.initialLensRefinement(settings.lensBlur, source: source)
         lastChange = .distantPast
         var s = settings
         s.masks.append(m)
@@ -1611,6 +1611,7 @@ final class EditorViewModel: ObservableObject {
     @Published private(set) var peopleChosen: Set<Int> = []
     /// Bumped by Cancel (or leaving Heal) so a search still running is ignored when it finishes.
     private var peopleSearch = 0
+    private var findingPeople = false
     /// A running multi-person removal can be stopped (A19: only AI Denoise could). What is removed so far is kept.
     nonisolated(unsafe) private var removePeopleCancel = false
     /// People are being removed one by one (the Stop button shows only then, not for a single painted heal).
@@ -1622,24 +1623,37 @@ final class EditorViewModel: ObservableObject {
         healMessage = nil
         // CI: `-lumenDemoPeople` = three made-up people (the simulator has no Vision speed and no heal model)
         let demo = DemoMode.value("-lumenDemoPeople") != nil ? Self.demoPeople() : nil
-        guard demo != nil || EditSession.hasHealModel else { healMessage = HealFailure.notAvailable.message; return }
+        let demoFailure = DemoMode.value("-lumenDemoPeopleFailure") != nil
+        let demoEmpty = DemoMode.value("-lumenDemoPeopleEmpty") != nil
+        guard demo != nil || demoFailure || demoEmpty || EditSession.hasHealModel else { healMessage = HealFailure.notAvailable.message; return }
         let earlier = settings.effective.heals
         healBusy = true
         healBusyText = "Finding people…"
+        findingPeople = true
         peopleSearch += 1
         let search = peopleSearch
         let mp = megapixels
         workQueue.async {
-            let people = demo ?? HeavyWork.shared.run(.findPeople, megapixels: mp) { session.findPeople(earlier: earlier) } ?? []
+            let outcome: PeopleSearchOutcome
+            if demoFailure { outcome = .failed(.detection) }
+            else if demoEmpty { outcome = .found([]) }
+            else if let demo { outcome = .found(demo) }
+            else { outcome = HeavyWork.shared.run(.findPeople, megapixels: mp) { session.findPeople(earlier: earlier) } ?? .failed(.memory) }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.healBusy = false
                 guard search == self.peopleSearch else { return }
-                guard !people.isEmpty else { self.healMessage = "No people found in this photo."; return }
-                self.peopleFound = people
-                // everyone but who the photo is of
-                self.peopleChosen = Set(people.filter { !$0.main }.map(\.id))
-                self.requestRender()
+                self.findingPeople = false
+                self.healBusy = false
+                switch outcome {
+                case .failed(let failure):
+                    // Keep a previous successful selection so a failed retry does not destroy useful work.
+                    self.healMessage = failure.message
+                case .found(let people):
+                    self.peopleFound = people.isEmpty ? nil : people
+                    self.peopleChosen = Set(people.filter { !$0.main }.map(\.id))
+                    if people.isEmpty { self.healMessage = "No people found in this photo." }
+                    self.requestRender()
+                }
             }
         }
     }
@@ -1677,6 +1691,7 @@ final class EditorViewModel: ObservableObject {
 
     func cancelPeople() {
         peopleSearch += 1
+        if findingPeople { findingPeople = false; healBusy = false }
         guard peopleFound != nil else { return }
         peopleFound = nil
         peopleChosen = []

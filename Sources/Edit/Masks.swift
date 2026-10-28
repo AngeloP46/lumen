@@ -195,8 +195,8 @@ extension EditSession {
         let side = CGFloat(max(mw, mh))
         let refPoints: [Pt] = c.strokes.filter { !$0.erase }.flatMap(\.points)
 
-        /// Draws strokes into a black mask (paint = white, erase = black) and softens it by `feather`.
-        func layer(_ strokes: [BrushStroke], feather: Double, eraseAsWhite: Bool = false) -> CIImage? {
+        /// Coverage of one paint/erase run. Erase uses the same white coverage and is inverted at composition.
+        func layer(_ strokes: ArraySlice<BrushStroke>, feather: Double) -> CIImage? {
             guard let gctx = CGContext(data: nil, width: mw, height: mh, bitsPerComponent: 8, bytesPerRow: 0,
                                        space: CGColorSpaceCreateDeviceGray(),
                                        bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
@@ -207,7 +207,7 @@ extension EditSession {
             func cg(_ p: Pt) -> CGPoint { CGPoint(x: CGFloat(p.x) * CGFloat(mw), y: CGFloat(1 - p.y) * CGFloat(mh)) }
             for st in strokes {
                 guard let first = st.points.first else { continue }
-                gctx.setStrokeColor(gray: (st.erase && !eraseAsWhite) ? 0 : 1, alpha: 1)
+                gctx.setStrokeColor(gray: 1, alpha: 1)
                 gctx.setLineWidth(max(1, CGFloat(st.size) * side))
                 gctx.beginPath()
                 gctx.move(to: cg(first))
@@ -224,36 +224,38 @@ extension EditSession {
 
         // Each stroke keeps the softness it was painted with (older strokes follow the component's Feather).
         let feathers = c.strokes.map { $0.feather ?? c.feather }
-        var maskImage: CIImage?
-        if Set(feathers).count <= 1 {
-            // one softness for everything: draw all strokes together, exactly as before
-            maskImage = layer(c.strokes, feather: feathers.first ?? c.feather)
-        } else {
-            // softness changed between strokes: soften each run of strokes on its own, then combine them in order
-            // (paint runs are added, erase runs cut away what was painted before them)
-            var acc: CIImage?
-            var i = 0
-            while i < c.strokes.count {
-                var j = i + 1
-                while j < c.strokes.count, c.strokes[j].erase == c.strokes[i].erase, feathers[j] == feathers[i] { j += 1 }
-                let run = Array(c.strokes[i..<j])
-                if let img = layer(run, feather: feathers[i], eraseAsWhite: run[0].erase) {
-                    let base = acc ?? Self.constant(0, img.extent)
-                    if run[0].erase {
-                        let keep = img.applyingFilter("CIColorInvert")
-                        acc = keep.applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: base])
-                            .cropped(to: img.extent)
-                    } else {
-                        acc = img.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: base])
-                            .cropped(to: img.extent)
-                    }
+        // One convention for all histories: soften coverage, then add paint or cut away with erase.
+        // A remote stroke with a different softness must not reinterpret every earlier paint/erase boundary.
+        var acc: CIImage?
+        var i = 0, runs = 0
+        while i < c.strokes.count {
+            var j = i + 1
+            while j < c.strokes.count, c.strokes[j].erase == c.strokes[i].erase, feathers[j] == feathers[i] { j += 1 }
+            let previous = acc
+            guard let next = autoreleasepool(invoking: { () -> CIImage? in
+                guard let img = layer(c.strokes[i..<j], feather: feathers[i]) else { return nil }
+                let base = previous ?? Self.constant(0, img.extent)
+                let combined: CIImage
+                if c.strokes[i].erase {
+                    combined = img.applyingFilter("CIColorInvert").applyingFilter("CIMultiplyCompositing",
+                        parameters: [kCIInputBackgroundImageKey: base]).cropped(to: img.extent)
+                } else {
+                    combined = img.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: base])
+                        .cropped(to: img.extent)
                 }
-                i = j
-            }
-            maskImage = acc
+                // Bound the lazy graph and retained per-run rasters. Half-float checkpoints avoid accumulating
+                // 8-bit rounding through a long history; no prefix cache is retained between brush rebuilds.
+                return (runs + 1) % 8 == 0 ? Self.materialized(combined) : combined
+            }) else { return nil }
+            acc = next; runs += 1; i = j
         }
-        guard let ci = maskImage else { return nil }
-        var out = Self.fit(ci, to: ext)
+        let raster = acc ?? Self.constant(0, CGRect(x: 0, y: 0, width: mw, height: mh))
+        // Cache only a finished small component, not a graph retaining every stroke's bitmap and blur.
+        guard let ci = Self.materializedMask(raster) else { return nil }
+        let placement = CGAffineTransform(translationX: -ci.extent.minX, y: -ci.extent.minY)
+            .scaledBy(x: ext.width / ci.extent.width, y: ext.height / ci.extent.height)
+            .translatedBy(x: ext.minX, y: ext.minY)
+        var out = ci.clampedToExtent().transformed(by: placement).cropped(to: ext)
 
         if c.autoMask, !refPoints.isEmpty, let k = LumenKernels.shared {
             // Edge-aware: keep only pixels whose colour resembles what was painted over.
@@ -309,7 +311,9 @@ extension EditSession {
     /// Finds Vision's subject once (Auto meters it). Call off the main thread.
     func ensureSubject(_ source: ImageSource) {
         guard !source.hasTried(Self.aiSubject) else { return }
-        source.storeMask(Self.aiSubject, refined(computeSubject(source), source: source))
+        autoreleasepool {
+            source.storeMask(Self.aiSubject, refined(computeSubject(source), source: source))
+        }
     }
 
     /// The app logs each AI step here for ⋯ → Send diagnostics (owner's phone, 21 Oct: a 48 MP ProRAW with Lens Blur
@@ -563,8 +567,13 @@ extension EditSession {
         }
         guard let packed = pack.apply(extent: ext, arguments: [source.base, mask, CIVector(x: 0, y: 0, z: 0, w: 0)]),
               let packedIP = pack.apply(extent: ext, arguments: [source.base, mask, CIVector(x: 1, y: 0, z: 0, w: 0)]),
-              let ab = coef.apply(extent: ext, arguments: [box(packed), box(packedIP), CIVector(x: eps, y: 0, z: 0, w: 0)]),
-              let q = apply.apply(extent: ext, arguments: [box(ab), source.base,
+              let ab = coef.apply(extent: ext, arguments: [box(packed), box(packedIP), CIVector(x: eps, y: 0, z: 0, w: 0)])
+        else { return mask }
+        // Finish the coefficient pass before applying it. Otherwise the nested full-resolution box graphs
+        // and Vision's temporary buffers can be live beside the final mask. This keeps the same guide/window.
+        let coefficients = autoreleasepool { Self.materialized(ab) }
+        if coefficients != nil { ctx.clearCaches() }
+        guard let q = apply.apply(extent: ext, arguments: [box(coefficients ?? ab), source.base,
                                                           depth ? CIVector(x: 0, y: 1, z: 0, w: 0) : CIVector(x: 0.12, y: 1 / 0.76, z: 0, w: 0)])
         else { return mask }
         return Self.materializedMask(q) ?? Self.materialized(q) ?? q
@@ -906,6 +915,7 @@ extension EditSession {
 
     /// Apple's on-device foreground segmentation (Vision, iOS 17+).
     private func computeSubject(_ source: ImageSource, at point: Pt? = nil) -> CIImage? {
+        autoreleasepool {
         let ext = source.extent
         let k = min(1, 1024 / max(ext.width, ext.height))
         let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
@@ -939,5 +949,6 @@ extension EditSession {
         ci = Self.blur(ci, 1.2, ci.extent)
         if let m = Self.materialized(ci) { ci = m }
         return Self.fit(ci, to: ext)
+        }
     }
 }

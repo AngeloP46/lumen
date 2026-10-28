@@ -690,5 +690,6 @@ do {
     check(CropFit.upgraded(old, frame: (3, 2), straighten: 0, fillZoom: 1) == old, "crop fit: nothing changes for an older crop without straighten")
 }
 
+runThumbnailWorkChecks()
 print("logic tests: \(failures == 0 ? "PASS" : "FAIL"), \(failures) failure(s), \(knowns) known open bug(s) reproduced")
 exit(failures == 0 ? 0 : 1)

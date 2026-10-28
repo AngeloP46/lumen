@@ -44,7 +44,7 @@ jobs:
           swiftc -Onone -g -o out/raw-matrix \
             Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift \
             Sources/Edit/Engine.swift Sources/Edit/LoadedModel.swift Sources/Edit/CropMath.swift Sources/Edit/CropFit.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift Sources/Edit/Denoise.swift \
-            Sources/Edit/Histogram.swift Sources/Edit/BilateralClarity.swift \
+            Sources/Edit/Histogram.swift Sources/Edit/BilateralClarity.swift Sources/Library/ThumbnailFiles.swift \
             Tests/rawmatrix/main.swift
       - name: Run
         # exit 1 = a check failed; anything above is a crash (backtrace, result unchanged)
