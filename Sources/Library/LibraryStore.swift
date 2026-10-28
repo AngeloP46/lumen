@@ -53,13 +53,17 @@ final class LibraryStore: ObservableObject {
         return c
     }()
     private var thumbVersions: [UUID: Int] = [:]
+    private var thumbnailWork = ThumbnailWorkQueue()
+    private let thumbnailGate = ThumbnailGenerationGate()
+    private var forcedThumbnails = Set<UUID>()
+    private var thumbnailWorkEnabled = false
+    private var thumbnailPumpScheduled = false
 
     /// The photo's thumbnail, decoded once per version.
     func thumbnail(_ item: LibraryItem) -> UIImage? {
         let key = "\(item.id.uuidString)-\(thumbVersions[item.id] ?? 0)" as NSString
         if let img = thumbCache.object(forKey: key) { return img }
-        let current = thumbURL(item), legacy = ThumbnailFiles.legacy(in: thumbsDir, id: item.id)
-        let file = fm.fileExists(atPath: current.path) ? current : legacy
+        let file = ThumbnailFiles.display(in: thumbsDir, id: item.id)
         guard let img = UIImage(contentsOfFile: file.path)?.preparingForDisplay() else { return nil }
         let cost = img.cgImage.map { $0.bytesPerRow * $0.height } ?? Int(img.size.width * img.size.height * 4)
         thumbCache.setObject(img, forKey: key, cost: cost)
@@ -169,7 +173,9 @@ final class LibraryStore: ObservableObject {
         fillInDatesTaken()
         // Never invalidate an entire library on launch. Each atomic, revision-named JPEG is its own checkpoint.
         // Keep older JPEGs visible while replacements are pending; a restart only retries unfinished photos.
-        for it in items where ThumbnailFiles.needsRefresh(in: thumbsDir, id: it.id) { refreshThumbnail(it) }
+        // Queue lightweight IDs only. Freshness metadata is checked one photo per pump turn, never scanned
+        // across a large library synchronously during launch.
+        for it in items { thumbnailWork.enqueue(it.id) }
         if let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
            let decoded = try? JSONDecoder().decode([UserPreset].self, from: data) {
             userPresets = decoded
@@ -404,7 +410,7 @@ final class LibraryStore: ObservableObject {
     }
 
     func fileURL(_ item: LibraryItem) -> URL { filesDir.appendingPathComponent(item.fileName) }
-    func thumbURL(_ item: LibraryItem) -> URL { ThumbnailFiles.current(in: thumbsDir, id: item.id) }
+    func thumbURL(_ item: LibraryItem) -> URL { ThumbnailFiles.display(in: thumbsDir, id: item.id) }
     private func editURL(_ item: LibraryItem) -> URL { editsDir.appendingPathComponent("\(item.id.uuidString).json") }
 
     func item(_ id: UUID) -> LibraryItem? { items.first { $0.id == id } }
@@ -968,6 +974,8 @@ final class LibraryStore: ObservableObject {
         let fileURL = fileURL(item), historyURL = historyURL(item), thumbURL = thumbURL(item)
         let legacyThumbURL = ThumbnailFiles.legacy(in: thumbsDir, id: item.id)
         let owned = HealStore.markDeleted(owner: fileURL)
+        let thumbnailFiles = ThumbnailFiles.all(in: thumbsDir, id: item.id)
+        thumbnailGate.remove(item.id); thumbnailWork.remove(item.id); forcedThumbnails.remove(item.id)
         items.removeAll { $0.id == item.id }
         failedSaves[item.id] = nil
         loadNotices[item.id] = nil
@@ -1014,10 +1022,12 @@ final class LibraryStore: ObservableObject {
             for name in own { try? fm.removeItem(at: editsDir.appendingPathComponent(name)) }   // edits, history, kept copies
             try? fm.removeItem(at: thumbURL)
             try? fm.removeItem(at: legacyThumbURL)
+            for file in thumbnailFiles { try? fm.removeItem(at: file) }
             // The thumbnail queue is serial: this runs after any render already in flight for this photo.
             thumbQueue.async {
                 try? FileManager.default.removeItem(at: thumbURL)
                 try? FileManager.default.removeItem(at: legacyThumbURL)
+                for file in thumbnailFiles { try? FileManager.default.removeItem(at: file) }
             }
             if let retained { HealStore.remove(patches.subtracting(retained)) }
             else {
@@ -1232,40 +1242,100 @@ final class LibraryStore: ObservableObject {
 
     // MARK: Thumbnails
 
+    func setThumbnailWorkEnabled(_ enabled: Bool) {
+        if thumbnailWorkEnabled && !enabled, let active = thumbnailWork.active {
+            thumbnailGate.advance(active); forcedThumbnails.insert(active)
+            thumbnailWork.enqueue(active, replaceActive: true)
+        }
+        thumbnailWorkEnabled = enabled; thumbnailGate.setEnabled(enabled)
+        if enabled { scheduleThumbnail() }
+    }
+
+    func thumbnailBecameVisible(_ item: LibraryItem) {
+        guard !unreadable.contains(item.id), ThumbnailFiles.needsRefresh(in: thumbsDir, id: item.id, recipe: editURL(item)) else { return }
+        thumbnailWork.enqueue(item.id, priority: true); scheduleThumbnail()
+    }
+
+    func needsRefinedThumbnail(_ item: LibraryItem) -> Bool {
+        ThumbnailFiles.needsRefinement(in: thumbsDir, id: item.id, recipe: editURL(item))
+    }
+
+    /// Reserved before the editor queues its render, preventing already pending basic work from overwriting it.
+    func beginThumbnailUpdate(_ item: LibraryItem) -> UInt64 {
+        thumbnailWork.remove(item.id); forcedThumbnails.remove(item.id)
+        return thumbnailGate.advance(item.id)
+    }
+
+    func retryThumbnailUpdate(_ item: LibraryItem, ticket: UInt64) {
+        guard thumbnailGate.isCurrent(item.id, ticket) else { return }
+        refreshThumbnail(item)
+    }
+
+    private func thumbnailDidChange(_ id: UUID) {
+        thumbCache.removeObject(forKey: "\(id.uuidString)-\(thumbVersions[id] ?? 0)" as NSString)
+        unreadable.remove(id); thumbVersions[id, default: 0] += 1; thumbVersion += 1
+    }
+
+    private func scheduleThumbnail(after delay: Double = 0) {
+        guard thumbnailWorkEnabled, !thumbnailPumpScheduled, thumbnailWork.active == nil,
+              thumbnailWork.pendingCount > 0 else { return }
+        thumbnailPumpScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.thumbnailPumpScheduled = false
+            guard self.thumbnailWorkEnabled, let id = self.thumbnailWork.next() else { return }
+            guard let item = self.item(id) else {
+                let delay = self.thumbnailWork.finish(id); self.scheduleThumbnail(after: delay); return
+            }
+            let force = self.forcedThumbnails.remove(id) != nil
+            guard force || ThumbnailFiles.needsRefresh(in: self.thumbsDir, id: id, recipe: self.editURL(item)) else {
+                let delay = self.thumbnailWork.finish(id); self.scheduleThumbnail(after: delay); return
+            }
+            self.makeThumbnail(item)
+        }
+    }
+
     /// Writes a thumbnail that has already been rendered (the editor's, from its own preview: quality checklist A13).
-    func saveThumbnail(_ cg: CGImage, for item: LibraryItem) {
+    func saveThumbnail(_ cg: CGImage, for item: LibraryItem, ticket: UInt64? = nil,
+                       quality: ThumbnailFiles.Quality = .refined) {
         guard items.contains(where: { $0.id == item.id }) else { return }
-        let src = fileURL(item), dst = thumbURL(item), id = item.id
-        let legacy = ThumbnailFiles.legacy(in: thumbsDir, id: id)
+        let src = fileURL(item), id = item.id, directory = thumbsDir, gate = thumbnailGate
+        let token = ticket ?? beginThumbnailUpdate(item)
         thumbQueue.async {
             guard FileManager.default.fileExists(atPath: src.path),
                   let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else { return }
-            do { try jpg.write(to: dst, options: .atomic) }
+            do { guard try gate.install(jpg, in: directory, id: id, token: token, quality: quality) else { return } }
             catch { Diagnostics.shared.note("thumbnail couldn't be saved: \(error.localizedDescription)"); return }
-            try? FileManager.default.removeItem(at: legacy)
             Task { @MainActor [weak self] in
-                if let self { self.thumbCache.removeObject(forKey: "\(id.uuidString)-\(self.thumbVersions[id] ?? 0)" as NSString) }
-                self?.unreadable.remove(id)
-                self?.thumbVersions[id, default: 0] += 1
-                self?.thumbVersion += 1
+                guard let self, self.item(id) != nil, gate.isCurrent(id, token) else { return }
+                self.thumbnailDidChange(id)
             }
         }
     }
 
     func refreshThumbnail(_ item: LibraryItem) {
         guard items.contains(where: { $0.id == item.id }) else { return }
-        let src = fileURL(item), dst = thumbURL(item), id = item.id
-        let legacy = ThumbnailFiles.legacy(in: thumbsDir, id: id)
+        thumbnailGate.advance(item.id); unreadable.remove(item.id); forcedThumbnails.insert(item.id)
+        thumbnailWork.enqueue(item.id, replaceActive: true); scheduleThumbnail()
+    }
+
+    private func makeThumbnail(_ item: LibraryItem) {
+        let src = fileURL(item), id = item.id, directory = thumbsDir, gate = thumbnailGate
+        let token = gate.token(id)
         let settings = settings(for: item)
+        let quality: ThumbnailFiles.Quality = ThumbnailFiles.requiresRefinement(settings) ? .basic : .refined
         let patches = HealStore.retain(Set(settings.heals.map(\.id)))
         thumbQueue.async {
             defer { patches.close() }
             // Every source/CGImage/JPEG and RAW autorelease is gone before the next photo starts. A serial
             // queue alone did not guarantee that, and a whole-library refresh accumulated decoded RAW buffers.
+            var decodeFailed = false, paused = false
             let written: Bool? = autoreleasepool { () -> Bool? in
-                guard FileManager.default.fileExists(atPath: src.path) else { return false }
+                guard gate.canRender else { return nil }
+                guard gate.isCurrent(id, token) else { return false }
+                guard FileManager.default.fileExists(atPath: src.path) else { decodeFailed = true; return false }
                 guard let session = EditSession(url: src) else {
-                    Task { @MainActor [weak self] in self?.unreadable.insert(id) }
+                    decodeFailed = true
                     return false
                 }
                 let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
@@ -1273,27 +1343,28 @@ final class LibraryStore: ObservableObject {
                     let began = Date()
                     if mp > 20 { Diagnostics.shared.note(String(format: "thumbnail: making one for a %.0f MP photo", mp)) }
                     defer { if mp > 20 { Diagnostics.shared.note(String(format: "thumbnail: done in %.1f s", Date().timeIntervalSince(began))) } }
-                    guard let cg = session.renderCGImage(settings, maxEdge: 640),
+                    guard gate.canRender else { paused = true; return false }
+                    guard let cg = session.renderCGImage(settings, maxEdge: 640, prepareAutomaticMasks: false),
                           let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else {
-                        Task { @MainActor [weak self] in self?.unreadable.insert(id) }
+                        decodeFailed = true
                         return false
                     }
                     guard FileManager.default.fileExists(atPath: src.path) else { return false }
-                    do { try jpg.write(to: dst, options: .atomic) }
-                    catch { Diagnostics.shared.note("thumbnail couldn't be saved: \(error.localizedDescription)"); return false }
-                    try? FileManager.default.removeItem(at: legacy)
-                    return true
+                    do { return try gate.install(jpg, in: directory, id: id, token: token, quality: quality) }
+                    catch { decodeFailed = true; Diagnostics.shared.note("thumbnail couldn't be saved: \(error.localizedDescription)"); return false }
                 }
             }
             // Evict reusable resources after the source has been destroyed, not after the entire batch.
             LumenGPU.context.clearCaches()
-            if settings.effective.lensBlur.amount > 0 { EditSession.releaseMaskModels() }
-            guard written == true else { return } // skipped jobs leave a missing revision and retry on next launch
             Task { @MainActor [weak self] in
-                if let self { self.thumbCache.removeObject(forKey: "\(id.uuidString)-\(self.thumbVersions[id] ?? 0)" as NSString) }
-                self?.unreadable.remove(id)
-                self?.thumbVersions[id, default: 0] += 1
-                self?.thumbVersion += 1
+                guard let self else { return }
+                let delay = self.thumbnailWork.finish(id, pressure: written == nil || paused)
+                if self.item(id) != nil, gate.isCurrent(id, token) {
+                    if written == true { self.thumbnailDidChange(id) }
+                    else if written == nil || paused { self.forcedThumbnails.insert(id); self.thumbnailWork.enqueue(id) }
+                    else if decodeFailed { self.unreadable.insert(id) }
+                }
+                self.scheduleThumbnail(after: delay)
             }
         }
     }

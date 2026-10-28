@@ -39,6 +39,8 @@ struct LumenKernels {
     let linearMask, radialMask, lumMask, colorMask, similarMask, combine, maskFinish, maskMul, overlay: CIColorKernel
     /// HDR kernels are optional: a broken one must only disable HDR, never SDR editing.
     var gain, gainLocal, applyGain: CIColorKernel?
+    /// Lens Blur averages RGB HDR radiance, then reconstructs channel gains relative to its blurred SDR base.
+    var hdrBlurGain, applyRGBGain: CIColorKernel?
     /// Clipping warning (optional too: a broken one only hides the warning).
     var clip: CIColorKernel?
     /// Band of a grey image (depth mask). Optional: a broken one only disables the Depth mask.
@@ -77,6 +79,7 @@ struct LumenKernels {
                             accum: h, linearMask: i, radialMask: j, lumMask: l, colorMask: m, similarMask: n,
                             combine: o, maskFinish: p, maskMul: q, overlay: r,
                             gain: k("lumenGain"), gainLocal: k("lumenGainLocal"), applyGain: k("lumenApplyGain"),
+                            hdrBlurGain: k("lumenHDRBlurGain"), applyRGBGain: k("lumenApplyRGBGain"),
                             clip: k("lumenClip"), rangeMask: k("lumenRangeMask"), lensRamp: k("lumenLensRamp"), lensRefinedRamp: k("lumenLensRefinedRamp"),
                             lensWeigh: k("lumenLensWeigh"), lensCompose: k("lumenLensCompose"),
                             gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
@@ -249,7 +252,15 @@ struct SceneField: Sendable {
 /// never changed once written, so a spot's id names its pixels for good (undo, reopening, export all find them).
 enum HealStore {
     nonisolated(unsafe) static var directory: URL = FileManager.default.temporaryDirectory.appendingPathComponent("LumenHeals")
-    private static let cache = NSCache<NSString, CIImage>()
+    private final class PatchImage: NSObject {
+        let image: CIImage, modified: Date, bytes: Int64, inode: UInt64
+        init(image: CIImage, modified: Date, bytes: Int64, inode: UInt64) {
+            self.image = image; self.modified = modified; self.bytes = bytes; self.inode = inode
+        }
+    }
+    private static let cache: NSCache<NSString, PatchImage> = {
+        let cache = NSCache<NSString, PatchImage>(); cache.countLimit = 24; cache.totalCostLimit = 64 * 1_048_576; return cache
+    }()
     private static let lifecycleLock = NSLock()
     private static var readers: [UUID: Int] = [:]
     private static var pendingRemoval: Set<UUID> = []
@@ -338,7 +349,7 @@ enum HealStore {
 
     private static func removeFiles(_ id: UUID) {
         for url in [patchURL(id), maskURL(id), ownerURL(id)] {
-            cache.removeObject(forKey: url.lastPathComponent as NSString)
+            cache.removeObject(forKey: url.path as NSString)
             try? FileManager.default.removeItem(at: url)
         }
     }
@@ -348,12 +359,51 @@ enum HealStore {
 
     private static func load(_ url: URL, raw: Bool) -> CIImage? {
         lifecycleLock.lock(); defer { lifecycleLock.unlock() }
-        let key = url.lastPathComponent as NSString
-        if let hit = cache.object(forKey: key) { return hit }
+        let key = url.path as NSString
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let modified = attributes[.modificationDate] as? Date,
+              let bytes = (attributes[.size] as? NSNumber)?.int64Value, bytes >= 45,
+              let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value else {
+            cache.removeObject(forKey: key); return nil
+        }
+        if let hit = cache.object(forKey: key), hit.modified == modified, hit.bytes == bytes, hit.inode == inode {
+            return hit.image
+        }
+        cache.removeObject(forKey: key)
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: UInt64(bytes - 12))) != nil,
+              let tail = try? handle.read(upToCount: 12),
+              tail == Data([0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]),
+              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetType(source) as String? == "public.png", CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue, width > 0,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue, height > 0,
+              CGImageSourceGetStatus(source) == .statusComplete,
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else { return nil }
         let opts: [CIImageOption: Any] = raw ? [.colorSpace: NSNull()] : [:]
-        guard let img = CIImage(contentsOf: url, options: opts) else { return nil }
-        cache.setObject(img, forKey: key)
+        guard let img = CIImage(contentsOf: url, options: opts), img.extent.width == CGFloat(width),
+              img.extent.height == CGFloat(height) else { return nil }
+        cache.setObject(PatchImage(image: img, modified: modified, bytes: bytes, inode: inode), forKey: key,
+                        cost: width * height * 8)
         return img
+    }
+
+    /// Active recipes must not silently lose saved work when a patch/mask is absent, malformed or belongs to a
+    /// different photo. Old patches without owner records remain supported. No full-resolution bitmap is decoded.
+    static func unavailable(_ heals: [HealSpot], owner: URL) -> [UUID] {
+        heals.compactMap { h in
+            guard [h.x, h.y, h.w, h.h, h.scale].allSatisfy(\.isFinite), h.w > 0, h.h > 0, h.scale > 0,
+                  let patch = load(patchURL(h.id), raw: false), let mask = load(maskURL(h.id), raw: true),
+                  patch.extent.size == mask.extent.size else { return h.id }
+            let record = ownerURL(h.id)
+            if FileManager.default.fileExists(atPath: record.path) {
+                guard let data = try? Data(contentsOf: record), let name = try? JSONDecoder().decode(String.self, from: data),
+                      name == owner.lastPathComponent else { return h.id }
+            }
+            return nil
+        }
     }
 
     /// Paints every spot's rebuilt pixels into `img` (any size: the spot's rectangle is a fraction of the photo).
@@ -542,8 +592,10 @@ final class EditSession: @unchecked Sendable {
 
     /// Decodes and analyses the photo. `materialize` renders the pieces into GPU buffers so slider drags are cheap.
     func makeSource(maxEdge: CGFloat?, materialize: Bool) -> ImageSource? {
-        guard LumenKernels.shared != nil, let decoded = decode(maxEdge: maxEdge) else { return nil }
-        return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
+        autoreleasepool {
+            guard LumenKernels.shared != nil, let decoded = decode(maxEdge: maxEdge) else { return nil }
+            return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
+        }
     }
 
     /// The decoded photo in a GPU buffer. If that fails the lazy graph is used, which re-runs the RAW engine for every
@@ -559,6 +611,7 @@ final class EditSession: @unchecked Sendable {
 
     /// The same with an explicit heal list (the before view and the split compare use the photo without heals).
     func makeSource(maxEdge: CGFloat?, materialize: Bool, heals list: [HealSpot], denoise: Bool = true) -> ImageSource? {
+        autoreleasepool {
         guard LumenKernels.shared != nil else { return nil }
         let decoded: CIImage?
         if denoise { decoded = decode(maxEdge: maxEdge, heals: list) }
@@ -570,6 +623,7 @@ final class EditSession: @unchecked Sendable {
         }
         guard let decoded else { return nil }
         return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
+        }
     }
 
     /// Kept internal so engine invariants can be checked with exact linear fixtures, without encoding/resampling

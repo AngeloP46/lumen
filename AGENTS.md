@@ -1,5 +1,15 @@
 # Lumen session entry point
 
+**Active completion batch, 28 Oct:** `adjustment-quality-completion` from currentmain c2472cb. Owner said
+"dont stop till youre done" and authorized parallel agents. Candidate: brush compositing consistency and bounded
+rasters; Lens Blur manual focus/refinement/HDR radiance; filtered Grain Size and aspect-normalized Vignette;
+missing Heal patch and failed people detection; one-active visible-first basic/refined thumbnail scheduling.
+Memory run40738195410 quality passes1644 but subject memory2658MB exceeds2650; export also logs virtualGPU OOM.
+Explicit source-analysis/subject autorelease pools and per-work-item editor queues are being validated; budgets
+are unchanged. Memory sampler now keeps the whole-step peak despite diagnostic substep callbacks.
+New production-path tests plus small library scheduling fixtures; no literal2,000-photo run. Validation pending;
+SideStore0.1.756 remains the latest verified release. Do not claim candidate fixes or phone memory validated.
+
 **Latest: SideStore 0.1.756 is published and feed/log/GitHub asset verified.** Main #176 merged 737e4fe,
 source f6e3465, publish 40738521966. IPA 356082659 bytes, SHA256
 b13e5cc8200f6b9a1d8493a2d92147de0fbbf8154c5b73089734e695f8cf7365.

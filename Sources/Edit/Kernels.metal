@@ -116,6 +116,39 @@ inline float lmNoise(float2 p, float seed) {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+// Integral of the compact cubic interpolation basis. Integrated lattice weights sum to one, so a pixel
+// averages the same source-relative grain field at every preview/export size instead of point-sampling aliases.
+inline float lmNoiseBasisIntegral(float x) {
+    if (x <= -1.0) return 0.0;
+    if (x >= 1.0) return 1.0;
+    float x2 = x * x;
+    return 0.5 + x - x * x2 + (x < 0.0 ? -0.5 : 0.5) * x2 * x2;
+}
+inline float lmFilteredNoise(float2 pixel, float cell, float seed) {
+    // At less than 1/32 pixel the field is invisible. Fade it out smoothly and bound integration work;
+    // normal 640px+ thumbnails retain the full range, including the smaller Roughness octave.
+    float visible = lmStep(0.03125, 0.0625, cell);
+    if (visible <= 0.0) return 0.0;
+    float width = min(16.0, 1.0 / max(cell, 0.0001));
+    float2 centre = pixel / max(cell, 0.0001);
+    float2 lo = centre - width * 0.5, hi = centre + width * 0.5;
+    float2 start = floor(lo) - 1.0;
+    float sum = 0.0;
+    for (int y = 0; y < 20; ++y) {
+        float iy = start.y + float(y);
+        if (iy > hi.y + 1.0) break;
+        float wy = (lmNoiseBasisIntegral(hi.y - iy) - lmNoiseBasisIntegral(lo.y - iy)) / width;
+        if (wy <= 0.0) continue;
+        for (int x = 0; x < 20; ++x) {
+            float ix = start.x + float(x);
+            if (ix > hi.x + 1.0) break;
+            float wx = (lmNoiseBasisIntegral(hi.x - ix) - lmNoiseBasisIntegral(lo.x - ix)) / width;
+            if (wx > 0.0) sum += lmHash(float2(ix, iy), seed) * wx * wy;
+        }
+    }
+    return sum * visible;
+}
+
 // ------------------------------------------------------------------ analysis layers
 
 // R = encoded log luminance.
@@ -365,7 +398,8 @@ float4 lumenFinish(sample_t s, float4 g0, float4 g1, float4 g2, destination dest
         float aspect = size.x / size.y;
         float sx = mix(1.0, aspect, g0.w);
         float2 q = uv * float2(sx, 1.0) / max(sx, 1.0);
-        float d = length(q) / 1.41421356;
+        float2 corner = float2(sx, 1.0) / max(sx, 1.0);
+        float d = length(q) / max(length(corner), 0.001);
         float mid = g0.y;
         float t = lmStep(mid, mid + max(0.05, (1.0 - mid) * (0.2 + 0.8 * g0.z)), d);
         if (va < 0.0) c *= exp2(va * 2.0 * t);
@@ -376,10 +410,9 @@ float4 lumenFinish(sample_t s, float4 g0, float4 g1, float4 g2, destination dest
 
     float ga = g1.z;
     if (ga > 0.0) {
-        float cell = max(g1.w, 0.5);
-        float2 gp = p / cell;
-        float n = lmNoise(gp, g2.z);
-        n = n * (1.0 - g2.x * 0.5) + lmNoise(gp * 2.3, g2.z + 17.0) * g2.x * 0.7;
+        float cell = max(g1.w, 0.0001);
+        float n = lmFilteredNoise(p, cell, g2.z);
+        n = n * (1.0 - g2.x * 0.5) + lmFilteredNoise(p, cell / 2.3, g2.z + 17.0) * g2.x * 0.7;
         float lum = dot(e, float3(0.2126, 0.7152, 0.0722));
         e += ga * 0.16 * n * (0.35 + 2.6 * lum * (1.0 - lum));
         e = clamp(e, 0.0, 1.0);
@@ -511,10 +544,28 @@ float4 lumenRangeMask(sample_t s, float4 p) {
     return float4(v, v, v, 1.0);
 }
 
-float4 lumenLensRefinedRamp(sample_t d, sample_t selection, float4 p) {
+float4 lumenLensRefinedRamp(sample_t d, sample_t selection, sample_t baseline, float4 p) {
     float radius = clamp((d.r - p.x) / max(1.0 - p.x, 0.001), 0.0, 1.0);
-    radius = max(radius, 0.15) * selection.r;
+    float original = clamp(baseline.r, 0.0, 1.0), edited = clamp(selection.r, 0.0, 1.0);
+    // Identity at the initial depth selection; removal reaches zero and painted Add can reach full blur.
+    // The monotone two-segment map avoids a second feather and division blow-ups near the sharp plane.
+    radius = edited <= original ? radius * edited / max(original, 1e-6)
+        : radius + (1.0 - radius) * (edited - original) / max(1.0 - original, 1e-6);
     return float4(radius, radius, radius, 1.0);
+}
+
+// Channel gains after averaging actual HDR light. This replaces blur(SDR)*blur(gain), which loses correlated lights.
+float4 lumenHDRBlurGain(sample_t hdr, sample_t sdr, float4 p) {
+    float3 ratio = hdr.rgb / max(sdr.rgb, float3(1e-6));
+    ratio = select(ratio, float3(1.0), sdr.rgb <= float3(1e-6));
+    // A monochrome look must not have original highlight colours reintroduced after its LUT.
+    if (p.y > 0.5) ratio = float3(lmLum(hdr.rgb) / max(lmLum(sdr.rgb), 1e-6));
+    return float4(clamp(ratio, float3(1.0), float3(max(p.x, 1.0))), 1.0);
+}
+
+float4 lumenApplyRGBGain(sample_t sdr, sample_t gain, float4 p) {
+    if (sdr.a <= 0.0) return float4(0.0);
+    return float4(sdr.rgb * exp2(p.x * log2(max(gain.rgb, float3(1.0)))), 1.0);
 }
 
 // Lens Blur, lens-like: only pixels that are themselves blurred (the background) feed the blur, carried as
