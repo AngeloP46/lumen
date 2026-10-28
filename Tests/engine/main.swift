@@ -301,6 +301,11 @@ do {
 }
 
 // Fast iteration on adjustment rendering, without the unrelated AI/model and memory sequences.
+if args.contains("--ai-state") {
+    runAIRegressionChecks()
+    runMaskRegressionChecks()
+    finishChecks()
+}
 if args.contains("--imaging") {
     runImagingQualityChecks()
     runClarityQualityChecks()

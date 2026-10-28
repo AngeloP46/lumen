@@ -130,14 +130,51 @@ func runMaskRegressionChecks() {
             check(abs(mean(session.componentImage(background, source: full, gain: 1)) - (failure ? 0 : 1)) < 0.001,
                   "mask regression: transferred Background has the wrong coverage")
         }
-        let ready = seeded(), restored = source(2)
-        ready.storeMask(EditSession.aiSubject, EditSession.constant(0.7, extent))
-        restored.noteFailure(EditSession.aiSubject)
-        restored.restoreMasks(ready.snapshotMasks(), scaleX: 2, scaleY: 2)
-        check(restored.failures.isEmpty && restored.cachedMask(EditSession.aiSubject)?.extent == restored.extent,
-              "mask regression: ready replacement retains stale failure or wrong scaled extent")
-        check(abs(mean(session.componentImage(background, source: restored, gain: 1)) - 0.3) < 0.003,
-              "mask regression: successful transferred Subject changes Background coverage")
+        func rgba(_ image: CIImage, inset: CGFloat = 0) -> (mean: SIMD4<Float>, minAlpha: Float) {
+            let bounds = image.extent.insetBy(dx: inset, dy: inset).integral
+            let width = Int(bounds.width), height = Int(bounds.height)
+            var values = [Float](repeating: 0, count: width * height * 4)
+            values.withUnsafeMutableBytes { p in
+                LumenGPU.context.render(image, toBitmap: p.baseAddress!, rowBytes: width * 16,
+                                        bounds: bounds, format: .RGBAf, colorSpace: nil)
+            }
+            var sum = SIMD4<Float>.zero, minAlpha: Float = 1
+            for i in 0..<(width * height) {
+                sum += SIMD4(values[i * 4], values[i * 4 + 1], values[i * 4 + 2], values[i * 4 + 3])
+                minAlpha = min(minAlpha, values[i * 4 + 3])
+            }
+            return (sum / Float(width * height), minAlpha)
+        }
+        // CIColor carries its own colour space, so its 0.7 may be converted rather than treated as a scalar. Compare its
+        // native result with the transfer, and separately use raw scalar data for the exact 0.3 assertion.
+        var scalar = [Float](repeating: 0.7, count: 32 * 24 * 4)
+        for i in stride(from: 3, to: scalar.count, by: 4) { scalar[i] = 1 }
+        let rawSubject = CIImage(bitmapData: scalar.withUnsafeBytes { Data($0) }, bytesPerRow: 32 * 16,
+                                 size: extent.size, format: .RGBAf, colorSpace: nil)
+        for (name, subject) in [("CIColor", EditSession.constant(0.7, extent)), ("raw scalar", rawSubject)] {
+            let ready = seeded(), restored = source(2)
+            ready.storeMask(EditSession.aiSubject, subject)
+            restored.noteFailure(EditSession.aiSubject)
+            restored.restoreMasks(ready.snapshotMasks(), scaleX: 2, scaleY: 2)
+            check(restored.failures.isEmpty && restored.cachedMask(EditSession.aiSubject)?.extent == restored.extent,
+                  "mask regression: ready replacement retains stale failure or wrong scaled extent")
+            let native = rgba(session.componentImage(background, source: ready, gain: 1))
+            let transferred = session.componentImage(background, source: restored, gain: 1)
+            let full = rgba(transferred), interior = rgba(transferred, inset: 2)
+            let maskPixels = rgba(restored.cachedMask(EditSession.aiSubject)!)
+            let old = source(2)
+            old.storeMask(EditSession.aiSubject, subject.transformed(by: CGAffineTransform(scaleX: 2, y: 2)))
+            let unclamped = rgba(session.componentImage(background, source: old, gain: 1))
+            print("MASK transfer \(name): native RGBA \(native.mean), scaled \(full.mean), interior \(interior.mean), unclamped \(unclamped.mean); subject min alpha \(maskPixels.minAlpha), background min alpha \(full.minAlpha)")
+            check(abs(full.mean.x - native.mean.x) < 0.003 && abs(interior.mean.x - native.mean.x) < 0.003,
+                  "mask regression: \(name) Background transfer changes native \(native.mean) to full \(full.mean), interior \(interior.mean)")
+            check(native.minAlpha > 0.999 && full.minAlpha > 0.999 && maskPixels.minAlpha > 0.999,
+                  "mask regression: \(name) transfer weakens finite mask opacity (\(native.minAlpha), \(full.minAlpha), \(maskPixels.minAlpha))")
+            if name == "raw scalar" {
+                check(abs(native.mean.x - 0.3) < 0.003 && abs(full.mean.x - 0.3) < 0.003,
+                      "mask regression: unmanaged Subject 0.7 fails exact Background 0.3 (native \(native.mean), scaled \(full.mean))")
+            }
+        }
 
         // Scene errors propagate to derived parts, so Try again invalidates the nil Landscape cache too.
         let retry = source()

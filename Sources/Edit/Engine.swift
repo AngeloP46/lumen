@@ -159,7 +159,11 @@ final class ImageSource: @unchecked Sendable {
     /// successful empty selection just because its cached masks were copied to another decoded source.
     func restoreMasks(_ snapshot: MaskSnapshot, scaleX: CGFloat = 1, scaleY: CGFloat = 1) {
         let images = snapshot.masks.mapValues { image in
-            scaleX == 1 && scaleY == 1 ? image : image.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+            guard scaleX != 1 || scaleY != 1 else { return image }
+            let transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
+            // These are scalar fields over the whole photo. Keep the border value during interpolation;
+            // transparent samples outside a finite preview must not weaken the full-size selection's edge.
+            return image.clampedToExtent().transformed(by: transform).cropped(to: image.extent.applying(transform))
         }
         lock.lock(); defer { lock.unlock() }
         masks = images; tried = snapshot.tried; failedKeys = snapshot.failures
