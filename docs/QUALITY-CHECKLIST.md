@@ -15,7 +15,14 @@ R4 failures handled · R5 output correct · R6 performance measured.
 
 ## Next adjustment reviews — queued 28 October 2026
 
-**Current status: SideStore 0.1.747, main #174 (e4c9f97), published and feed/hash verified.**
+**Latest release: SideStore 0.1.756, main #176 (737e4fe), source f6e3465, published and feed/hash verified.**
+The AI failure-state batch below is now released in both versions (sandbox #177 a54fa93): 132 focused checks,
+six related UI cases, logic/readiness and OFF/ON/policy/four StoreKit cases pass. Independent reviews completed.
+Full engine quality 40738195410 passes all 1644 checks; its longer memory sequences continue.
+See AI-RELIABILITY-2026-10-28.md. This status supersedes
+the older candidate/released notes below; the still-open items remain listed explicitly.
+
+**Prior Clarity release: SideStore 0.1.747, main #174 (e4c9f97), published and feed/hash verified.**
 Clarity's wide edge veto is replaced; 142 focused checks pass, including the approved actual car crop and ten
 SDR/HDR comparisons proving other adjustment families do not read that Clarity channel. Endpoint renders inspected.
 Owner confirms the previous 0.1.737 thumbnail recovery works. New Clarity response still needs phone confirmation.
@@ -26,11 +33,10 @@ corrections and reruns are pending. Sandbox #175/check 40732458311 pending; #172
 Owner requested parallel agents. Their current-source follow-up separates these concrete defects from visual reviews:
 
 1. **Export fidelity first:** absent AI Denoise model + absent residual silently omitted the requested edit.
-   Minimal guard fix and no-inference missing/valid-cache regressions on `clarity-release-followup`, not yet released.
-   Investigate present-but-corrupt legacy PNG residual acceptance too.
+   Guard fix, no-inference missing/valid-cache regressions and structural legacy PNG validation released in 0.1.756.
 2. **Automatic selections:** failed Subject can become whole-white Background; requested failed/missing selections
    have no export gate; failures disappear during large-source/detail/memo transfers; Scene retry can leave stale
-   tried-empty derived landscape keys. Reproduce distinctly from successful empty detection, then fix state/gates.
+   tried-empty derived landscape keys. State/gates fixed and verified distinctly from valid empty detection in 0.1.756.
 3. **Brush compositing:** paint then erase at the same softness can reappear when a distant stroke with another
    softness switches the global compositing branch. Build an isolated-region regression before changing convention.
 4. **Lens Blur controls:** manual focus fallback can blur the tapped plane; merely entering Refine changes radius.
@@ -43,12 +49,12 @@ Owner requested parallel agents. Their current-source follow-up separates these 
    crop resampling and overlapping-mask/preset/HDR/export interactions remain incompletely validated. Larger-library
    visible-first/basic-refined scheduler remains a separate draft. No literal 2,000-image run is needed.
 
-**Follow-up reliability implementation, not yet released:** missing-model denoise export guard and bounded legacy
+**Follow-up reliability implementation, released in 0.1.756 / sandbox #177:** missing-model denoise export guard and bounded legacy
 PNG structural/dimension validation; failed versus valid-empty automatic selection state retained across full-size,
 detail and undo transfers; failed inverted selections suppressed; active failed selections block export explicitly;
 derived Landscape retry invalidates failed outcome; optional successful Sky fallback remains usable. No model weights,
-inference parameters, control gains or layout changed. New deterministic production-path regressions are ready for
-Mac CI. Independent source review found and corrected two integration edges (inverted failure and unnecessary AI
+inference parameters, control gains or layout changed. The deterministic production-path regressions pass on the
+Mac. Independent source review found and corrected two integration edges (inverted failure and unnecessary AI
 when no selection is required). Broader photographic quality and effects/blur issues above remain queued.
 
 The older dated status entries below are historical; they do not mean these features are fully reviewed.

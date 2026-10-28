@@ -1,6 +1,23 @@
 # Lumen session entry point
 
-**Current authoritative status, 28 Oct: SideStore 0.1.747 is published and feed/log/asset verified.**
+**Latest: SideStore 0.1.756 is published and feed/log/GitHub asset verified.** Main #176 merged 737e4fe,
+source f6e3465, publish 40738521966. IPA 356082659 bytes, SHA256
+b13e5cc8200f6b9a1d8493a2d92147de0fbbf8154c5b73089734e695f8cf7365.
+Clarity correction from 0.1.747 retained. AI export failure-state fixes now released: missing denoise/cache,
+structurally invalid legacy PNG, failed automatic/inverted masks, outcome transfer and Landscape retry.
+132 focused GPU regressions and six related UI cases pass. Independent source reviews completed.
+Full engine quality 40738195410 passes all 1644 checks; its longer memory sequences are still running.
+The earlier 1638/1639 run's sole failure was a CIColor test
+fixture assumption, diagnosed and corrected with raw-scalar/native/scaled/alpha checks, without loosening tolerance.
+Sandbox #175 merged 8649421, #177 merged a54fa93; both OFF/ON/policy/four StoreKit checks pass
+(40732458311 / 40737807973). No Store code, pricing or model inference changed.
+See docs/AI-RELIABILITY-2026-10-28.md and docs/QUALITY-CHECKLIST.md for evidence and remaining work.
+Brush compositing, Lens Blur focus/refinement/HDR, Grain/Vignette ranges, Heal/detection error paths, broader
+photographic validation and the larger-library scheduler remain queued. Do not claim every adjustment is finished.
+Phone verification of new Clarity/reliability remains needed; owner confirmed thumbnail recovery works.
+Earlier status entries below are historical.
+
+**Prior Clarity release, 28 Oct: SideStore 0.1.747 was published and feed/log/asset verified.**
 Main #174 merged e4c9f97 (source39b9c5d), publish40687659637, 356072974 bytes, SHA256
 56e7e0df52bf36d32c1ef7903d8b56305c4bd822a60f1ef34bbdfb671c7a5d36. Clarity's wide hard-edge veto replaced;
 owner-approved actual car crop now responds broadly. All142 focused checks, logic, readiness and3 related UI pass.

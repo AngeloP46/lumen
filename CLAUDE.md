@@ -1,6 +1,17 @@
 # Lumen – project notes for Claude
 
-## Current 28 October status: SideStore 0.1.747 published
+## Latest release: SideStore 0.1.756, 28 October
+Main #176 merged 737e4fe (source f6e3465), publication 40738521966 verified against fresh feed, log and GitHub
+asset: 356082659 bytes, SHA256 b13e5cc8200f6b9a1d8493a2d92147de0fbbf8154c5b73089734e695f8cf7365.
+Clarity's bilateral correction is unchanged from 0.1.747. New AI failure-state/export/cache fixes pass 132 focused
+GPU checks and six related UI cases; independent reviews completed. Full quality 40738195410 passes all 1644
+checks; its longer memory sequences continue.
+Sandbox #175/#177 both merged, latest a54fa93; OFF/ON/export-policy/four StoreKit tests pass in 40737807973.
+No models, Store code/prices or layout changed. Phone verification remains needed. See the new AI reliability
+report and current quality checklist. Remaining brush/blur/effects/Heal/photographic/scheduler work is not complete.
+These notes supersede the older status entries below.
+
+## Earlier Clarity release: SideStore 0.1.747 published
 Personal main#174 merged e4c9f97, source39b9c5d, publish40687659637. Fresh feed/log/asset agree:
 356072974 bytes, SHA25656e7e0df52bf36d32c1ef7903d8b56305c4bd822a60f1ef34bbdfb671c7a5d36.
 Clarity bilateral correction and approved owner car crop pass142 focused checks; whole/detail renders inspected.
