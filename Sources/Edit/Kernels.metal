@@ -134,15 +134,10 @@ float4 lumenPack3(sample_t a, sample_t b, sample_t c) {
     return float4(a.r, b.r, c.r, 1.0);
 }
 
-// Self-guided log-luminance analysis. Moments/coefficients are spatially averaged by Swift.
-float4 lumenAnalysisPack(sample_t p) { return float4(p.r, p.r * p.r, 0.0, 1.0); }
-float4 lumenAnalysisCoef(sample_t m, float4 p) {
-    float variance = max(m.g - m.r * m.r, 0.0);
-    float a = variance / (variance + max(p.x, 1e-6));
-    return float4(a, m.r * (1.0 - a), 0.0, 1.0);
-}
-float4 lumenAnalysisApply(sample_t guide, sample_t ab) {
-    return float4(ab.r * guide.r + ab.g, 0.0, 0.0, 1.0);
+// The bilateral field is signed EV, preserving precision around zero. Packed base remains encoded log-light.
+float4 lumenClarityBase(sample_t medium, sample_t detail) {
+    float residual = sign(detail.r) * max(fabs(detail.r) - 0.01, 0.0);
+    return float4(medium.r - residual / 16.0, 0.0, 0.0, 1.0);
 }
 
 // ------------------------------------------------------------------ the main develop kernel
@@ -230,12 +225,9 @@ inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
         // excluded before subtracting the broad base, rather than zero-clamping useful Clarity away.
         float broad = lmDec(L1.g) - lmDec(L1.b);
         float q = (lmDec(L1.g) + ev) / 4.5;
-        // L2.r is the local encoded log-light range across the broad filter's full footprint.
-        // Ordinary structure stays active; hard boundaries are protected from bright/dark halos.
+        // This range is strictly local: immediate boundary pixels only, never a dilated scene mask.
         float rangeEV = max(L2.r, 0.0) * 16.0;
-        // Half-float analysis can leave a tiny constant residual after resampling. A flat region has
-        // no contrast to change: fade below a small physical range instead of boosting that numeric bias.
-        float edge = lmStep(0.02, 0.08, rangeEV) * (1.0 - lmStep(1.5, 3.0, rangeEV));
+        float edge = 1.0 - lmStep(1.5, 3.0, rangeEV);
         float midtone = 0.35 + 0.65 * exp(-q * q);
         // Fine travel around zero, progressively stronger ends. Positive contrast is softly bounded;
         // negative strength remains a convex move towards the broader base, without reversing texture.
