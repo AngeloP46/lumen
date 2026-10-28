@@ -186,6 +186,10 @@ extension EditSession {
 
     // MARK: Brush
 
+    /// Test-only observation of checkpoint renders, distinct borrowed CVPixelBuffer addresses, and pool use.
+    /// The observer receives counts only; it cannot retain the buffers or extend a rebuild's resource lifetime.
+    nonisolated(unsafe) static var brushCheckpointProbe: ((Int, Int, Bool) -> Void)?
+
     private func brushImage(_ c: MaskComponent, source: ImageSource) -> CIImage? {
         if let hit = source.cachedRaster(c) { return hit }
         // A rebuild owns many temporary run graphs. Only its final component may escape this pool.
@@ -196,9 +200,21 @@ extension EditSession {
         let mh = max(1, Int(1024 * ext.height / longSide))
         let side = CGFloat(max(mw, mh))
         let refPoints: [Pt] = c.strokes.filter { !$0.erase }.flatMap(\.points)
+        let probe = Self.brushCheckpointProbe
+        var checkpointRenders = 0, checkpointAddresses = Set<UInt>()
+        var checkpointPool: CVPixelBufferPool?
+        let bufferOptions: [CFString: Any] = [kCVPixelBufferWidthKey: mw, kCVPixelBufferHeightKey: mh,
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_OneComponent16Half,
+            kCVPixelBufferIOSurfacePropertiesKey: [String: Any](), kCVPixelBufferMetalCompatibilityKey: true]
+        let poolOptions = [kCVPixelBufferPoolMinimumBufferCountKey: 2] as CFDictionary
+        let poolCreated = CVPixelBufferPoolCreate(nil, poolOptions, bufferOptions as CFDictionary,
+                                                  &checkpointPool) == kCVReturnSuccess
+        var usedPool = poolCreated
+        defer { probe?(checkpointRenders, checkpointAddresses.count, usedPool) }
 
         /// Scalar GPU barriers, through the non-caching context, avoid retaining checkpoint intermediates
-        /// in the shared develop cache and allocate one channel rather than fresh RGBA IOSurfaces.
+        /// in the shared develop cache. A per-build pool reuses released half-float checkpoint surfaces;
+        /// the final 8-bit raster is independent of that pool and is the only cached output.
         /// Half precision is retained between runs; 8-bit quantization happens only for the final component.
         func scalarCopy(_ image: CIImage, final: Bool = false) -> CIImage? {
             let bounds = image.extent
@@ -208,8 +224,20 @@ extension EditSession {
             let options: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
                                            kCVPixelBufferMetalCompatibilityKey: true]
             let format = final ? kCVPixelFormatType_OneComponent8 : kCVPixelFormatType_OneComponent16Half
-            guard CVPixelBufferCreate(nil, width, height, format, options as CFDictionary, &pixelBuffer) == kCVReturnSuccess,
-                  let buffer = pixelBuffer else { return nil }
+            if !final, let pool = checkpointPool {
+                if CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer) != kCVReturnSuccess { usedPool = false }
+            }
+            // No allocation threshold: ordinary in-flight GPU references must not make a mask disappear.
+            // Pool setup/borrow failure retains the prior independent-allocation behavior.
+            if pixelBuffer == nil {
+                guard CVPixelBufferCreate(nil, width, height, format, options as CFDictionary,
+                                          &pixelBuffer) == kCVReturnSuccess else { return nil }
+            }
+            guard let buffer = pixelBuffer else { return nil }
+            if !final, probe != nil {
+                checkpointRenders += 1
+                checkpointAddresses.insert(UInt(bitPattern: Unmanaged.passUnretained(buffer).toOpaque()))
+            }
             LumenGPU.drawContext.render(image, to: buffer, bounds: bounds, colorSpace: nil)
             let scalar = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
             return scalar.transformed(by: CGAffineTransform(translationX: bounds.minX, y: bounds.minY))

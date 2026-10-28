@@ -1,5 +1,11 @@
 # Lumen session entry point
 
+**Current follow-up:** released774 full engine quality40783385204 passes all1977 checks; its24MP/ProRAW memory
+and full UI40783388166 remain live. Branch`brush-checkpoint-pooling` tests per-build half-float checkpoint buffer
+reuse to reduce resource churn behind the variable brush heap metric. Final cachedR8 stays independent; fallback
+allocation preserves masks on pool failure. New buffer-address reuse/fingerprint checks retain8+16/64MB limits.
+Independent source review found no ownership/format/alias blocker. Candidate is not yet rendered or published.
+
 **Latest verified: SideStore0.1.774, 28 October.** Main#180 merged24c29b7 (source6d4f50d,
 application0a7e2a3); publication40783343904 succeeded. Fresh feed/log/GitHub asset agree:
 356120040bytes, SHA2569fce6d2106086b02b27239bef8f7b5378cff4612a82223a28fcaa1f8cc0874c1.
