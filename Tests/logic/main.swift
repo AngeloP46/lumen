@@ -129,6 +129,24 @@ let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-l
 try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: tmp) }
 
+// An interrupted thumbnail upgrade keeps each completed photo, preserves old display JPEGs, and only resumes
+// unfinished work. No whole-library completion flag is required.
+do {
+    let directory = tmp.appendingPathComponent("thumbnail-resume")
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let ids = [UUID(), UUID(), UUID()]
+    for id in ids { try? Data([1]).write(to: ThumbnailFiles.legacy(in: directory, id: id)) }
+    for id in ids.prefix(2) { try? Data([2]).write(to: ThumbnailFiles.current(in: directory, id: id), options: .atomic) }
+    let afterRestart = ids.filter { ThumbnailFiles.needsRefresh(in: directory, id: $0) }
+    check(afterRestart == [ids[2]], "thumbnails: restart discards completed migration progress")
+    check(ids.allSatisfy { FileManager.default.fileExists(atPath: ThumbnailFiles.legacy(in: directory, id: $0).path) },
+          "thumbnails: migration removes old display images before successful replacements")
+    check(ThumbnailFiles.current(in: directory, id: ids[0]) != ThumbnailFiles.legacy(in: directory, id: ids[0]),
+          "thumbnails: old and new engine cache files collide")
+    check(HeavyWork.needMB(.thumbnail, megapixels: 48) > HeavyWork.needMB(.thumbnail, megapixels: 24),
+          "thumbnails: RAW decode memory estimate ignores source size")
+}
+
 // Before the first overwrite, retain the exact old bytes once. A blocked backup must also block that write.
 do {
     var old = encoded(rich); old["processingVersion"] = 1; old["formatVersion"] = 2
@@ -416,6 +434,13 @@ do {
     var decoded = false
     check(HeavyWork.shared.run(.preview, megapixels: 24) { () -> Int in decoded = true; return 1 } == 1 && decoded,
           "coordinator: with no memory report (the simulator) a preview decode runs at once")
+    HeavyWork.availableMB = { 1000 }
+    var thumbRendered = false
+    check(HeavyWork.shared.run(.thumbnail, megapixels: 24, optional: true) { thumbRendered = true; return 1 } == nil && !thumbRendered,
+          "thumbnails: a RAW rebuild starts without its memory reserve")
+    HeavyWork.availableMB = { 2400 }
+    check(HeavyWork.shared.run(.thumbnail, megapixels: 24, optional: true) { thumbRendered = true; return 1 } == 1 && thumbRendered,
+          "thumbnails: a rebuild with room and a reserve is refused")
     HeavyWork.availableMB = { 1000 }
     var loaded = false
     check(HeavyWork.shared.run(.healModel, megapixels: 0, optional: true) { () -> Int in loaded = true; return 1 } == nil && !loaded,

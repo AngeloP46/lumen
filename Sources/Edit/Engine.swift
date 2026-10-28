@@ -585,7 +585,7 @@ final class EditSession: @unchecked Sendable {
 
         // log-luminance of the small copy
         let logS = k.logLum.apply(extent: sext, arguments: [small])!
-        let sigmaClar = 0.018 * E * f
+        let sigmaClar = 0.035 * E * f
         let sigmaChroma = max(1, 0.004 * E * f)
 
         let minS = k.minChannel.apply(extent: sext, arguments: [small])!
@@ -614,7 +614,7 @@ final class EditSession: @unchecked Sendable {
             img.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: max(1, sigmaClar)])
                 .cropped(to: sext)
         }
-        let epsilon: CGFloat = 1.0 / 256  // (1 stop / 16)^2: modest structure is not mistaken for a hard edge
+        let epsilon: CGFloat = 1.0 / 64  // (2 stops / 16)^2: give medium structure a useful endpoint range
         guard let moments = pack.apply(extent: sext, arguments: [logS]),
               let ab = coef.apply(extent: sext, arguments: [box(moments), CIVector(x: epsilon, y: 0, z: 0, w: 0)])
         else { return nil }
@@ -622,14 +622,18 @@ final class EditSession: @unchecked Sendable {
         guard let clarity = apply.apply(extent: ext, arguments: [texF, coefficients]) else { return nil }
         // A hard boundary can leave small guided residuals across two averaging radii. Protect that
         // entire footprint, while leaving ordinary textured surfaces (under 1.5 stops) fully active.
-        let rangeRadius = max(2, sigmaClar * 2)
+        // Detect abrupt boundaries locally, then extend protection across the broad filter footprint.
+        // A smooth curved surface spanning several stops must not be suppressed just because its total range is large.
+        let rangeRadius: CGFloat = 1.5
         let logMax = logS.clampedToExtent().applyingFilter("CIMorphologyMaximum",
             parameters: [kCIInputRadiusKey: rangeRadius]).cropped(to: sext)
         let logMin = logS.clampedToExtent().applyingFilter("CIMorphologyMinimum",
             parameters: [kCIInputRadiusKey: rangeRadius]).cropped(to: sext)
         // max >= min, so symmetric difference is exactly the range without relying on blend operand order.
-        let contrastRange = logMax.applyingFilter("CIDifferenceBlendMode", parameters: [kCIInputBackgroundImageKey: logMin])
+        let localRange = logMax.applyingFilter("CIDifferenceBlendMode", parameters: [kCIInputBackgroundImageKey: logMin])
             .cropped(to: sext)
+        let contrastRange = localRange.clampedToExtent().applyingFilter("CIMorphologyMaximum",
+            parameters: [kCIInputRadiusKey: max(2, sigmaClar * 2)]).cropped(to: sext)
         var l1 = k.pack3.apply(extent: ext, arguments: [sharpF, texF, clarity])!
         if materialize, let m = Self.materialized(l1) { l1 = m }
 
