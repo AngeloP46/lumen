@@ -2,7 +2,9 @@
 
 28 Oct resumed work: `clarity-single-engine` fixes weak Clarity, migrates every old recipe/history/preset to the
 one current renderer and removes legacy processing code. The queued AI review also found deterministic mask/
-noise-cache defects being corrected with regression coverage. Builds/release pending; 0.1.714 is still live.
+noise-cache defects corrected with regression coverage. Source 73c0abf: all 89 focused Metal/Core Image checks
+pass (40671254430), including Clarity strength/noise/flat/edge guards; migration logic also passes. Broader engine,
+UI and release checks pending; 0.1.714 is still live. PR #169; sandbox port PR #168 at 03e0aca, checks pending.
 
 Read `CLAUDE.md` in this folder before working on Lumen, the iPhone app or SideStore.
 It holds the architecture, build and phone setup notes.
@@ -17,9 +19,9 @@ publish run 40607002239). Full engine/memory checks passed (1,270 quality checks
 with 5% chat usage remaining and the rest of review afterwards: full UI run 40604410069 and sandbox PR #168
 need follow-up. Sandbox remains unmerged: check 40604979559 failed after OFF/ON builds. PR #167 has the handoff.
 
-28 Oct owner correction: next update should migrate all old saved edits/presets/copied settings to the new engine
-and remove legacy processing code, keeping original photos and adjustment values. Existing rendering may change.
-0.1.714 still retains legacy behaviour; the migration is not implemented. Read CLAUDE.md's latest direction first.
+28 Oct owner correction: all old saved edits/presets/copied settings must use the new engine and duplicate legacy
+processing code must go, keeping originals and values. This is implemented in PR #169; existing looks can change.
+0.1.714 still retains legacy behaviour until that candidate is published. Read CLAUDE.md's latest direction first.
 Outstanding image-quality reviews are queued in docs/QUALITY-CHECKLIST.md, "Next adjustment reviews". Angelo
 asked to resume them when usage is available; this is a saved task list, not an instruction to start now.
 Latest phone feedback: Clarity -100/+100 is barely distinguishable. This is now the first review/fix priority;

@@ -72,6 +72,9 @@ repair), and `Tests/logic/main.swift` (recipe/history/preset migration and exact
 CPU prototypes alone are not Metal/device proof. See `AI-QUALITY-REVIEW-2026-10-28.md` for the separate AI audit.
 
 Prior release evidence: 0.1.714 passed 1,270 engine checks and its memory sequences (40604699557); its full UI
-run 40604410069 also passed. Current continuation: implementation and independent code review complete;
-Apple compilation, rendered checks, migration logic, full UI and sandbox validation pending. Phone HDR appearance,
-responsiveness and the owner's specific Clarity photo still need phone testing.
+run 40604410069 also passed. Current source 73c0abf: independent code reviews complete, migration logic passed,
+all 89 focused GPU checks passed (40671254430), RAW/JPEG sheets inspected. Clarity mid-band amplitude at 1280 px
+is .250/.350/.503 EV for -100/0/+100, versus .251/.350/.501 at 2560 px; fine band stays near .060 EV. The negative
+gain remains below one; a tiny local-range fade prevents flat-field rounding bias. No test thresholds weakened.
+Full engine/memory, UI, iOS release readiness and sandbox checks pending. Phone HDR appearance, responsiveness
+and the owner's specific Clarity photo still need phone testing.

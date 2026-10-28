@@ -60,7 +60,9 @@ changing those algorithms; these are outside the current Clarity/migration relea
 Validation found and fixed an existing tolerant-loader defect: explicit cropVersion was discarded if another
 missing field forced tolerant loading. Preserve supplied crop versions and leave genuinely absent old versions
 absent; both cases have regression checks. First rendered pass passed 85/89 checks; the four Clarity strength
-checks correctly rejected modest endpoint response. Retuned gains; repeat validation pending.
+checks correctly rejected modest endpoint response. Retuned gains and fixed a flat-tone rounding bias. Final
+focused GPU run 40671254430 (73c0abf) passed all 89 checks; RAW/JPEG sheets inspected. Broader engine/memory,
+full UI, release readiness and sandbox validation still pending; phone confirmation remains outstanding.
 
 Prior full UI run 40604410069 passed. Sandbox PR #168/check 40604979559 remains pending (OFF/ON builds passed;
 StoreKit fixture products did not load in testAnnualUnlocksPro); investigate the fixture separately from editor code.

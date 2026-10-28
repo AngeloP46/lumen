@@ -15,8 +15,16 @@
   decoder identity, and rounded noise-preview dimensions could leave an unwritten white row/column. Regression
   fixes are included; older noise previews are rebuilt from full residuals without rerunning AI. See the new AI
   quality review report for scope and remaining unproven photographic quality.
-- Validation/publication pending. Shared code must also reach sandbox PR #168 (the previous OFF/ON builds passed;
-  its StoreKit fixture's first product load failed). Preserve the unrelated local marketing/listing edits there.
+- Source 73c0abf: all 89 focused GPU checks passed in 40671254430, including visible Clarity endpoints, fine-grain
+  retention, flat/step safety and AI cache/mask regressions. Clarity mid-band EV amplitudes: .250/.350/.503 at
+  -100/0/+100 (1280 px), .251/.350/.501 at 2560 px; fine band stays about .060. RAW/JPEG endpoint sheets inspected.
+  Gain +1.5/-0.98; tiny-range fade removes half-float constant bias without weakening tests. New migration tests
+  also found/fixed a pre-existing tolerant-loader cropVersion loss; explicit versus missing versions now covered.
+- Full engine/memory 40671575491, full UI 40671255251 and release build pending. Shared port is in sandbox PR #168
+  at 03e0aca; OFF/ON/StoreKit check 40671675913 pending. Test harness establishes cold local-catalog readiness;
+  production Store code/pricing unchanged. Unrelated local sandbox marketing/listing edits preserved.
+- Vignette/Grain and Lens Blur read-only follow-ups are in their dated review reports. Their quality findings are
+  not fixes in this release; dedicated reproduction, mask/geometry/interactions review and phone checks remain.
 
 ## Adjustment engine quality — 28 October 2026 (SideStore published; review follow-up)
 - **First phone follow-up: Clarity too weak.** Angelo reports barely seeing a difference between -100 and +100
