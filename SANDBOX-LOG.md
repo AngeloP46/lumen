@@ -1,5 +1,15 @@
 # SANDBOX-LOG — what was drafted and what Claude must check
 
+## 28 Oct 2026: correct Clarity scene coverage (from main #174)
+Port 39b9c5d: remove broad expanded edge veto; bilateral medium-scale detail, strictly immediate fringe guard,
+smooth central slider response and useful endpoints. Owner-approved car fixture and dense-edge regressions;
+other light/colour/detail/Dehaze/local controls proven independent in SDR/HDR (142 focused checks pass).
+Unreadable thumbnail early-admission feedback restored; RAW matrix includes the new helper in its compile list.
+Existing Pro/free gates unchanged. No Store code changed. Sandbox OFF/ON/policy/StoreKit validation pending.
+Prior recovery #172 is merged and passed 40678793157; personal owner confirms thumbnails now work.
+SideStore 0.1.747 published, feed/hash verified. Broader engine 1553/1557 and UI 94/95 follow-up issues are recorded
+in HANDOFF.md; do not claim those complete suites green.
+
 ## 28 Oct 2026: urgent thumbnail recovery and stronger Clarity (from main #171)
 Port 4df9b79: per-photo thumbnail checkpoints survive interrupted migration, old JPEGs retained until successful
 replacement, bounded decoded-image cache, per-job autorelease/GPU/model cleanup and optional MP-sized memory

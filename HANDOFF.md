@@ -1,5 +1,18 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## 28 October: Clarity scene coverage (main #174, SideStore 0.1.747)
+Port of main source 39b9c5d (merge e4c9f97): replace the wide hard-edge veto with bilateral medium-log analysis.
+Owner's actual car screenshot exposed the prior failure; approved crop is now a public regression fixture.
+All 142 focused rendering/batch checks pass (40685937264), including dense edges, owner windshield and ten
+other-control isolation comparisons in SDR/HDR. Whole/detail endpoint renders inspected. Thirty-two repeated
+24 MP thumbnails settle at 1290 MB throughout. Logic, iPhone build and three related UI tests pass.
+Restore unreadable-photo feedback at thumbnail admission. No model, Pro/free gate or Store code changed.
+RAW matrix explicit compile list includes BilateralClarity.swift. Sandbox OFF/ON/StoreKit checks pending.
+Previous recovery #172 merged 4f1e89c after 40678793157 passed. Owner confirms 0.1.737 thumbnails work.
+Full engine 40687563996: 1553/1557 pass; four failures on small car fixture (mask raster boundary and export
+upscale expectation) require follow-up. UI 40687567667: 94/95 pass, zoom-preview reload timeout requires follow-up.
+Larger-library scheduler remains separate. Personal 0.1.747 feed/publish/asset verified, 40687659637.
+
 ## 28 October urgent phone recovery (main #171)
 Personal 0.1.728 could be killed rebuilding thumbnails, then purge completed JPEGs again on restart. Owner's
 diagnostics reached 3371/3375 MB. Shared recovery candidate from main 4df9b79 is on `sandbox-thumbnail-recovery`:

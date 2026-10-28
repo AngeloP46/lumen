@@ -19,6 +19,24 @@ func encoded(_ s: EditSettings) -> [String: Any] {
 func data(_ obj: Any) -> Data { (try? JSONSerialization.data(withJSONObject: obj)) ?? Data() }
 
 // ---- Edits files: today's format round-trips exactly
+do {
+    for level: Float in [-7, -2, 0, 2, 7] {
+        let flat = [Float](repeating: level, count: 96 * 64)
+        let band = BilateralClarity.residual(flat, width: 96, height: 64, spatialSigma: 8)
+        check(band.count == flat.count && band.allSatisfy { $0.isFinite && abs($0) < 0.0001 },
+              "bilateral clarity: a constant field gains contrast at \(level) EV")
+    }
+    var scene = [Float](repeating: 0, count: 192 * 64)
+    for y in 0..<64 { for x in 0..<192 {
+        let cell = x % 48
+        scene[y * 192 + x] = cell < 4 ? -3 : cell < 8 ? 2 : 0.35 * sin(2 * .pi * Float(x) / 32)
+    } }
+    let band = BilateralClarity.residual(scene, width: 192, height: 64, spatialSigma: 12)
+    let surfaces = (16..<176).filter { (16..<40).contains($0 % 48) }
+    let response = surfaces.map { abs(band[32 * 192 + $0]) }.reduce(0, +) / Float(surfaces.count)
+    check(response > 0.05, "bilateral clarity: nearby edges suppress the surface detail band")
+    check(band.allSatisfy { $0.isFinite }, "bilateral clarity: invalid detail values")
+}
 var rich = EditSettings()
 rich.exposure = 0.7; rich.contrast = 15; rich.highlights = -40; rich.temperature = 12; rich.aiDenoise = 60; rich.hdr = true
 rich.curves.master = [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.4, y: 0.3), CurvePoint(x: 1, y: 1)]
