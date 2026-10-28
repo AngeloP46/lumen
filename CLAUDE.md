@@ -1,5 +1,26 @@
 # Lumen – project notes for Claude
 
+## Urgent 28 October phone follow-up — startup thumbnail crash, Clarity range
+- Owner's 0.1.728 iPhone18,2 report: 24 MP thumbnail/depth jobs climbed to 3371/3375 MB and iOS killed Lumen on
+  three launches. My format-3 batch refresh removed every JPEG again unless the entire queue reached its final
+  marker, so completed work was discarded at restart. Prior single-photo Mac memory checks did not cover this.
+- `thumbnail-recovery-clarity` from current main 276ae07: no whole-library purge. Current thumbnails have engine-3
+  filenames; each atomic write is a durable checkpoint, older JPEG remains visible until its replacement succeeds.
+  Work-item/explicit autorelease pools, per-photo cache/model eviction, decoded cache cost 64 MB and optional
+  HeavyWork admission sized to source MP keep batch work bounded and skippable. No original/recipe deletion.
+- Clarity phone feedback: restored but far too subtle; owner wants stronger endpoints with smooth central travel.
+  Widen log-light guide, regularize for a stronger medium band, identify abrupt boundaries locally before dilating
+  their protection (smooth multi-stop surfaces no longer entirely gated). Signed squared slider travel, bounded
+  positive gain and convex negative blend. Stricter endpoint strength and central-travel regressions plus sheets.
+- Model cache review also found `LoadedModel.finished.result` retained the last model after cache release. The
+  hand-off now retains it only until waiting callers consume it; no second overlapping load while they wake up.
+  A weak-reference test repeats release 32 times and proves active callers live while the released cache dies.
+- New 32 x 24 MP RAW/Lens Blur thumbnail stress check measures settled memory and persisted output across the
+  whole sequence. Linux verifies interrupted-progress/old-file retention and memory admission. iOS build and six
+  targeted UI tests required before publication; simulator uses a 3375 MB fake limit for this run.
+- Prior focused UI 40673361219: 5/6 test methods passed. Heal fixture emitted all 11 PASS messages; test expected
+  the old count of 9. Corrected the count; do not weaken the 11 actual privacy assertions. Full UI superseded.
+
 ## 28 October — SideStore 0.1.728 published; Clarity and one shared processing engine
 - Personal PR #169 merged a44a6bd; publish 40672946255 succeeded. Fresh source.json, log and GitHub asset agree:
   version 0.1.728/build728, 356069402 bytes, SHA256

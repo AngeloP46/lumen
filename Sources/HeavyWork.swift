@@ -8,7 +8,7 @@ import Foundation
 /// heavy runs, or alongside others only while that still leaves a safe margin; otherwise it waits its turn. When a
 /// job would start short of room, copies and models that can be made again are let go of first. Optional jobs (the
 /// 100 % copy, the original copy) are skipped rather than wait or squeeze in. Waits, skips and tight starts are logged
-/// for ⋯ → Send diagnostics. Light work (the preview, thumbnails, the histogram) doesn't come through here.
+/// for ⋯ → Send diagnostics. RAW thumbnails also use this gate: a small output can still require a full RAW decode.
 final class HeavyWork: @unchecked Sendable {
     static let shared = HeavyWork()
 
@@ -22,6 +22,7 @@ final class HeavyWork: @unchecked Sendable {
         case export = "export"
         case original = "original copy"
         case preview = "preview decode"
+        case thumbnail = "thumbnail"
         case healModel = "Heal model"
     }
 
@@ -45,6 +46,7 @@ final class HeavyWork: @unchecked Sendable {
         // the editor decoding the photo again after undo, HDR or a heal: ~170-300 MB net on the owner's phone, more
         // while the old and the new copy exist together (23 Oct)
         case .preview: return Int(8 * mp) + 600
+        case .thumbnail: return Int(40 * mp) + 250
         // loading the Heal model: with the Neural Engine it went up ~2.2-2.8 GB for a second or two (owner's phone, 23 Oct:
         // 533 -> 2769 MB). On the GPU (0.1.581 on) it loads in about a second for ~150 MB (262 -> 413 MB); 2800 kept refusing
         // Heal with 2.76 GB free (0.1.608, three failed heals in a row). 1200 leaves the GPU load plenty of room.
@@ -72,8 +74,11 @@ final class HeavyWork: @unchecked Sendable {
     /// Memory Lumen may still use (MB); the app points it at os_proc_available_memory.
     nonisolated(unsafe) static var availableMB: () -> Int = { 1 << 20 }
 
-    private func admits(_ need: Int, long: Bool, margin: Int = HeavyWork.marginMB) -> Bool {
+    private func admits(_ need: Int, kind: Kind, long: Bool, margin: Int = HeavyWork.marginMB) -> Bool {
         if running.isEmpty { return true }
+        // A RAW thumbnail may allocate its decoder/models after admission. Do not overlap that startup
+        // with editor/export work just because those allocations have not appeared in availableMB yet.
+        if kind == .thumbnail || running.contains(where: { $0.kind == .thumbnail }) { return false }
         if long && running.contains(where: \.long) { return false }
         return Self.availableMB() - need >= margin
     }
@@ -92,7 +97,7 @@ final class HeavyWork: @unchecked Sendable {
             while !Self.isForeground { condition.wait(until: Date().addingTimeInterval(0.5)) }
         }
         var waited = false
-        while !admits(need, long: long, margin: Self.marginMB(for: kind)) {
+        while !admits(need, kind: kind, long: long, margin: Self.marginMB(for: kind)) {
             if optional {
                 condition.unlock()
                 Self.note?("\(kind.rawValue): skipped, \(Self.availableMB()) MB free, ~\(need) MB needed beside \(runningNames)")

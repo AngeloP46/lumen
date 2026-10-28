@@ -129,6 +129,24 @@ let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-l
 try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: tmp) }
 
+// An interrupted thumbnail upgrade keeps each completed photo, preserves old display JPEGs, and only resumes
+// unfinished work. No whole-library completion flag is required.
+do {
+    let directory = tmp.appendingPathComponent("thumbnail-resume")
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let ids = [UUID(), UUID(), UUID()]
+    for id in ids { try? Data([1]).write(to: ThumbnailFiles.legacy(in: directory, id: id)) }
+    for id in ids.prefix(2) { try? Data([2]).write(to: ThumbnailFiles.current(in: directory, id: id), options: .atomic) }
+    let afterRestart = ids.filter { ThumbnailFiles.needsRefresh(in: directory, id: $0) }
+    check(afterRestart == [ids[2]], "thumbnails: restart discards completed migration progress")
+    check(ids.allSatisfy { FileManager.default.fileExists(atPath: ThumbnailFiles.legacy(in: directory, id: $0).path) },
+          "thumbnails: migration removes old display images before successful replacements")
+    check(ThumbnailFiles.current(in: directory, id: ids[0]) != ThumbnailFiles.legacy(in: directory, id: ids[0]),
+          "thumbnails: old and new engine cache files collide")
+    check(HeavyWork.needMB(.thumbnail, megapixels: 48) > HeavyWork.needMB(.thumbnail, megapixels: 24),
+          "thumbnails: RAW decode memory estimate ignores source size")
+}
+
 // Before the first overwrite, retain the exact old bytes once. A blocked backup must also block that write.
 do {
     var old = encoded(rich); old["processingVersion"] = 1; old["formatVersion"] = 2
@@ -296,6 +314,20 @@ do {
 
 // A9: a model load can take seconds. Releasing from the UI must not wait for it or cache its late result.
 do {
+    final class Probe {}
+    weak var observed: Probe?
+    let model = LoadedModel<Probe> { let value = Probe(); observed = value; return value }
+    for _ in 0..<32 {
+        do {
+            let active = model.model
+            model.release()
+            check(observed != nil, "model release: an active caller lost its model")
+            withExtendedLifetime(active) {}
+        }
+        check(observed == nil, "model release: last-load hand-off retains a released model after callers finish")
+    }
+}
+do {
     let entered = DispatchSemaphore(value: 0), finishLoad = DispatchSemaphore(value: 0)
     let done = DispatchSemaphore(value: 0)
     let model = LoadedModel<Int> {
@@ -417,12 +449,26 @@ do {
     check(HeavyWork.shared.run(.preview, megapixels: 24) { () -> Int in decoded = true; return 1 } == 1 && decoded,
           "coordinator: with no memory report (the simulator) a preview decode runs at once")
     HeavyWork.availableMB = { 1000 }
+    var thumbRendered = false
+    check(HeavyWork.shared.run(.thumbnail, megapixels: 24, optional: true) { thumbRendered = true; return 1 } == nil && !thumbRendered,
+          "thumbnails: a RAW rebuild starts without its memory reserve")
+    HeavyWork.availableMB = { 2400 }
+    check(HeavyWork.shared.run(.thumbnail, megapixels: 24, optional: true) { thumbRendered = true; return 1 } == 1 && thumbRendered,
+          "thumbnails: a rebuild with room and a reserve is refused")
+    HeavyWork.availableMB = { 1000 }
     var loaded = false
     check(HeavyWork.shared.run(.healModel, megapixels: 0, optional: true) { () -> Int in loaded = true; return 1 } == nil && !loaded,
           "coordinator: the Heal model is not loaded with 1000 MB free")
     HeavyWork.availableMB = { 2764 }
     check(HeavyWork.shared.run(.healModel, megapixels: 0, optional: true) { () -> Int in loaded = true; return 1 } == 1 && loaded,
           "coordinator: the Heal model loads with 2764 MB free (0.1.608 refused three heals there)")
+    HeavyWork.availableMB = { 10000 }
+    check(HeavyWork.shared.run(.preview, megapixels: 24, optional: true) {
+        HeavyWork.shared.run(.thumbnail, megapixels: 24, optional: true) { 1 } == nil
+    } == true, "thumbnails: rebuild overlaps an active editor decode before its allocations are visible")
+    check(HeavyWork.shared.run(.thumbnail, megapixels: 24, optional: true) {
+        HeavyWork.shared.run(.preview, megapixels: 24, optional: true) { 1 } == nil
+    } == true, "thumbnails: editor decode overlaps a RAW thumbnail before its allocations are visible")
 }
 
 // ---- B4 / B2 (23 Oct): long brush strokes keep their shape with far fewer points; heavy work waits for the screen

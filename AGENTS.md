@@ -1,5 +1,13 @@
 # Lumen session entry point
 
+Urgent 28 Oct follow-up: owner's 0.1.728 diagnostics show repeated startup thumbnail kills at 3371/3375 MB.
+Branch `thumbnail-recovery-clarity` replaces batch invalidation with per-photo revision-named JPEG checkpoints,
+preserves older display JPEGs until success, bounds decoded cache, drains each RAW render and uses HeavyWork's
+memory reserve. Clarity gets a broader stronger band, abrupt-edge protection and squared travel near zero.
+Validation/release pending; do not describe the phone crash as resolved yet. New 32-RAW-thumbnail stress regression.
+Prior targeted UI 40673361219: five cases passed; Heal deletion's 11 PASS checks failed the stale expected count 9,
+now corrected to 11. This was a test-count mismatch, not a Heal failure. Full UI 40671255251 is superseded.
+
 28 Oct publication complete: **SideStore 0.1.728**, personal PR #169 merged a44a6bd, publish 40672946255.
 Fresh feed, publish log and GitHub IPA size/digest agree: 356069402 bytes, SHA256
 4e599416fc8ac13908ab0822a6c387fed1f1296afb83cacdda52dea36b0c26e1. All old edits now use one renderer;
