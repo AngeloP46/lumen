@@ -320,7 +320,8 @@ final class LibraryStore: ObservableObject {
         check(exists(backupOnly) && Self.presetBackupHeals(in: folder)?.contains(backupOnly.id) == true,
               "recovery-only Heal reference remains visible to the startup sweep")
         // Retained legacy references are intentionally preserved; this is not a global garbage sweep.
-        check(!fm.fileExists(atPath: library.fileURL(removed).path) && !fm.fileExists(atPath: library.thumbURL(removed).path), "photo and thumbnail removed")
+        check(!fm.fileExists(atPath: library.fileURL(removed).path) && !fm.fileExists(atPath: library.thumbURL(removed).path)
+              && !fm.fileExists(atPath: ThumbnailFiles.legacy(in: thumbs, id: removed.id).path), "photo and both thumbnail generations removed")
     }
 
     // MARK: Photo list

@@ -13,6 +13,10 @@
   their protection (smooth multi-stop surfaces no longer entirely gated). Signed squared slider travel, bounded
   positive gain and convex negative blend. Stricter endpoint strength and central-travel regressions plus sheets.
 - New 32 x 24 MP RAW/Lens Blur thumbnail stress check measures settled memory and persisted output across the
+- Model cache review also found `LoadedModel.finished.result` retained the last model after cache release. The
+  hand-off now retains it only until waiting callers consume it; no second overlapping load while they wake up.
+  A weak-reference test repeats release 32 times and proves active callers live while the released cache dies.
+- New 32 x 24 MP RAW/Lens Blur thumbnail stress check measures settled memory and persisted output across the
   whole sequence. Linux verifies interrupted-progress/old-file retention and memory admission. iOS build and six
   targeted UI tests required before publication; simulator uses a 3375 MB fake limit for this run.
 - Prior focused UI 40673361219: 5/6 test methods passed. Heal fixture emitted all 11 PASS messages; test expected

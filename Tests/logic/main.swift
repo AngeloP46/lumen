@@ -314,6 +314,20 @@ do {
 
 // A9: a model load can take seconds. Releasing from the UI must not wait for it or cache its late result.
 do {
+    final class Probe {}
+    weak var observed: Probe?
+    let model = LoadedModel<Probe> { let value = Probe(); observed = value; return value }
+    for _ in 0..<32 {
+        do {
+            let active = model.model
+            model.release()
+            check(observed != nil, "model release: an active caller lost its model")
+            withExtendedLifetime(active) {}
+        }
+        check(observed == nil, "model release: last-load hand-off retains a released model after callers finish")
+    }
+}
+do {
     let entered = DispatchSemaphore(value: 0), finishLoad = DispatchSemaphore(value: 0)
     let done = DispatchSemaphore(value: 0)
     let model = LoadedModel<Int> {
