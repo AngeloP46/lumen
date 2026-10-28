@@ -1,5 +1,21 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## 28 October 2026: Clarity and single-engine continuation
+Shared candidate from personal PR #169, through 73c0abf, is on `sandbox-imaging-quality-v2` (PR #168).
+Clarity now uses a useful medium-detail band; all old recipes/history/presets/paste use one renderer with exact
+JSON recovery copies before overwrite. Legacy render code removed; original photos/values retained. Denoise
+preview-border/repair, paused-decoder identity, person-mask label reuse and tolerant crop-version fixes included.
+The same shared tests/review reports are here. Existing Pro gates and pricing unchanged; no Store code changed.
+The StoreKit fixture test now waits for its local catalog before exercising the unchanged production loader;
+the prior first-test catalog failure needs a clean simulator rerun. Personal validation and sandbox checks pending.
+Unrelated MARKETING.md and docs/appstore/LISTING.md edits remain outside the port.
+
+## 27 October 2026: adjustment-engine candidate
+Shared processing improvements from personal PR #167 are on `sandbox-imaging-quality-v2`, final main source bc0c788.
+Read `docs/IMAGING-QUALITY.md` for algorithms, legacy recipes and rollback. No Store code or pricing changed.
+First OFF/ON builds passed; the final boundary/test follow-up is being checked. Merge after the personal release. Existing local edits
+in MARKETING.md and docs/appstore/LISTING.md are unrelated and were preserved outside this candidate's commits.
+
 ## Lens Blur phone feedback follow-up — 14 October
 Owner reported amount still 0 and unclear subject selection on 0.1.207. PR #5:
 old untouched zero/default settings migrate once on explicit tool entry to amount 8;

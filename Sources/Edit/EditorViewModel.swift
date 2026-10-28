@@ -1368,13 +1368,11 @@ final class EditorViewModel: ObservableObject {
         guard let source else { return }
         let rgb = source.stats.average(atNormalized: p.x, p.y, radius: 2)
         let r = Double(max(rgb.x, 1e-5)), g = Double(max(rgb.y, 1e-5)), b = Double(max(rgb.z, 1e-5))
-        // the develop kernel multiplies by (2^(0.6t), 2^(-0.4n), 2^(-0.6t)) with t = temp/100, n = tint/100:
-        // solve for the t and n that make this spot's red, green and blue equal
-        let t = log2(b / r) / 1.2
-        let n = -log2(r * exp2(0.6 * t) / g) / 0.4
+        // Solve the same relative white adaptation as the develop shader.
+        let correction = RelativeWhiteBalance.solve((Float(r), Float(g), Float(b)))
         var s = settings
-        s.temperature = (min(max(t * 100, -100), 100)).rounded()
-        s.tint = (min(max(n * 100, -100), 100)).rounded()
+        s.temperature = correction.temperature.rounded()
+        s.tint = correction.tint.rounded()
         settings = s
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if DemoMode.isOn { DemoMode.log("wb picked temp \(Int(s.temperature)) tint \(Int(s.tint))") }
@@ -1384,7 +1382,7 @@ final class EditorViewModel: ObservableObject {
 
     func apply(preset edits: EditSettings) {
         lastChange = .distantPast
-        var s = edits
+        var s = edits.currentRecipe
         s.masks = settings.masks
         s.heals = settings.heals
         s.aiDenoise = settings.aiDenoise   // a preset never starts or drops a photo's AI Denoise

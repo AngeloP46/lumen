@@ -266,6 +266,8 @@ extension EditSession {
         case depthUnavailable
         /// The image rendered but could not be encoded to the chosen format.
         case encode
+        /// An HDR file was requested: never quietly substitute an SDR rendition if gain-map encoding fails.
+        case hdrEncode
 
         var message: String {
             switch self {
@@ -277,6 +279,8 @@ extension EditSession {
                 return "Lens Blur can't be exported because the depth information couldn't be prepared. Turn Lens Blur off, or reopen the photo and try again."
             case .encode:
                 return "The photo could not be written. Try a different format or a smaller size."
+            case .hdrEncode:
+                return "The HDR photo could not be written. Try a smaller size, or switch HDR off in Export to save an SDR photo."
             }
         }
     }
@@ -335,7 +339,10 @@ extension EditSession {
         var img = develop(s, source: src, geometry: true)
         let q: [CIImageRepresentationOption: Any] = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
         // HDR: the SDR rendition is the base image; the gain-map options need iOS 18 / macOS 15.
-        let wantHDR = includeHDR && s.hdr && format != .tiff && LumenKernels.shared?.applyGain != nil
+        let wantHDR = includeHDR && s.hdr && format != .tiff
+        if wantHDR && (LumenKernels.shared?.applyGain == nil || LumenKernels.shared?.gain == nil || LumenKernels.shared?.gainLocal == nil) {
+            return .failed(.hdrEncode)
+        }
         var hdrImg: CIImage? = wantHDR ? develop(s, source: src, geometry: true, hdrWeight: 1) : nil
         // smaller sizes are made from the full-size result, so they are as sharp as they can be
         let long = max(img.extent.width, img.extent.height)
@@ -353,10 +360,13 @@ extension EditSession {
         defer { Self.healProbe?("export: encoded") }
         switch format {
         case .jpeg:
-            if let hdrImg, #available(iOS 18.0, macOS 15.0, *) {
-                var o = q
-                o[.hdrImage] = hdrImg
-                if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
+            if let hdrImg {
+                if #available(iOS 18.0, macOS 15.0, *) {
+                    var o = q
+                    o[.hdrImage] = hdrImg
+                    if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
+                }
+                return .failed(.hdrEncode)
             }
             if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
             return .failed(.encode)
@@ -370,6 +380,7 @@ extension EditSession {
                           let d = try? ctx.heif10Representation(of: hdrImg, colorSpace: hlg, options: q) {
                     return .data(d)
                 }
+                return .failed(.hdrEncode)
             }
             if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
             return .failed(.encode)

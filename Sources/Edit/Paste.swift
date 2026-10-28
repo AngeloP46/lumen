@@ -84,7 +84,7 @@ struct Clipboard: Equatable {
             s.masks += chosen.forAnotherPhoto
             s.setOn(.masks, settings.isOn(.masks))
         }
-        return s
+        return s.currentRecipe
     }
 }
 

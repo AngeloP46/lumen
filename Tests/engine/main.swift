@@ -254,6 +254,14 @@ func floatPixels(_ img: CIImage, width: Int = 64) -> [Float]? {
 
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
 
+// Fast iteration on adjustment rendering, without the unrelated AI/model and memory sequences.
+if args.contains("--imaging") {
+    runImagingQualityChecks()
+    runClarityQualityChecks()
+    runAIRegressionChecks()
+    finishChecks()
+}
+
 // ---- Memory budget (`--memory`, its own process so nothing else is counted): the 24 MP Sony ARW opened the way
 // the phone opens it (HDR), the 100 % view's full-size copy, a subject mask, a big heal and a full-size export.
 // iOS closes Lumen at about 3.4 GB (owner's JetsamEvent, 18 Oct: killed at 3388 MB). The Mac counts GPU memory a
@@ -608,6 +616,10 @@ if args.contains("--lens-blur") {
 }
 
 var opened = 0
+runImagingQualityChecks()
+runClarityQualityChecks()
+runAIRegressionChecks()
+
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
     let stem = file.deletingPathExtension().lastPathComponent
     let t0 = now()

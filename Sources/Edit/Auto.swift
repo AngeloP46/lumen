@@ -170,12 +170,11 @@ extension EditSession {
         }
         // the picker's maths for a spot of this colour (r = 1, b = 2^ab, g = 2^gm * sqrt(b))
         let r = 1.0, b = Double(exp2(cab)), g = Double(exp2(cgm)) * b.squareRoot()
-        let t = log2(b / r) / 1.2
-        let n = -log2(r * exp2(0.6 * t) / g) / 0.4
+        let correction = RelativeWhiteBalance.solve((Float(r), Float(g), Float(b)))
         // most of the way, less for a very strong cast (likely deliberate light), and within sensible limits
         let strength = abs(cab) > 1.2 ? 0.3 : 0.6
-        let temp = min(max(t * 100 * strength, -30), 30).rounded()
-        let tint = min(max(n * 100 * strength, -20), 20).rounded()
+        let temp = min(max(correction.temperature * strength, -30), 30).rounded()
+        let tint = min(max(correction.tint * strength, -20), 20).rounded()
         guard temp.isFinite, tint.isFinite else { return nil }
         return (temp, tint)
     }

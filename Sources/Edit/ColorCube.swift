@@ -26,6 +26,10 @@ enum ColorCube {
         let tG = zoneTint(grading.global)
         let mid = Float(0.5 - grading.balance / 100 * 0.25)
         let width = Float(0.15 + grading.blending / 100 * 0.5)
+        let hasGradeLuminance = [grading.shadows, grading.midtones, grading.highlights, grading.global].contains { $0.lum != 0 }
+        let gradeLuminance = hasGradeLuminance
+            ? gradeLuminanceTable(mid: mid, width: width, shadows: tS.l, midtones: tM.l, highlights: tH.l, global: tG.l)
+            : []
 
         let hueD = hsl.bands.map { Float($0.hue) / 100 * 0.5 }
         let satD = hsl.bands.map { Float($0.sat) / 100 }
@@ -52,7 +56,9 @@ enum ColorCube {
                         if useLab {
                             let lr_ = Ok.decode(r), lg_ = Ok.decode(g), lb_ = Ok.decode(b)
                             var lab = Ok.toLab(lr_, lg_, lb_)
+                            let originalLab = lab
                             var chroma = (lab.1 * lab.1 + lab.2 * lab.2).squareRoot()
+                            let originalChroma = blackAndWhite ? 0 : chroma
                             var hue = atan2(lab.2, lab.1)
                             if useHSL {
                                 let w = bandWeights(hue)
@@ -72,15 +78,21 @@ enum ColorCube {
                             }
                             var a = chroma * cos(hue)
                             var bb = chroma * sin(hue)
-                            if useGrade && !blackAndWhite {
+                            if useGrade {
                                 let wS: Float = 1 - smooth(mid - width, mid + width * 0.25, lab.0)
                                 let wH: Float = smooth(mid - width * 0.25, mid + width, lab.0)
                                 let wM: Float = max(0, 1 - wS - wH)
-                                a += wS * tS.a + wM * tM.a + wH * tH.a + tG.a
-                                bb += wS * tS.b + wM * tM.b + wH * tH.b + tG.b
-                                lab.0 += wS * tS.l + wM * tM.l + wH * tH.l + tG.l
+                                // Keep black and white endpoints when adding a tint, including to a B&W conversion.
+                                let fade = smooth(0, 0.12, lab.0) * (1 - smooth(0.88, 1, lab.0))
+                                a += (wS * tS.a + wM * tM.a + wH * tH.a + tG.a) * fade
+                                bb += (wS * tS.b + wM * tM.b + wH * tH.b + tG.b) * fade
+                                if !gradeLuminance.isEmpty { lab.0 = sample(gradeLuminance, lab.0) }
                             }
-                            let lin = Ok.fromLab(lab.0, a, bb)
+                            let changed = abs(lab.0 - originalLab.0) > 1e-7 || abs(a - originalLab.1) > 1e-7
+                                || abs(bb - originalLab.2) > 1e-7
+                            let lin = changed
+                                ? Ok.gamutCompressed(lab.0, a, bb, originalChroma: originalChroma)
+                                : Ok.fromLab(lab.0, a, bb)
                             r = Ok.encode(lin.0)
                             g = Ok.encode(lin.1)
                             b = Ok.encode(lin.2)
@@ -111,6 +123,29 @@ enum ColorCube {
     private static func smooth(_ e0: Float, _ e1: Float, _ x: Float) -> Float {
         let t = min(max((x - e0) / max(e1 - e0, 1e-6), 0), 1)
         return t * t * (3 - 2 * t)
+    }
+
+    /// One endpoint-preserving lightness curve for the whole grade. The same scale is used for every
+    /// level, so strong overlapping zones keep their shape without reversing the order of tones.
+    /// Linear interpolation of this sampled curve retains the lower slope bound between samples too.
+    private static func gradeLuminanceTable(mid: Float, width: Float, shadows: Float, midtones: Float,
+                                            highlights: Float, global: Float) -> [Float] {
+        let n = 1024
+        let inv = 1 / Float(n - 1)
+        var delta = [Float](repeating: 0, count: n)
+        for i in 1..<(n - 1) {
+            let L = Float(i) * inv
+            let wS = 1 - smooth(mid - width, mid + width * 0.25, L)
+            let wH = smooth(mid - width * 0.25, mid + width, L)
+            let wM = max(0, 1 - wS - wH)
+            let fade = smooth(0, 0.12, L) * (1 - smooth(0.88, 1, L))
+            let d = (wS * shadows + wM * midtones + wH * highlights + global) * fade
+            delta[i] = d.isFinite ? d : 0
+        }
+        var lowestSlope: Float = 0
+        for i in 1..<n { lowestSlope = min(lowestSlope, (delta[i] - delta[i - 1]) / inv) }
+        let scale: Float = lowestSlope < -0.9 ? -0.9 / lowestSlope : 1
+        return delta.enumerated().map { i, d in min(max(Float(i) * inv + d * scale, 0), 1) }
     }
 
     /// Cosine blend between the two neighbouring band centres.
@@ -188,5 +223,106 @@ enum Ok {
         return (3.128110530 * l - 2.257075019 * m + 0.129304789 * s,
                 -1.091128161 * l + 2.413266762 * m - 0.322168171 * s,
                 -0.026013650 * l - 0.508027649 * m + 1.533316682 * s)
+    }
+
+    /// A soft chroma shoulder in OkLab, at fixed lightness and hue. Unlike clipping RGB channels, this keeps
+    /// differences between very colourful shades. The same search and knee are used by the develop kernel.
+    static func gamutCompressed(_ lightness: Float, _ a: Float, _ b: Float,
+                                originalChroma: Float = 0) -> (Float, Float, Float) {
+        guard lightness.isFinite, a.isFinite, b.isFinite else { return (0, 0, 0) }
+        let L = min(max(lightness, 0), 1)
+        let C = hypotf(a, b)
+        if C < 1e-5 || L <= 0 || L >= 1 {
+            let y = L * L * L
+            return (y, y, y)
+        }
+        let input = fromLab(L, a, b)
+        // Below the shoulder (or reducing chroma), no boundary search is necessary. Testing 1.25 C
+        // is equivalent to testing that C is at most 80% of the gamut boundary along this ray.
+        if inGamut(input) && (C <= originalChroma || inGamut(fromLab(L, a * 1.25, b * 1.25))) { return input }
+        let ah = a / C, bh = b / C
+        var lo: Float = 0, hi: Float = 1
+        for _ in 0..<12 {
+            let mid = (lo + hi) * 0.5
+            let rgb = fromLab(L, ah * mid, bh * mid)
+            if rgb.0 >= 0 && rgb.0 <= 1 && rgb.1 >= 0 && rgb.1 <= 1 && rgb.2 >= 0 && rgb.2 <= 1 {
+                lo = mid
+            } else {
+                hi = mid
+            }
+        }
+        // Raising the knee to the input chroma makes a tiny adjustment continuous at zero, including on
+        // already-vivid pixels. An untouched colour band bypasses this operation at the call site too.
+        let knee = max(lo * 0.8, min(max(originalChroma, 0), lo))
+        let width = lo - knee
+        let compressed: Float
+        if width < 1e-6 {
+            compressed = min(C, lo)
+        } else {
+            compressed = C <= knee ? C : knee + width * (1 - expf(-(C - knee) / width))
+        }
+        return fromLab(L, ah * compressed, bh * compressed)
+    }
+
+    private static func inGamut(_ rgb: (Float, Float, Float)) -> Bool {
+        rgb.0 >= 0 && rgb.0 <= 1 && rgb.1 >= 0 && rgb.1 <= 1 && rgb.2 >= 0 && rgb.2 <= 1
+    }
+}
+
+/// Relative warm/cool and green/magenta corrections around the decoded image's white balance. This
+/// applies the ICC linear Bradford cone transform, not independent display RGB channel gains. Slider units
+/// remain -100...100; these relative controls deliberately do not claim to be a Kelvin measurement.
+enum RelativeWhiteBalance {
+    typealias RGB = (Float, Float, Float)
+
+    static func apply(_ rgb: RGB, temperature: Double, tint: Double) -> RGB {
+        guard temperature.isFinite, tint.isFinite else { return rgb }
+        if temperature == 0 && tint == 0 { return rgb }
+        let t = Float(temperature / 100), n = Float(tint / 100)
+        let gain: RGB = (exp2f(0.6 * t), exp2f(-0.4 * n), exp2f(-0.6 * t))
+        let oldY = luminance(rgb)
+        let whiteY = max(luminance(gain), 1e-6)
+        let white = toCone((gain.0 / whiteY, gain.1 / whiteY, gain.2 / whiteY))
+        let d65 = toCone((1, 1, 1))
+        let cone = toCone(rgb)
+        let result = fromCone((cone.0 * white.0 / d65.0, cone.1 * white.1 / d65.1, cone.2 * white.2 / d65.2))
+        let scale = oldY / max(luminance(result), 1e-6)
+        return (result.0 * scale, result.1 * scale, result.2 * scale)
+    }
+
+    /// The inverse of `apply` for a sampled neutral patch. The return value is bounded to the controls;
+    /// callers can impose smaller Auto limits or round for display after solving.
+    static func solve(_ rgb: RGB) -> (temperature: Double, tint: Double) {
+        guard rgb.0.isFinite, rgb.1.isFinite, rgb.2.isFinite else { return (0, 0) }
+        let sample: RGB = (max(rgb.0, 1e-5), max(rgb.1, 1e-5), max(rgb.2, 1e-5))
+        let cone = toCone(sample), d65 = toCone((1, 1, 1))
+        // Adapt sample's cone response back to neutral D65. A common scale has no chromatic effect.
+        let white = fromCone((d65.0 * d65.0 / max(cone.0, 1e-6),
+                              d65.1 * d65.1 / max(cone.1, 1e-6),
+                              d65.2 * d65.2 / max(cone.2, 1e-6)))
+        let r = Double(max(white.0, 1e-6)), g = Double(max(white.1, 1e-6)), b = Double(max(white.2, 1e-6))
+        let t = log2(r / b) / 1.2 * 100
+        let n = -log2(g / sqrt(r * b)) / 0.4 * 100
+        return (min(max(t, -100), 100), min(max(n, -100), 100))
+    }
+
+    private static func luminance(_ c: RGB) -> Float { 0.22897 * c.0 + 0.69174 * c.1 + 0.07929 * c.2 }
+
+    private static func toCone(_ c: RGB) -> RGB {
+        let x = 0.4865709486 * c.0 + 0.2656676932 * c.1 + 0.1982172852 * c.2
+        let y = 0.2289745641 * c.0 + 0.6917385218 * c.1 + 0.0792869141 * c.2
+        let z = 0.0451133819 * c.1 + 1.0439443689 * c.2
+        return (0.8951 * x + 0.2664 * y - 0.1614 * z,
+                -0.7502 * x + 1.7135 * y + 0.0367 * z,
+                0.0389 * x - 0.0685 * y + 1.0296 * z)
+    }
+
+    private static func fromCone(_ c: RGB) -> RGB {
+        let x = 0.9869929055 * c.0 - 0.1470542564 * c.1 + 0.1599626517 * c.2
+        let y = 0.4323052697 * c.0 + 0.5183602715 * c.1 + 0.0492912282 * c.2
+        let z = -0.0085286646 * c.0 + 0.0400428217 * c.1 + 0.9684866958 * c.2
+        return (2.4934969119 * x - 0.9313836179 * y - 0.4027107845 * z,
+                -0.8294889696 * x + 1.7626640603 * y + 0.0236246858 * z,
+                0.0358458302 * x - 0.0761723893 * y + 0.9568845240 * z)
     }
 }

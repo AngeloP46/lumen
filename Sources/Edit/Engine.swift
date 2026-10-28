@@ -49,6 +49,8 @@ struct LumenKernels {
     var lensWeigh: CIColorKernel?, lensCompose: CIColorKernel?
     /// Edge refinement for AI masks (optional: without it masks keep their soft edges).
     var gfPack: CIColorKernel?, gfCoef: CIColorKernel?, gfApply: CIColorKernel?
+    /// Self-guided log-luminance analysis for the shared adjustment engine.
+    var analysisPack: CIColorKernel?, analysisCoef: CIColorKernel?, analysisApply: CIColorKernel?
     /// Sky seen through trees (optional: without them the sky mask is the scene model's alone).
     var skyWeigh: CIColorKernel?, leafWeigh: CIColorKernel?, skyGaps: CIColorKernel?
     /// Full-resolution texture for big heals (optional: without it big heals keep the model's softer fill).
@@ -78,6 +80,7 @@ struct LumenKernels {
                             clip: k("lumenClip"), rangeMask: k("lumenRangeMask"), lensRamp: k("lumenLensRamp"), lensRefinedRamp: k("lumenLensRefinedRamp"),
                             lensWeigh: k("lumenLensWeigh"), lensCompose: k("lumenLensCompose"),
                             gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
+                             analysisPack: k("lumenAnalysisPack"), analysisCoef: k("lumenAnalysisCoef"), analysisApply: k("lumenAnalysisApply"),
                             skyWeigh: k("lumenSkyWeigh"), leafWeigh: k("lumenLeafWeigh"), skyGaps: k("lumenSkyGaps"),
                             healDetail: k("lumenHealDetail"), healEnergy: k("lumenHealEnergy"),
                             noiseRemove: k("lumenNoiseRemove"))
@@ -89,7 +92,7 @@ private final class BundleToken {}
 /// A decoded image at a working size plus the analysis layers the develop kernel needs.
 /// Layer encoding: e = (log2(Y / 0.18) + 8) / 16.
 ///  - l1: R = log-luminance blurred finely (sharpening), G = medium (texture), B = wide (clarity)
-///  - l2: R = log-luminance blurred very widely (shadows/highlights regions), G = dark channel (dehaze)
+///  - l2: R = encoded local log-light range (clarity edge protection), G = dark channel (dehaze)
 ///  - chroma: RGB blurred (colour noise)
 final class ImageSource: @unchecked Sendable {
     let base: CIImage
@@ -436,6 +439,10 @@ final class EditSession: @unchecked Sendable {
         hdrDecode = expandHDR
         let isRaw = UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .rawImage) ?? false
         if isRaw, let f = CIRAWFilter(imageURL: url) {
+            // Deliberate hybrid pipeline: retain Apple's camera-specific base rendering (tone/gamut mapping,
+            // baseline exposure and RAW noise reduction), then apply Lumen's relative edits in linear P3.
+            // Linear colour encoding does not make that default rendering scene-referred sensor data.
+            // Changing this base would also invalidate the saved Heal patches and AI Denoise residuals.
             f.extendedDynamicRangeAmount = expandHDR ? 2.0 : 1.0
             f.sharpnessAmount = 0
             if let src = CGImageSourceCreateWithURL(url as CFURL, nil),
@@ -547,8 +554,11 @@ final class EditSession: @unchecked Sendable {
         return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
     }
 
-    private func analyse(_ base: CIImage, materialize: Bool) -> ImageSource? {
-        guard let k = LumenKernels.shared else { return nil }
+    /// Kept internal so engine invariants can be checked with exact linear fixtures, without encoding/resampling
+    /// a test image first (those operations can introduce their own boundary pixels).
+    func analyse(_ base: CIImage, materialize: Bool) -> ImageSource? {
+        guard let k = LumenKernels.shared, let pack = k.analysisPack, let coef = k.analysisCoef,
+              let apply = k.analysisApply else { return nil }
         let ext = base.extent
         let E = max(ext.width, ext.height)
 
@@ -556,8 +566,10 @@ final class EditSession: @unchecked Sendable {
         let f = min(1, 640 / E)
         var small = base
         if f < 1 {
-            small = base.applyingFilter("CILanczosScaleTransform",
-                                        parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0])
+            // Clamp before resampling so transparent pixels cannot contaminate the edge coefficients.
+            let target = ext.applying(CGAffineTransform(scaleX: f, y: f))
+            small = base.clampedToExtent().applyingFilter("CILanczosScaleTransform",
+                parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0]).cropped(to: target)
             small = Self.normalized(small)
         }
         let sext = small.extent
@@ -573,17 +585,13 @@ final class EditSession: @unchecked Sendable {
 
         // log-luminance of the small copy
         let logS = k.logLum.apply(extent: sext, arguments: [small])!
-        let sigmaClar = 0.011 * E * f
-        let sigmaBase = 0.04 * E * f
+        let sigmaClar = 0.018 * E * f
         let sigmaChroma = max(1, 0.004 * E * f)
 
-        let clarS = Self.blur(logS, sigmaClar, sext)
-        let baseS = Self.blur(logS, sigmaBase, sext)
         let minS = k.minChannel.apply(extent: sext, arguments: [small])!
         let eroded = Self.cropped(minS.clampedToExtent().applyingFilter("CIMorphologyMinimum",
                                                                         parameters: [kCIInputRadiusKey: max(2, 0.006 * E * f)]), sext)
         let darkS = Self.blur(eroded, max(2, 0.01 * E * f), sext)
-        let l2S = k.pack3.apply(extent: sext, arguments: [baseS, darkS, Self.constant(0, sext)])!
         let chromaS = Self.blur(small, sigmaChroma, sext)
 
         func upscaled(_ img: CIImage) -> CIImage {
@@ -599,10 +607,35 @@ final class EditSession: @unchecked Sendable {
         let logF = k.logLum.apply(extent: ext, arguments: [base])!
         let sharpF = Self.blur(logF, max(0.5, 0.00045 * E), ext)
         let texF = Self.blur(logF, max(1.2, 0.0016 * E), ext)
-        var l1 = k.pack3.apply(extent: ext, arguments: [sharpF, texF, upscaled(clarS)])!
+        // Fit the broad base on a small log-light copy, then evaluate it on the same medium guide
+        // used by Texture. This creates a real mid-scale band without amplifying fine noise or
+        // cancelling the signal by subtracting another residual after an edge-aware filter.
+        func box(_ img: CIImage) -> CIImage {
+            img.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: max(1, sigmaClar)])
+                .cropped(to: sext)
+        }
+        let epsilon: CGFloat = 1.0 / 256  // (1 stop / 16)^2: modest structure is not mistaken for a hard edge
+        guard let moments = pack.apply(extent: sext, arguments: [logS]),
+              let ab = coef.apply(extent: sext, arguments: [box(moments), CIVector(x: epsilon, y: 0, z: 0, w: 0)])
+        else { return nil }
+        let coefficients = upscaled(box(ab))
+        guard let clarity = apply.apply(extent: ext, arguments: [texF, coefficients]) else { return nil }
+        // A hard boundary can leave small guided residuals across two averaging radii. Protect that
+        // entire footprint, while leaving ordinary textured surfaces (under 1.5 stops) fully active.
+        let rangeRadius = max(2, sigmaClar * 2)
+        let logMax = logS.clampedToExtent().applyingFilter("CIMorphologyMaximum",
+            parameters: [kCIInputRadiusKey: rangeRadius]).cropped(to: sext)
+        let logMin = logS.clampedToExtent().applyingFilter("CIMorphologyMinimum",
+            parameters: [kCIInputRadiusKey: rangeRadius]).cropped(to: sext)
+        // max >= min, so symmetric difference is exactly the range without relying on blend operand order.
+        let contrastRange = logMax.applyingFilter("CIDifferenceBlendMode", parameters: [kCIInputBackgroundImageKey: logMin])
+            .cropped(to: sext)
+        var l1 = k.pack3.apply(extent: ext, arguments: [sharpF, texF, clarity])!
         if materialize, let m = Self.materialized(l1) { l1 = m }
 
-        return ImageSource(base: base, l1: l1, l2: upscaled(l2S), chroma: upscaled(chromaS),
+        let l2 = k.pack3.apply(extent: ext, arguments: [upscaled(contrastRange), upscaled(darkS), Self.constant(0, ext)])!
+
+        return ImageSource(base: base, l1: l1, l2: l2, chroma: upscaled(chromaS),
                            air: air, darkNorm: darkNorm, stats: grid)
     }
 

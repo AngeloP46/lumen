@@ -352,6 +352,17 @@ enum DefaultZone: DefaultValue { static let value = GradeZone() }
 enum DefaultLensBlur: DefaultValue { static let value = LensBlurSettings() }
 /// Files without the key were written before 22 Oct 2026: today's format (they read fine).
 enum DefaultFormat: DefaultValue { static let value = EditSettings.currentFormat }
+/// Compatibility metadata only: every recipe, including older history and presets, uses the one current engine.
+@propertyWrapper
+struct CurrentProcessingVersion: Codable, Equatable {
+    var wrappedValue: Int { get { EditSettings.currentProcessing } set {} }
+    init() {}
+    init(wrappedValue: Int) {}
+    init(from decoder: Decoder) throws { _ = try? decoder.singleValueContainer().decode(Int.self) }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer(); try c.encode(EditSettings.currentProcessing)
+    }
+}
 
 /// Decodes to the default when the key is absent, so sidecars and saved presets from before the key existed still load.
 @propertyWrapper
@@ -371,12 +382,18 @@ extension KeyedDecodingContainer {
     func decode<D: DefaultValue>(_ type: Defaulted<D>.Type, forKey key: Key) throws -> Defaulted<D> {
         try decodeIfPresent(type, forKey: key) ?? Defaulted<D>()
     }
+    func decode(_ type: CurrentProcessingVersion.Type, forKey key: Key) throws -> CurrentProcessingVersion {
+        try decodeIfPresent(type, forKey: key) ?? CurrentProcessingVersion()
+    }
 }
 
 // MARK: - All edits
 
 /// Every non-destructive adjustment for one photo. Stored as a JSON sidecar; the original is never touched.
 struct EditSettings: Codable, Equatable {
+    /// Written for older readers and future migrations; this no longer chooses a rendering path.
+    @CurrentProcessingVersion var processingVersion: Int = EditSettings.currentProcessing
+    static let currentProcessing = 2
     // Light
     var exposure: Double = 0       // EV, -5...5
     /// -100...100: lifts or lowers the mid-tones and leaves white and black where they are, like Apple's Brightness
@@ -458,12 +475,22 @@ struct EditSettings: Codable, Equatable {
     @Defaulted<DefaultFormat> var formatVersion: Int
     /// Raise this whenever a change to what is saved would lose information in an older Lumen (a new required key, a
     /// renamed case, a new mask kind): older versions then recognise a newer file, keep a copy of it and say so.
-    static let currentFormat = 1
+    static let currentFormat = 3
+
+    /// Migrate metadata only. Original pixels, adjustment values, masks, Heal and AI Denoise references stay intact.
+    var currentRecipe: EditSettings {
+        var s = self; s.formatVersion = Self.currentFormat
+        return s
+    }
 
     var hasCrop: Bool { cropL > 0 || cropT > 0 || cropR < 1 || cropB < 1 }
     var hasTransform: Bool { tVertical != 0 || tHorizontal != 0 || tAspect != 0 || tScale != 100 || tOffX != 0 || tOffY != 0 }
 
-    var isDefault: Bool { self == EditSettings() }
+    var isDefault: Bool {
+        var d = EditSettings()
+        d.processingVersion = processingVersion; d.formatVersion = formatVersion
+        return self == d
+    }
 }
 
 // MARK: - Sections (Edits sheet: switch a tool's edits off / on, reset one tool)
@@ -571,6 +598,7 @@ extension EditSettings {
     /// The edits `before` -> `after` at `t` (0 = before, 1 = after): the preset Strength slider. Numbers are mixed;
     /// on/off settings and curves switch over halfway. Masks, crop and HDR stay as they are.
     static func blend(_ a: EditSettings, _ b: EditSettings, _ t: Double) -> EditSettings {
+        if t <= 0 { return a.currentRecipe }
         func m(_ x: Double, _ y: Double) -> Double { x + (y - x) * t }
         func z(_ x: GradeZone, _ y: GradeZone) -> GradeZone {
             GradeZone(hue: y.sat > 0 ? y.hue : x.hue, sat: m(x.sat, y.sat), lum: m(x.lum, y.lum))
@@ -608,7 +636,7 @@ extension EditSettings {
         r.take(.crop, from: a)
         r.hdr = a.hdr; r.hdrStops = a.hdrStops
         r.disabled = a.disabled
-        return r
+        return r.currentRecipe
     }
 
     func hasEdits(_ s: EditSection) -> Bool {
@@ -673,6 +701,16 @@ struct UserPreset: Codable, Identifiable, Equatable {
     var id = UUID()
     var name: String
     var settings: EditSettings
+    init(id: UUID = UUID(), name: String, settings: EditSettings) {
+        self.id = id; self.name = name; self.settings = settings.currentRecipe
+    }
+    private enum CodingKeys: String, CodingKey { case id, name, settings }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        settings = try c.decode(EditSettings.self, forKey: .settings).currentRecipe
+    }
 }
 
 enum ExportFormat: String, CaseIterable, Identifiable {

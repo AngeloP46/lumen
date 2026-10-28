@@ -354,3 +354,26 @@ look; tests and notes for 0.1.673-0.1.684 (#158). Shared code only.
 Merged from main: Darkroom-style curves (whole end points, five starting points, zone names, hold a point to remove it),
 the editor defers the bottom-edge swipe (two swipes to leave), radial masks with a size handle on every side kept on
 screen and 48 pt grab areas. Curves are Pro here as before; nothing Store-specific changed.
+
+## 27 Oct 2026: adjustment-engine quality (from main candidate #167)
+Shared candidate 9d6bba0: monotone tone composition, bounded detail/noise, gentle Dehaze, Bradford relative white
+balance, edge-aware Clarity analysis, perceptual P3 gamut mapping, B&W grading, honest HDR export failures. Old
+recipes keep processing 1; new/reset recipes use 2 (edits format 2 protects rollback files). UI unchanged. Apple RAW
+base retained for Heal/AI residual compatibility. Light/Colour remain free; existing Pro gates unchanged. No Store
+code changed. Prepared while main validation runs; sandbox OFF/ON compile check pending, merge follows main release.
+Existing local MARKETING.md and docs/appstore/LISTING.md edits are unrelated and are not included in this port.
+
+Follow-up: aligned shared code/tests with main bc0c788. Clamp v2 analysis resampling at the photo edge; exact-linear
+constant regressions pass in main's 44-check GPU run 40604409841. Focused engine mode and early render artifact
+upload speed diagnosis. First sandbox OFF/ON builds passed; final compile check follows this commit. No Store changes.
+
+## 28 Oct 2026: Clarity and one renderer (from main #169)
+Shared candidate through 73c0abf: stronger bounded Clarity band with edge/flat protection; all old edits/history/
+presets/paste use current processing, exact recovery JSON retained before overwrite, edits format 3, old shader/
+white-balance/gamut dispatch removed and thumbnails refreshed. Preserve Heal references in migration backups.
+Fix denoise preview rounding and repair existing small copies from unchanged full residuals, paused decoder identity,
+rejected person-mask label reuse, and explicit crop versions in tolerant loading. No model/runtime changes.
+Detail/AI/Heal keep existing Pro gates, Light/Colour remain free. No Store code changed. Tests/store alone gains
+a bounded local-catalog readiness preflight after the prior cold first-test failure; production product loading,
+prices and purchase assertions unchanged. OFF/ON/StoreKit validation pending; merge follows personal publication.
+Unrelated MARKETING.md and docs/appstore/LISTING.md edits excluded.
