@@ -52,6 +52,16 @@ AI Denoise/Heal/Remove People received a source review, recorded in `AI-QUALITY-
 fixes on branch: rounded denoise preview bins, stale-preview repair from unchanged full residuals, paused-cache
 decoder identity and rejected person-mask label reuse. Real model colour/detail/HDR/fill quality remains open.
 
+Read-only follow-ups are recorded in `EFFECTS-QUALITY-REVIEW-2026-10-28.md` and
+`LENS-BLUR-QUALITY-REVIEW-2026-10-28.md`: Grain Size preview dead ranges, aspect-dependent Vignette range,
+HDR blur energy and initial refinement/manual-focus behaviour. Reproduce with their proposed fixtures before
+changing those algorithms; these are outside the current Clarity/migration release.
+
+Validation found and fixed an existing tolerant-loader defect: explicit cropVersion was discarded if another
+missing field forced tolerant loading. Preserve supplied crop versions and leave genuinely absent old versions
+absent; both cases have regression checks. First rendered pass passed 85/89 checks; the four Clarity strength
+checks correctly rejected modest endpoint response. Retuned gains; repeat validation pending.
+
 Prior full UI run 40604410069 passed. Sandbox PR #168/check 40604979559 remains pending (OFF/ON builds passed;
 StoreKit fixture products did not load in testAnnualUnlocksPro); investigate the fixture separately from editor code.
 

@@ -234,7 +234,9 @@ inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
         // Ordinary structure stays active; hard boundaries are protected from bright/dark halos.
         float edge = 1.0 - lmStep(1.5, 3.0, max(L2.r, 0.0) * 16.0);
         float midtone = 0.35 + 0.65 * exp(-q * q);
-        float amount = clar > 0.0 ? clar * 0.9 : clar * 0.85;
+        // Positive strength can amplify the band; negative strength stays below one so it remains
+        // a convex move towards the broad base, including at frequencies outside the regression fixture.
+        float amount = clar > 0.0 ? clar * 1.5 : clar * 0.98;
         detail += amount * clamp(broad, -1.4, 1.4) * edge * midtone * detailReach;
     }
     if (sharp > 0.0) {
