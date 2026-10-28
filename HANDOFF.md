@@ -1,5 +1,21 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## Latest: SideStore0.1.774 and shared sandbox fixes released, 28 October
+
+Personal main#180 merged24c29b7, source6d4f50d/application0a7e2a3; publish40783343904 verified against fresh
+feed/log/GitHub asset:356120040bytes,SHA2569fce6d2106086b02b27239bef8f7b5378cff4612a82223a28fcaa1f8cc0874c1.
+Shared sandbox#181 merged079a63f (source97babf0). OFF/ON/export policy/build identity/four StoreKit checks
+40781697900 pass atdbd9359; later97babf0 changes engine tests/workflow only. Existing Store hooks and Pro/free
+policy preserved; no Store code, pricing, model weights/inference or layout changed. No App Store submission.
+Brush/Lens Blur/Grain/Vignette/Heal and one-active basic/refined thumbnail scheduler fixes are now shared/released.
+Non-caching materialization measures Subject2399–2432MB under unchanged2650MB; RAW cache eviction alone did not.
+All29 committed compiler/kernel blobs match personal6d4f50d;465 focused+25 short memory checks40782782695 pass,
+six UI cases40781694994 pass and screenshots inspected. Personal parallel brush GPU-heap max measurement fails
+648→716→689MB while shared identical run656→709→668passes; record variability, no all-green/phone budget claim.
+Full main engine/ProRAW memory40783385204 and full UI40783388166 continue; read results before rerunning.
+See updated completion checkpoint/report. Preserve unrelated local MARKETING.md and docs/appstore/LISTING.md.
+Older candidate/pause notes below are historical and superseded by this release.
+
 ## Active 28 October completion batch (main #180)
 Shared candidate source6f09c23: consistent brush compositing; manual/refined Lens Blur and RGB HDR radiance;
 filtered source-relative grain and normalized vignette; missing Heal/people-search failure; one-active visible-first

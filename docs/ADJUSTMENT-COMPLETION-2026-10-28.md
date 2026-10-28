@@ -47,3 +47,43 @@ manual-focus bypass and active-Heal cancellation interaction before validation. 
 After passing checks, publish personal main through protected PR, verify fresh SideStore feed/log/asset, then
 merge shared sandbox after OFF/ON/export-policy/StoreKit checks. Record exact versions/runs here. PhoneGPUspeed,
 phone memory and original-image photographic judgement remain evidence only the owner's testing can supply.
+
+## 28 October resumed validation follow-up
+
+Source8777ed5 addresses the actual remaining failures. Lens Add's original fixture targeted an already fully
+selected far plane; its replacement targets partial coverage and keeps the same effect threshold, with an extra
+direct target-radius assertion. The UI artifact showed the generic absent-model note hiding the injected search
+result: explicit operation results now take precedence, and UI checks wait for the asynchronous result text.
+
+Brush rebuilds now use the existing non-caching GPU draw context, one-component half-float checkpoints and a final
+R8 component, inside a whole-build autorelease pool. Sixteen repeated100-run replacements retain the original
+<64MB growth limit and assert exactly one component-cache entry. No checkpoint precision or output size reduction.
+
+A successfully materialized RAW base releases its CIRAWFilter and drains its provider graph before analysis.
+The existing decode lock covers the handoff; the common factory preserves HDR, sharpness, orientation and decoder
+identity when reopened. Lazy/allocation-fallback paths keep their provider. New SDR/HDR320→160→320pixel comparisons
+verify identical rendering; actual memory savings must come from the fresh Subject run, not source inference.
+Full memory now also requires successful HDR export, rather than recording its peak while ignoring a nil result.
+
+Independent lifecycle review found no blocking lock/options/caller issue. Focused adjustments+fresh Subject
+validation40780021783, Release build40780009279 and full UI40780004538 are running; no new publication yet.
+
+## Published result and remaining measurement
+
+SideStore0.1.774 is verified live: main#180/24c29b7, source6d4f50d, application0a7e2a3,
+publish40783343904,356120040bytes,SHA2569fce6d2106086b02b27239bef8f7b5378cff4612a82223a28fcaa1f8cc0874c1.
+Sandbox#181/079a63f merged. Both configurations, policy/build identity and four StoreKit checks40781697900 pass;
+source97babf0 differs from testeddbd9359 only in engine tests/workflow. All29 committed compiler/kernel inputs
+match personal6d4f50d, and shared40782782695 passes465 focused assertions+25 short memory checks. Six UI cases
+40781694994 pass, result screenshots inspected; readiness40782199912 passes.
+
+Non-caching materialization and post-pool cache clearing reduced actual Subject peak to2399–2432MB (was2716MB),
+with the original2650MB budget. RAW cache eviction alone did not measure an improvement. The earlier claim that
+pools alone addressed this was only a candidate and is superseded by these results.
+
+Brush benchmark warm-up is fixed at8 real rebuilds followed by16 measured rebuilds; maxgrowth64MB, all24 logged.
+Personal40782233771 measured648→max716→689MB and fails; shared identical run656→709→668MB passes. All pixel
+checks and exactly-one-component ownership pass in both. This driver/process footprint variability is still a test
+follow-up; neither green retry nor source tracing proves a phone budget. No limit was raised or image size reduced.
+Full engine/ProRAW memory40783385204 and full UI40783388166 started on releasedmain and continue independently.
+The owner prioritized phone publication; photographic/phone-only checks remain in QUALITY-CHECKLIST and checkpoint.
