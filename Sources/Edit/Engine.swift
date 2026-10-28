@@ -49,7 +49,7 @@ struct LumenKernels {
     var lensWeigh: CIColorKernel?, lensCompose: CIColorKernel?
     /// Edge refinement for AI masks (optional: without it masks keep their soft edges).
     var gfPack: CIColorKernel?, gfCoef: CIColorKernel?, gfApply: CIColorKernel?
-    /// Self-guided log-luminance analysis for processing version 2. Older edits keep the Gaussian layers.
+    /// Self-guided log-luminance analysis for the shared adjustment engine.
     var analysisPack: CIColorKernel?, analysisCoef: CIColorKernel?, analysisApply: CIColorKernel?
     /// Sky seen through trees (optional: without them the sky mask is the scene model's alone).
     var skyWeigh: CIColorKernel?, leafWeigh: CIColorKernel?, skyGaps: CIColorKernel?
@@ -92,7 +92,7 @@ private final class BundleToken {}
 /// A decoded image at a working size plus the analysis layers the develop kernel needs.
 /// Layer encoding: e = (log2(Y / 0.18) + 8) / 16.
 ///  - l1: R = log-luminance blurred finely (sharpening), G = medium (texture), B = wide (clarity)
-///  - l2: R = log-luminance blurred very widely (shadows/highlights regions), G = dark channel (dehaze)
+///  - l2: R = encoded local log-light range (clarity edge protection), G = dark channel (dehaze)
 ///  - chroma: RGB blurred (colour noise)
 final class ImageSource: @unchecked Sendable {
     let base: CIImage
@@ -104,8 +104,6 @@ final class ImageSource: @unchecked Sendable {
     let darkNorm: Float
     /// 96-px linear RGB(A float) snapshot for cheap CPU statistics.
     let stats: PixelGrid
-    /// The analysis layers must use the same processing version as the settings they are developed with.
-    let processingVersion: Int
 
     private let lock = NSLock()
     private var masks: [String: CIImage] = [:]
@@ -131,8 +129,7 @@ final class ImageSource: @unchecked Sendable {
     var longEdge: CGFloat { max(size.width, size.height) }
     var extent: CGRect { CGRect(origin: .zero, size: size) }
 
-    init(base: CIImage, l1: CIImage, l2: CIImage, chroma: CIImage, air: SIMD3<Float>, darkNorm: Float, stats: PixelGrid,
-         processingVersion: Int = 2) {
+    init(base: CIImage, l1: CIImage, l2: CIImage, chroma: CIImage, air: SIMD3<Float>, darkNorm: Float, stats: PixelGrid) {
         self.base = base
         self.l1 = l1
         self.l2 = l2
@@ -141,7 +138,6 @@ final class ImageSource: @unchecked Sendable {
         self.air = air
         self.darkNorm = darkNorm
         self.stats = stats
-        self.processingVersion = processingVersion >= 2 ? 2 : 1
     }
 
     func cachedMask(_ key: String) -> CIImage? { lock.lock(); defer { lock.unlock() }; return masks[key] }
@@ -527,9 +523,9 @@ final class EditSession: @unchecked Sendable {
     }
 
     /// Decodes and analyses the photo. `materialize` renders the pieces into GPU buffers so slider drags are cheap.
-    func makeSource(maxEdge: CGFloat?, materialize: Bool, processingVersion: Int = 2) -> ImageSource? {
+    func makeSource(maxEdge: CGFloat?, materialize: Bool) -> ImageSource? {
         guard LumenKernels.shared != nil, let decoded = decode(maxEdge: maxEdge) else { return nil }
-        return analyse(materializedOrLazy(decoded, materialize), materialize: materialize, processingVersion: processingVersion)
+        return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
     }
 
     /// The decoded photo in a GPU buffer. If that fails the lazy graph is used, which re-runs the RAW engine for every
@@ -544,8 +540,7 @@ final class EditSession: @unchecked Sendable {
     }
 
     /// The same with an explicit heal list (the before view and the split compare use the photo without heals).
-    func makeSource(maxEdge: CGFloat?, materialize: Bool, heals list: [HealSpot], denoise: Bool = true,
-                    processingVersion: Int = 2) -> ImageSource? {
+    func makeSource(maxEdge: CGFloat?, materialize: Bool, heals list: [HealSpot], denoise: Bool = true) -> ImageSource? {
         guard LumenKernels.shared != nil else { return nil }
         let decoded: CIImage?
         if denoise { decoded = decode(maxEdge: maxEdge, heals: list) }
@@ -556,13 +551,14 @@ final class EditSession: @unchecked Sendable {
             decodeLock.unlock()
         }
         guard let decoded else { return nil }
-        return analyse(materializedOrLazy(decoded, materialize), materialize: materialize, processingVersion: processingVersion)
+        return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
     }
 
     /// Kept internal so engine invariants can be checked with exact linear fixtures, without encoding/resampling
     /// a test image first (those operations can introduce their own boundary pixels).
-    func analyse(_ base: CIImage, materialize: Bool, processingVersion: Int) -> ImageSource? {
-        guard let k = LumenKernels.shared else { return nil }
+    func analyse(_ base: CIImage, materialize: Bool) -> ImageSource? {
+        guard let k = LumenKernels.shared, let pack = k.analysisPack, let coef = k.analysisCoef,
+              let apply = k.analysisApply else { return nil }
         let ext = base.extent
         let E = max(ext.width, ext.height)
 
@@ -570,16 +566,10 @@ final class EditSession: @unchecked Sendable {
         let f = min(1, 640 / E)
         var small = base
         if f < 1 {
-            if processingVersion >= 2 {
-                // Lanczos must see real edge pixels, not transparent black outside the image. A fringe in the
-                // small guide corrupts the coefficients that are later applied to the full-resolution border.
-                let target = ext.applying(CGAffineTransform(scaleX: f, y: f))
-                small = base.clampedToExtent().applyingFilter("CILanczosScaleTransform",
-                    parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0]).cropped(to: target)
-            } else {
-                small = base.applyingFilter("CILanczosScaleTransform",
-                                            parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0])
-            }
+            // Clamp before resampling so transparent pixels cannot contaminate the edge coefficients.
+            let target = ext.applying(CGAffineTransform(scaleX: f, y: f))
+            small = base.clampedToExtent().applyingFilter("CILanczosScaleTransform",
+                parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0]).cropped(to: target)
             small = Self.normalized(small)
         }
         let sext = small.extent
@@ -595,8 +585,7 @@ final class EditSession: @unchecked Sendable {
 
         // log-luminance of the small copy
         let logS = k.logLum.apply(extent: sext, arguments: [small])!
-        let sigmaClar = 0.011 * E * f
-        let sigmaBase = 0.04 * E * f
+        let sigmaClar = 0.018 * E * f
         let sigmaChroma = max(1, 0.004 * E * f)
 
         let minS = k.minChannel.apply(extent: sext, arguments: [small])!
@@ -618,50 +607,36 @@ final class EditSession: @unchecked Sendable {
         let logF = k.logLum.apply(extent: ext, arguments: [base])!
         let sharpF = Self.blur(logF, max(0.5, 0.00045 * E), ext)
         let texF = Self.blur(logF, max(1.2, 0.0016 * E), ext)
-        let clarity: CIImage
-        let wide: CIImage
-        if processingVersion >= 2, let pack = k.analysisPack, let coef = k.analysisCoef, let apply = k.analysisApply,
-           let moments = pack.apply(extent: sext, arguments: [logS]) {
-            // Fast guided filter (He et al.): fit local linear models on the <=640 px log-luminance copy,
-            // average their coefficients there, then apply them to the full-detail guide. Applying the guide after
-            // upscaling keeps a sky/building boundary sharp even when it is smaller than an analysis pixel.
-            // No extra full-resolution retained buffer: only the small coefficient maps are materialized.
-            func guided(radius: CGFloat, stops: Double) -> CIImage {
-                func box(_ img: CIImage) -> CIImage {
-                    img.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: max(1, radius)])
-                        .cropped(to: sext)
-                }
-                // logS uses sixteen stops per unit; epsilon is a variance in that encoded domain.
-                let epsilon = pow(stops / 16, 2)
-                guard let ab = coef.apply(extent: sext, arguments: [box(moments), CIVector(x: epsilon, y: 0, z: 0, w: 0)]),
-                      let out = apply.apply(extent: ext, arguments: [logF, upscaled(box(ab))])
-                else { return upscaled(Self.blur(logS, radius, sext)) }
-                return out
-            }
-            clarity = guided(radius: sigmaClar, stops: 0.45)
-            // V2 tone zones are monotone point curves; they no longer need a second, wider spatial base.
-            // Keep the reserved layer channel on the same guide without allocating another coefficient map.
-            wide = clarity
-        } else {
-            // Version 1 is the original graph, including its Gaussian analysis and fine-detail layers.
-            clarity = upscaled(Self.blur(logS, sigmaClar, sext))
-            wide = upscaled(Self.blur(logS, sigmaBase, sext))
+        // Fit the broad base on a small log-light copy, then evaluate it on the same medium guide
+        // used by Texture. This creates a real mid-scale band without amplifying fine noise or
+        // cancelling the signal by subtracting another residual after an edge-aware filter.
+        func box(_ img: CIImage) -> CIImage {
+            img.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: max(1, sigmaClar)])
+                .cropped(to: sext)
         }
+        let epsilon: CGFloat = 1.0 / 256  // (1 stop / 16)^2: modest structure is not mistaken for a hard edge
+        guard let moments = pack.apply(extent: sext, arguments: [logS]),
+              let ab = coef.apply(extent: sext, arguments: [box(moments), CIVector(x: epsilon, y: 0, z: 0, w: 0)])
+        else { return nil }
+        let coefficients = upscaled(box(ab))
+        guard let clarity = apply.apply(extent: ext, arguments: [texF, coefficients]) else { return nil }
+        // A hard boundary can leave small guided residuals across two averaging radii. Protect that
+        // entire footprint, while leaving ordinary textured surfaces (under 1.5 stops) fully active.
+        let rangeRadius = max(2, sigmaClar * 2)
+        let logMax = logS.clampedToExtent().applyingFilter("CIMorphologyMaximum",
+            parameters: [kCIInputRadiusKey: rangeRadius]).cropped(to: sext)
+        let logMin = logS.clampedToExtent().applyingFilter("CIMorphologyMinimum",
+            parameters: [kCIInputRadiusKey: rangeRadius]).cropped(to: sext)
+        // max >= min, so symmetric difference is exactly the range without relying on blend operand order.
+        let contrastRange = logMax.applyingFilter("CIDifferenceBlendMode", parameters: [kCIInputBackgroundImageKey: logMin])
+            .cropped(to: sext)
         var l1 = k.pack3.apply(extent: ext, arguments: [sharpF, texF, clarity])!
         if materialize, let m = Self.materialized(l1) { l1 = m }
 
-        let l2: CIImage
-        if processingVersion >= 2 {
-            l2 = k.pack3.apply(extent: ext, arguments: [wide, upscaled(darkS), Self.constant(0, ext)])!
-        } else {
-            // Pack before scaling for the exact legacy interpolation/materialization path.
-            let baseS = Self.blur(logS, sigmaBase, sext)
-            let l2S = k.pack3.apply(extent: sext, arguments: [baseS, darkS, Self.constant(0, sext)])!
-            l2 = upscaled(l2S)
-        }
+        let l2 = k.pack3.apply(extent: ext, arguments: [upscaled(contrastRange), upscaled(darkS), Self.constant(0, ext)])!
 
         return ImageSource(base: base, l1: l1, l2: l2, chroma: upscaled(chromaS),
-                           air: air, darkNorm: darkNorm, stats: grid, processingVersion: processingVersion)
+                           air: air, darkNorm: darkNorm, stats: grid)
     }
 
     // MARK: Statistics
@@ -700,11 +675,10 @@ final class EditSession: @unchecked Sendable {
     // MARK: Look table
 
     func lookCube(_ s: EditSettings) -> Data? {
-        let key = LookKey(curves: s.curves, hsl: s.hsl, grading: s.grading, bw: s.blackAndWhite, processingVersion: s.processingVersion)
+        let key = LookKey(curves: s.curves, hsl: s.hsl, grading: s.grading, bw: s.blackAndWhite)
         cubeLock.lock(); defer { cubeLock.unlock() }
         if cubeKey != key || cubeData == nil {
-            cubeData = ColorCube.make(curves: s.curves, hsl: s.hsl, grading: s.grading, blackAndWhite: s.blackAndWhite,
-                                      processingVersion: s.processingVersion)
+            cubeData = ColorCube.make(curves: s.curves, hsl: s.hsl, grading: s.grading, blackAndWhite: s.blackAndWhite)
             cubeKey = key
         }
         return cubeData
@@ -754,5 +728,4 @@ struct LookKey: Hashable {
     var hsl: HSLSettings
     var grading: ColorGrading
     var bw: Bool
-    var processingVersion: Int
 }

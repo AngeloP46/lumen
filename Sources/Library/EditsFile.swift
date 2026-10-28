@@ -9,12 +9,17 @@ enum EditsFile {
         var current: EditSettings
         var undo: [EditSettings]
         var redo: [EditSettings]
+        var currentRecipes: History {
+            History(current: current.currentRecipe, undo: undo.map(\.currentRecipe), redo: redo.map(\.currentRecipe))
+        }
     }
 
     /// What reading an edits file found, so the editor can say so and the original can be kept (checklist A1).
     struct LoadReport: Equatable {
         /// Written by an older Lumen and laid over today's defaults (normal: nothing lost).
         var migrated = false
+        /// Adjustment values are retained, but the old recipe now renders with the current engine.
+        var engineMigrated = false
         /// Masks, or parts of masks, this version can't read (from a newer Lumen, or damaged).
         var droppedMasks = 0
         /// Settings this version can't read.
@@ -49,13 +54,14 @@ enum EditsFile {
     /// Before 22 Oct a single unreadable mask dropped every mask, and any unreadable key all the edits (checklist A1).
     static func load(_ data: Data) -> (settings: EditSettings, report: LoadReport) {
         var report = LoadReport()
+        report.engineMigrated = needsEngineMigration(data)
         let decoder = JSONDecoder()
         if var s = try? decoder.decode(EditSettings.self, from: data) {
             report.newerVersion = s.formatVersion > EditSettings.currentFormat
             // what this version holds is in this version's format: saved back, the file must not claim to be the newer
             // one it came from (it no longer holds that version's extras), or a later newer Lumen would trust it
             s.formatVersion = EditSettings.currentFormat
-            return (s, report)
+            return (s.currentRecipe, report)
         }
         guard let old = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             report.unreadable = true
@@ -69,7 +75,6 @@ enum EditsFile {
         guard var defaults = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(template))) as? [String: Any],
               let maskTemplate = (defaults["masks"] as? [Any])?.first else { return (EditSettings(), report) }
         defaults["masks"] = [Any]()
-        defaults["processingVersion"] = 1  // missing in an older file: never silently change its rendering engine
         // Lens Blur reads the absence of these to recognise an old save (old amount scale; a saved choice): the
         // template must not fill them in
         defaults["cropVersion"] = nil   // absent = an older crop; the template must not make it a new one
@@ -83,7 +88,9 @@ enum EditsFile {
         }
         // every setting this version knows, laid over the default; one that doesn't read is left at its default
         var merged = defaults
-        for (k, v) in old where k != "masks" && defaults[k] != nil {
+        // cropVersion must stay absent in the template for genuinely older geometry, but a saved explicit
+        // value is still a known setting. Dropping it during tolerant loading reinterprets modern crop values.
+        for (k, v) in old where k != "masks" && (defaults[k] != nil || k == "cropVersion") {
             var trial = merged
             trial[k] = Self.overlay(v, on: defaults[k] ?? v)
             if decodes(trial) != nil { merged = trial } else { report.droppedSettings.append(k) }
@@ -117,7 +124,48 @@ enum EditsFile {
                 report.droppedMasks += 1
             }
         }
-        return (s, report)
+        return (s.currentRecipe, report)
+    }
+
+    /// Sidecars, standalone history and preset lists all carry recipes. Inspect their original JSON before
+    /// decoding normalizes metadata, so the first write can preserve the complete pre-update bytes.
+    static func needsEngineMigration(_ data: Data) -> Bool {
+        guard let json = try? JSONSerialization.jsonObject(with: data) else { return true }
+        func recipe(_ value: Any) -> Bool {
+            guard let obj = value as? [String: Any] else { return true }
+            return (obj["formatVersion"] as? Int ?? 0) < EditSettings.currentFormat
+                || (obj["processingVersion"] as? Int ?? 0) != EditSettings.currentProcessing
+        }
+        if let list = json as? [[String: Any]] {
+            return list.contains { recipe($0["settings"] ?? $0) }
+        }
+        guard let obj = json as? [String: Any] else { return true }
+        if let current = obj["current"] {
+            return recipe(current) || ((obj["undo"] as? [Any]) ?? []).contains(where: recipe)
+                || ((obj["redo"] as? [Any]) ?? []).contains(where: recipe)
+        }
+        return recipe(obj["settings"] ?? obj)
+    }
+
+    static func engineBackupURL(for file: URL) -> URL {
+        file.deletingPathExtension().appendingPathExtension("pre-engine-\(EditSettings.currentFormat).json")
+    }
+
+    /// Once per recipe file, before any overwrite. Failure throws so callers retain their pending save and the
+    /// old file; an existing backup must be readable and a regular file before it can satisfy this requirement.
+    static func preserveBeforeEngineMigration(file: URL, original: Data? = nil) throws {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: file.path) else { return }
+        let data = try original ?? Data(contentsOf: file)
+        guard needsEngineMigration(data) else { return }
+        let backup = engineBackupURL(for: file)
+        var directory: ObjCBool = false
+        if fm.fileExists(atPath: backup.path, isDirectory: &directory) {
+            guard !directory.boolValue else { throw CocoaError(.fileWriteFileExists) }
+            _ = try Data(contentsOf: backup)
+            return
+        }
+        try data.write(to: backup, options: .atomic)
     }
 
     /// Lays old JSON values over a template: objects are merged key by key (keys the template lacks are dropped),
@@ -149,7 +197,9 @@ enum EditsFile {
     }
 
     static func history(_ data: Data) -> History? {
-        if let h = try? JSONDecoder().decode(History.self, from: data) { return h }
+        if let h = try? JSONDecoder().decode(History.self, from: data) {
+            return h.currentRecipes
+        }
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let current = obj["current"],
               let currentData = try? JSONSerialization.data(withJSONObject: current) else { return nil }
         let (now, report) = load(currentData)

@@ -164,8 +164,24 @@ final class LibraryStore: ObservableObject {
         }
         loadIndex()
         fillInDatesTaken()
-        // thumbnails that never got made (or were lost) are made again
-        for it in items where !fm.fileExists(atPath: thumbURL(it).path) { refreshThumbnail(it) }
+        // Cached JPEG thumbnails must adopt the same engine as the editor after this update. The serial queue
+        // writes the marker after the refresh jobs, so an interrupted launch retries rather than keeping old looks.
+        let thumbnailEngineURL = root.appendingPathComponent("thumbnail-engine.txt")
+        let thumbnailEngine = String(EditSettings.currentFormat)
+        let refreshAll = (try? String(contentsOf: thumbnailEngineURL, encoding: .utf8)) != thumbnailEngine
+        var cacheCleared = true
+        for it in items where refreshAll || !fm.fileExists(atPath: thumbURL(it).path) {
+            if refreshAll, fm.fileExists(atPath: thumbURL(it).path) {
+                do { try fm.removeItem(at: thumbURL(it)) }   // derived JPEG only; originals and recipes are elsewhere
+                catch { cacheCleared = false; Diagnostics.shared.note("couldn't clear an old thumbnail: \(error.localizedDescription)") }
+            }
+            refreshThumbnail(it)
+        }
+        // A failed render then leaves a missing JPEG, which the normal startup check retries next time.
+        // If even cache removal failed, retain the old marker so the whole migration is retried too.
+        if refreshAll && cacheCleared {
+            thumbQueue.async { try? Data(thumbnailEngine.utf8).write(to: thumbnailEngineURL, options: .atomic) }
+        }
         if let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
            let decoded = try? JSONDecoder().decode([UserPreset].self, from: data) {
             userPresets = decoded
@@ -179,6 +195,8 @@ final class LibraryStore: ObservableObject {
                 return UserPreset(id: id, name: name, settings: Self.decodeSettings(d))
             }
         }
+        if !userPresets.isEmpty, let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
+           EditsFile.needsEngineMigration(data) { savePresets() }
         // after the presets are read: they count as references too
         if testRoot == nil { sweepHealPatches() }
     }
@@ -261,8 +279,8 @@ final class LibraryStore: ObservableObject {
         try? JSONEncoder().encode([removed, kept]).write(to: folder.appendingPathComponent("index.json"))
         let library = LibraryStore(testRoot: folder)
         func spot() -> HealSpot { HealSpot(strokes: [], x: 0, y: 0, w: 0.1, h: 0.1) }
-        let current = spot(), undo = spot(), redo = spot(), shared = spot(), copied = spot(), preset = spot(), active = spot(), dropped = spot()
-        let all = [current, undo, redo, shared, copied, preset, active, dropped]
+        let current = spot(), undo = spot(), redo = spot(), shared = spot(), copied = spot(), preset = spot(), active = spot(), dropped = spot(), backupOnly = spot()
+        let all = [current, undo, redo, shared, copied, preset, active, dropped, backupOnly]
         func exists(_ s: HealSpot) -> Bool {
             fm.fileExists(atPath: HealStore.patchURL(s.id).path) || fm.fileExists(atPath: HealStore.maskURL(s.id).path)
         }
@@ -288,11 +306,15 @@ final class LibraryStore: ObservableObject {
         library.clipboard = Clipboard(settings: clipboard, selection: CopySelection(), sourceName: "Removed")
         var recipe = EditSettings(); recipe.heals = [preset]
         library.userPresets = [UserPreset(name: "Legacy", settings: recipe)]
+        var recoveredRecipe = EditSettings(); recoveredRecipe.heals = [backupOnly]
+        let presetBackup = EditsFile.engineBackupURL(for: folder.appendingPathComponent("presets.json"))
+        try? JSONEncoder().encode([UserPreset(name: "Recovery copy", settings: recoveredRecipe)]).write(to: presetBackup)
         let lease = HealStore.retain([active.id])
         library.delete(removed)
         library.waitForDeletes()
         check([current, undo, redo, dropped].allSatisfy { !exists($0) }, "current undo redo and trimmed owner patches removed")
         check([shared, copied, preset].allSatisfy(exists), "retained history clipboard and preset preserved")
+        check(exists(backupOnly), "preset migration recovery copy retains its Heal pixels")
         check(exists(active), "in-flight render retains patch")
         lease.close()
         check(!exists(active), "last render release cleans pending patch")
@@ -307,6 +329,8 @@ final class LibraryStore: ObservableObject {
         library.delete(kept)
         library.waitForDeletes()
         check(!exists(shared), "shared patch removed after last photo deleted")
+        check(exists(backupOnly) && Self.presetBackupHeals(in: folder)?.contains(backupOnly.id) == true,
+              "recovery-only Heal reference remains visible to the startup sweep")
         // Retained legacy references are intentionally preserved; this is not a global garbage sweep.
         check(!fm.fileExists(atPath: library.fileURL(removed).path) && !fm.fileExists(atPath: library.thumbURL(removed).path), "photo and thumbnail removed")
     }
@@ -402,6 +426,10 @@ final class LibraryStore: ObservableObject {
         if let pending = failedSaves[item.id] { return pending.settings }
         guard let data = try? Data(contentsOf: editURL(item)) else { return EditSettings() }
         let (s, report) = EditsFile.load(data)
+        if report.engineMigrated {
+            do { try EditsFile.preserveBeforeEngineMigration(file: editURL(item), original: data) }
+            catch { reportSaveFailure(error) }
+        }
         // anything this version couldn't read: the original file is kept before anything can be saved over it
         if report.lostSomething {
             var backedUp = false
@@ -491,12 +519,15 @@ final class LibraryStore: ObservableObject {
     func save(_ s: EditSettings, for item: LibraryItem, history supplied: EditHistory? = nil) {
         // A debounced editor save may arrive after library deletion; never recreate its sidecar.
         guard items.contains(where: { $0.id == item.id }) else { return }
+        let s = s.currentRecipe
+        let supplied = supplied?.currentRecipes
         let url = editURL(item), file = historyURL(item)
         // the old sidecar is read before it is overwritten: it may still hold a pre-move `_undoHistory`
         let oldData = supplied == nil ? try? Data(contentsOf: url) : nil
         let previous = supplied == nil ? failedSaves[item.id]?.settings ?? oldData.map(Self.decodeSettings) ?? EditSettings() : nil
         // small, fast and synchronous: what the photo looks like is never lost; a failed write is said and retried
         do {
+            try EditsFile.preserveBeforeEngineMigration(file: url)
             if let original = pendingBackups[item.id] {
                 try keepCopy(of: original, for: item)
                 pendingBackups[item.id] = nil
@@ -533,7 +564,8 @@ final class LibraryStore: ObservableObject {
         for file in files {
             guard let history = pendingHistory.removeValue(forKey: file) else { continue }
             do {
-                try JSONEncoder().encode(history).write(to: file, options: .atomic)
+                try EditsFile.preserveBeforeEngineMigration(file: file)
+                try JSONEncoder().encode(history.currentRecipes).write(to: file, options: .atomic)
             } catch {
                 if pendingHistory[file] == nil { pendingHistory[file] = history }
                 Diagnostics.shared.note("undo history not saved: \(error.localizedDescription)")
@@ -629,10 +661,11 @@ final class LibraryStore: ObservableObject {
     /// every edits and history file could be read (otherwise nothing is removed: never delete pixels still needed).
     private func sweepHealPatches() {
         let editsDir = self.editsDir, presets = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
-        let healDir = HealStore.directory
+        let healDir = HealStore.directory, root = self.root
         thumbQueue.async {
             let fm = FileManager.default
-            var used = presets
+            guard let recoveryHeals = Self.presetBackupHeals(in: root) else { return }
+            var used = presets.union(recoveryHeals)
             // can't list the edits folder: nothing is known to be unused, so nothing is removed
             guard let editFiles = try? fm.contentsOfDirectory(at: editsDir, includingPropertiesForKeys: nil) else { return }
             for url in editFiles where url.pathExtension == "json" {
@@ -655,6 +688,19 @@ final class LibraryStore: ObservableObject {
             HealStore.remove(unused)
             Diagnostics.shared.note("heal patches nothing uses any more: \(unused.count) removed")
         }
+    }
+
+    /// Preset migration copies live beside presets.json, outside edits/. They remain recovery recipes even
+    /// after a user changes/deletes the active preset. Unreadable copies make pixel cleanup unsafe.
+    nonisolated private static func presetBackupHeals(in root: URL) -> Set<UUID>? {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return nil }
+        var used = Set<UUID>()
+        for file in files where file.pathExtension == "json" && file.lastPathComponent.hasPrefix("presets.pre-engine-") {
+            guard let data = try? Data(contentsOf: file), let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
+            used.formUnion(HealStore.references(in: json))
+        }
+        return used
     }
 
     // MARK: AI Denoise for many photos
@@ -939,14 +985,15 @@ final class LibraryStore: ObservableObject {
         try? fm.removeItem(at: fileURL)
         let presetHeals = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
         let clipHeals = Set(clipboard?.settings.heals.map(\.id) ?? [])
-        let editsDir = editsDir, id = item.id.uuidString
+        let editsDir = editsDir, root = self.root, id = item.id.uuidString
         deleteQueue.async { [weak self] in
             let fm = FileManager.default
             var patches = owned
             // queued history writes first: they may name Heal patches, and must not recreate the file afterwards
             historyQueue.sync { LibraryStore.writePendingHistory(historyURL) }
             let names = (try? fm.contentsOfDirectory(atPath: editsDir.path))
-            let own = Set((names ?? []).filter { $0 == "\(id).json" || $0 == "\(id).history.json" || $0 == "\(id).damaged.json" || $0.hasPrefix("\(id).kept-") })
+            let own = Set((names ?? []).filter { $0 == "\(id).json" || $0 == "\(id).history.json" || $0 == "\(id).damaged.json"
+                || $0.hasPrefix("\(id).kept-") || $0.hasPrefix("\(id).pre-engine-") || $0.hasPrefix("\(id).history.pre-engine-") })
             for name in own where name.hasSuffix(".json") {
                 if let data = try? Data(contentsOf: editsDir.appendingPathComponent(name)), let json = try? JSONSerialization.jsonObject(with: data) {
                     patches.formUnion(HealStore.references(in: json))
@@ -958,6 +1005,8 @@ final class LibraryStore: ObservableObject {
             // being removed by another delete is never half read.
             var retained: Set<UUID>? = patches.isEmpty ? [] : presetHeals.union(clipHeals)
             if !patches.isEmpty {
+                if let recoveryHeals = Self.presetBackupHeals(in: root) { retained?.formUnion(recoveryHeals) }
+                else { retained = nil }
                 if let names {
                     for name in names where name.hasSuffix(".json") && !own.contains(name) && retained != nil {
                         guard let data = try? Data(contentsOf: editsDir.appendingPathComponent(name)),
@@ -1023,7 +1072,9 @@ final class LibraryStore: ObservableObject {
 
     private func savePresets() {
         do {
-            try JSONEncoder().encode(userPresets).write(to: root.appendingPathComponent("presets.json"), options: .atomic)
+            let file = root.appendingPathComponent("presets.json")
+            try EditsFile.preserveBeforeEngineMigration(file: file)
+            try JSONEncoder().encode(userPresets).write(to: file, options: .atomic)
             presetsSaveFailed = false
         } catch {
             presetsSaveFailed = true

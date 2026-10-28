@@ -1,4 +1,4 @@
-# Adjustment engine quality, 27 October 2026
+# Adjustment engine quality, 28 October 2026
 
 Angelo approved implementing the adjustment review and publishing the verified personal build to SideStore.
 The layout and controls stay the same. Main remains unlocked; shared code is ported to the sandbox separately.
@@ -6,17 +6,17 @@ The layout and controls stay the same. Main remains unlocked; shared code is por
 ## Compatibility and rollback
 
 - Starting main revision: `2ad11b89995c3ff30ea2ec6ba8336486c6aa8006` (last personal release 0.1.703).
-- `EditSettings.processingVersion`: newly created/reset recipes use 2; absent keys in old recipes/history/presets
-  read as 1, including the tolerant sidecar loader. Version 1 retains the original tone/colour formulas and
-  Gaussian analysis. Original photo files are never rewritten.
-- Existing edits keep version 1 until Reset all or replacement by a new preset/look. Reset is undoable. To test the
-  improved engine without disturbing an edited photo, import another copy, or Reset all then undo afterwards.
-- The edits format is 2. A rollback to the earlier app recognises a newer-format sidecar, keeps a copy before
-  saving, and explains the mismatch. A rollback restores code; edits made with version 2 cannot have identical
-  appearance in an older app that does not contain those algorithms. Do not delete/reinstall Lumen to roll back.
-- Whole-look paste/presets carry their processing generation. A partial paste onto an already-edited photo keeps
-  that destination's generation to avoid changing tools that were not selected. Cross-generation preset Strength
-  restores the original recipe exactly at zero; intermediate amounts use the preset's engine.
+- Baseline for this continuation: `0607d03` (SideStore 0.1.714). The earlier untouched engine is recoverable at the
+  starting revision above. Git history retains both; the app now contains one rendering implementation.
+- At Angelo's explicit request, all saved recipes, history, presets and pasted settings use current processing.
+  Processing metadata reads/writes 2 but never selects a separate engine. Adjustment values, masks, Heal/AI
+  references and original photos remain intact; the same values can now look different on previously edited photos.
+- Before the first overwrite of an older sidecar/history/preset file, the exact original JSON is preserved once
+  as `*.pre-engine-3.json`. A failed backup blocks that write and retains the pending save. These backup recipes
+  also retain their Heal-patch references. Derived library thumbnails refresh for the current renderer.
+- The edits format is 3, so 0.1.714 recognises newer saves and keeps a copy before editing after a rollback.
+  Rollback restores code, not an identical appearance for adjustments made with newer formulas. Do not delete or
+  reinstall Lumen to roll back. Backup JSON and Git history preserve recovery options without retaining old shaders.
 
 ## Implemented processing
 
@@ -26,8 +26,10 @@ The layout and controls stay the same. Main remains unlocked; shared code is por
 - Two-scale, amplitude-aware ordinary luminance noise reduction, with stronger shadow gates. Negative Texture and
   Noise combine as nonnegative remaining-detail gains. Sharpening avoids re-amplifying suppressed weak noise.
   This remains a fast photographic approximation, not camera-calibrated noise estimation or AI Denoise.
-- Clarity uses a fast self-guided log-light analysis (coefficients computed at <=640 px, applied to the detailed
-  guide) and sign-safe residual separation. Strong boundaries are protected better than a broad Gaussian blur.
+- Clarity uses a fast guided log-light analysis (coefficients at <=640 px) and a medium-detail residual evaluated
+  on the same medium-scale guide. This replaces the earlier overlap subtraction that could cancel the useful
+  signal. A bounded positive/negative gain changes medium structure, leaves fine grain largely alone and fades
+  near strong boundaries using local log-light range. Endpoint strength and halo tests cover two image sizes.
 - Signed quadratic Dehaze response gives fine control near zero. Atmospheric colour shares white adaptation;
   its post-exposure brightness is bounded so HDR lamps cannot wash out deep shadows at a -1 tick. Positive haze
   removal also protects luminance from going negative. The endpoints remain intentionally strong effects.
@@ -61,12 +63,18 @@ reduction, not necessarily an entirely un-denoised RAW decode.
 - [Adobe: Tone and colour controls](https://helpx.adobe.com/lightroom-classic/desktop/process-and-develop-photos/image-tone-color.html)
   — intended photographic behaviour, not a claim to duplicate proprietary algorithms or numerical slider values.
 
-Meaningful regressions are in `Tests/engine/imaging.swift` (real Metal renders of known synthetic images, legacy
-golden vectors, tone ordering, overlapping local planes, detail/noise, Dehaze, white balance, guided edges, gamut,
-grading, preview scale) and `Tests/logic/main.swift` (sidecar generation and rollback). The engine run also writes
-`imaging-compare-*.jpg` with version 1/2 pairs on the Sony RAW and general sample JPEGs. CPU mathematical checks
-are useful but are not Metal/device proof. CI results and phone follow-up are recorded below when available.
+Meaningful regressions are in `Tests/engine/imaging.swift` (actual Metal renders, migrated-recipe equivalence,
+tone ordering, local planes, noise/detail, Dehaze, white balance, guided edges, gamut, grading and preview scale),
+`Tests/engine/clarity.swift` (visible frequency-band strength, fine-grain retention, flat fields, hard boundaries,
+real-photo endpoint sheets), `Tests/engine/ai-regressions.swift` (mask labels, cache identity, preview rounding and
+repair), and `Tests/logic/main.swift` (recipe/history/preset migration and exact backup safety).
+`imaging-compare-*.jpg` and `clarity-*.jpg` provide reviewable current-engine images from RAW/JPEG samples.
+CPU prototypes alone are not Metal/device proof. See `AI-QUALITY-REVIEW-2026-10-28.md` for the separate AI audit.
 
-Validation status: implementation and independent code review complete; Apple compilation, engine renders,
-memory run, full UI suite and sandbox OFF/ON builds pending. Real-phone HDR appearance and editing feel remain
-Angelo's final check.
+Prior release evidence: 0.1.714 passed 1,270 engine checks and its memory sequences (40604699557); its full UI
+run 40604410069 also passed. Current source 73c0abf: independent code reviews complete, migration logic passed,
+all 89 focused GPU checks passed (40671254430), RAW/JPEG sheets inspected. Clarity mid-band amplitude at 1280 px
+is .250/.350/.503 EV for -100/0/+100, versus .251/.350/.501 at 2560 px; fine band stays near .060 EV. The negative
+gain remains below one; a tiny local-range fade prevents flat-field rounding bias. No test thresholds weakened.
+Full engine/memory, UI, iOS release readiness and sandbox checks pending. Phone HDR appearance, responsiveness
+and the owner's specific Clarity photo still need phone testing.
