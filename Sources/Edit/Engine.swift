@@ -146,9 +146,27 @@ final class ImageSource: @unchecked Sendable {
         tried.insert(key)
         if let img { masks[key] = img }
     }
-    func snapshotMasks() -> (masks: [String: CIImage], tried: Set<String>) {
+    struct MaskSnapshot {
+        let masks: [String: CIImage]
+        let tried: Set<String>
+        let failures: Set<String>
+    }
+    func snapshotMasks() -> MaskSnapshot {
         lock.lock(); defer { lock.unlock() }
-        return (masks, tried)
+        return MaskSnapshot(masks: masks, tried: tried, failures: failedKeys)
+    }
+    /// Preview, detail, export and undo use the same outcomes. A failed request must never turn into a
+    /// successful empty selection just because its cached masks were copied to another decoded source.
+    func restoreMasks(_ snapshot: MaskSnapshot, scaleX: CGFloat = 1, scaleY: CGFloat = 1) {
+        let images = snapshot.masks.mapValues { image in
+            guard scaleX != 1 || scaleY != 1 else { return image }
+            let transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
+            // These are scalar fields over the whole photo. Keep the border value during interpolation;
+            // transparent samples outside a finite preview must not weaken the full-size selection's edge.
+            return image.clampedToExtent().transformed(by: transform).cropped(to: image.extent.applying(transform))
+        }
+        lock.lock(); defer { lock.unlock() }
+        masks = images; tried = snapshot.tried; failedKeys = snapshot.failures
     }
     func hasTried(_ key: String) -> Bool { lock.lock(); defer { lock.unlock() }; return tried.contains(key) }
 

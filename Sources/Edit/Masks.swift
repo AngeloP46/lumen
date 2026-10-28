@@ -19,6 +19,19 @@ extension EditSession {
     static let aiScene = "scene"
     static func sceneKey(_ parts: [String]) -> String { "scene:" + parts.sorted().joined(separator: "+") }
 
+    /// The final selection this part consumes, not optional model assists (Sky can survive a Scene failure).
+    static func automaticMaskKey(_ c: MaskComponent) -> String? {
+        switch c.kind {
+        case .subject: return subjectKey(c.subjectPoint)
+        case .background: return aiSubject
+        case .sky: return aiSky
+        case .people: return aiPeople
+        case .depth: return aiDepth
+        case .landscape: return c.scene.isEmpty ? nil : sceneKey(c.scene)
+        default: return nil
+        }
+    }
+
     // MARK: Planes
 
     func localPlanes(_ s: EditSettings, source: ImageSource) -> [CIImage]? {
@@ -50,6 +63,12 @@ extension EditSession {
     /// The finished grey image for a whole mask (components combined, inverted, opacity applied).
     func maskImage(_ m: Mask, source: ImageSource, gain: Double) -> CIImage? {
         guard let k = LumenKernels.shared else { return nil }
+        // Failure is not an empty mask: inverting a zero fallback would affect the whole photograph.
+        // Suppress this mask until retry succeeds, while preserving inversion of a valid empty detection.
+        let failed = source.failures
+        if m.amount > 0, m.components.contains(where: { c in
+            c.amount > 0 && Self.automaticMaskKey(c).map { failed.contains($0) } == true
+        }) { return nil }
         var acc: CIImage?
         for c in m.components {
             var ci = componentImage(c, source: source, gain: gain)
@@ -119,7 +138,7 @@ extension EditSession {
             // everything that is not the subject; when no subject was found, that is the whole photo
             if let subject = source.cachedMask(Self.aiSubject) {
                 img = k.maskFinish.apply(extent: ext, arguments: [subject, CIVector(x: 1, y: 1, z: 0, w: 0)]) ?? subject
-            } else if source.hasTried(Self.aiSubject) {
+            } else if source.hasTried(Self.aiSubject), !source.failures.contains(Self.aiSubject) {
                 img = Self.constant(1, ext)
             } else {
                 img = zero   // still looking
@@ -362,6 +381,9 @@ extension EditSession {
             let key = Self.sceneKey(parts)
             guard !source.hasTried(key) else { continue }
             let ps = parts.compactMap(ScenePart.init(rawValue:))
+            // A derived Landscape selection failed with Scene; clearFailures must invalidate both so
+            // a successful retry actually rebuilds the requested parts instead of keeping tried/nil.
+            if source.failures.contains(Self.aiScene) { source.noteFailure(key) }
             source.storeMask(key, source.sceneField.flatMap { landscapeMask(ps, $0, source: source) })
             computed = true
         }
@@ -590,7 +612,8 @@ extension EditSession {
     /// segmentation model (448 x 448, the photo stretched to fit).
     func computeScene(_ source: ImageSource) -> SceneField? {
         guard let model = Self.sceneModel else {
-            if Self.hasSceneModel { source.noteFailure(Self.aiScene); Self.stepNote?("AI masks: the scene model wouldn't load") }   // here, but failed to load
+            source.noteFailure(Self.aiScene)
+            Self.stepNote?("AI masks: the scene model is unavailable")
             return nil
         }
         let ext = source.extent
@@ -809,7 +832,8 @@ extension EditSession {
     /// The model sees a landscape frame, so portrait photos are turned a quarter for it and the result turned back.
     func computeDepth(_ source: ImageSource) -> DepthField? {
         guard let model = Self.depthModel else {
-            if Self.hasDepthModel { source.noteFailure(Self.aiDepth); Self.stepNote?("AI masks: the depth model wouldn't load") }
+            source.noteFailure(Self.aiDepth)
+            Self.stepNote?("AI masks: the depth model is unavailable")
             return nil
         }
         let ext = source.extent

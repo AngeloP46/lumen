@@ -1,5 +1,18 @@
 # AI image quality review — 28 October 2026
 
+## Follow-up from current SideStore 0.1.747
+
+Parallel source review found two additional reliability defects. Requested AI Denoise could silently disappear
+from export when both its model and cached result were absent. Legacy PNG result metadata checked file existence
+without establishing a complete, correctly sized image. `clarity-release-followup` fixes both, with tiny no-inference
+fixtures covering both export modes, denoise off, valid model-free cached output that measurably changes pixels,
+structurally invalid/truncated/wrong-size legacy PNGs, decoder compatibility and invalid-preview fallback.
+The legacy check caches at most 128 metadata verdicts and retains no decoded bitmap. It does not establish arbitrary
+compressed-pixel integrity or change model inference. Mac validation/publication pending; these are not in 0.1.747.
+Automatic-mask failures/export transfer are handled in the same reliability batch and recorded in the checklist.
+Missing Heal patch files and failed people-detection messaging remain queued; photographic model-quality reviews
+below are still incomplete. Do not infer that no-inference reliability fixtures validate AI image quality.
+
 Scope: AI Denoise, Heal and Remove People. Source review plus inspection of the existing Mac engine artifacts in
 `.local/imaging-final-renders` (`denoise.jpg`, `previews/remove-people.jpg`, `previews/gravel-heal.jpg`). Those artifacts
 are examples, not a representative RAW benchmark or proof of the phone GPU's output. No model, weights, conversion,

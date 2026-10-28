@@ -1,5 +1,17 @@
 # Lumen – project notes for Claude
 
+## Current 28 October status: SideStore 0.1.747 published
+Personal main#174 merged e4c9f97, source39b9c5d, publish40687659637. Fresh feed/log/asset agree:
+356072974 bytes, SHA25656e7e0df52bf36d32c1ef7903d8b56305c4bd822a60f1ef34bbdfb671c7a5d36.
+Clarity bilateral correction and approved owner car crop pass142 focused checks; whole/detail renders inspected.
+10 other-family SDR/HDR comparisons prove the expanded Clarity veto is not shared. Logic/build and3 related UI pass.
+Full engine1553/1557 and full UI94/95 are NOT green: small-fixture resampling/export assumptions and a fixed-time
+zoom-reload check need correction/revalidation. Reload is present in actual event log at the timeout boundary.
+Independent static Clarity review found no actionable bounds/numerical/resource/scope defect. Phone verification pending.
+Sandbox#175 shared fix/check40732458311 pending; prior recovery#172 merged4f1e89c and passed40678793157.
+Owner asked for parallel agents: AI, mask/export and effects/blur follow-ups run separately; no blanket quality claim.
+This section supersedes older pending/released entries below. Larger-library scheduler remains an unshipped draft.
+
 ## Latest phone finding: Clarity coverage is still broken in 0.1.737
 Owner confirms thumbnails now work. Supplied car screenshots (+96/-100) show virtually no windscreen, grille or
 background change; only a bonnet patch responds. Root cause: local range was maximum-dilated by twice the broad
