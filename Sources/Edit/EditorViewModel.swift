@@ -694,7 +694,7 @@ final class EditorViewModel: ObservableObject {
                 // subject + scene + depth runs in 12 s while undoing and redoing)
                 if let previous { self.memoMasks(of: previous, heals: self.sourceHeals) }
                 if let memo = self.maskMemo[heals.map(\.id)], memo.size == src.size {
-                    for key in memo.tried { src.storeMask(key, memo.masks[key]) }
+                    src.restoreMasks(memo.snapshot)
                     src.storeDepth(memo.depth)
                     src.storeScene(memo.scene)
                     if !sameHeals { Diagnostics.shared.note("AI masks: kept from before (undo/redo)") }
@@ -999,10 +999,9 @@ final class EditorViewModel: ObservableObject {
     /// Automatic masks are found once on the preview and shared with the full-resolution source.
     private func syncDetailMasks() {
         guard let source, let detail = detailSource else { return }
-        let (masks, tried) = source.snapshotMasks()
         detail.storeDepth(source.depthField)
         let sx = detail.size.width / source.size.width, sy = detail.size.height / source.size.height
-        for key in tried { detail.storeMask(key, masks[key]?.transformed(by: CGAffineTransform(scaleX: sx, y: sy))) }
+        detail.restoreMasks(source.snapshotMasks(), scaleX: sx, scaleY: sy)
     }
 
     // MARK: Crop frame
@@ -1191,13 +1190,13 @@ final class EditorViewModel: ObservableObject {
 
     /// AI masks of the last few heal versions of this photo (keyed by their heal ids), for undo / redo. Only the masks
     /// (a few MB each at preview size), never the decoded photo.
-    private struct MaskMemo { let size: CGSize; let masks: [String: CIImage]; let tried: Set<String>; let depth: DepthField?; let scene: SceneField?; let used: Date }
+    private struct MaskMemo { let size: CGSize; let snapshot: ImageSource.MaskSnapshot; let depth: DepthField?; let scene: SceneField?; let used: Date }
     private var maskMemo: [[UUID]: MaskMemo] = [:]
 
     private func memoMasks(of source: ImageSource, heals: [UUID]) {
-        let (masks, tried) = source.snapshotMasks()
-        guard !tried.isEmpty else { return }
-        maskMemo[heals] = MaskMemo(size: source.size, masks: masks, tried: tried, depth: source.depthField, scene: source.sceneField, used: Date())
+        let snapshot = source.snapshotMasks()
+        guard !snapshot.tried.isEmpty else { return }
+        maskMemo[heals] = MaskMemo(size: source.size, snapshot: snapshot, depth: source.depthField, scene: source.sceneField, used: Date())
         while maskMemo.count > 4, let oldest = maskMemo.min(by: { $0.value.used < $1.value.used })?.key { maskMemo[oldest] = nil }
     }
 
@@ -1858,7 +1857,7 @@ final class EditorViewModel: ObservableObject {
         let keys: [String]
         switch c.kind {
         case .subject, .background: keys = [EditSession.aiSubject, EditSession.subjectKey(c.subjectPoint)]
-        case .sky: keys = [EditSession.aiSky, EditSession.aiScene]
+        case .sky: keys = [EditSession.aiSky]  // Scene is optional: the classical fallback can still succeed.
         case .people: keys = [EditSession.aiPeople]
         case .depth: keys = [EditSession.aiDepth]
         case .landscape: keys = [EditSession.aiScene]
@@ -2066,7 +2065,7 @@ final class EditorViewModel: ObservableObject {
     func export(_ o: ExportOptions, withoutLensBlur: Bool = false) {
         guard let session, !isExporting else { return }
         // AI Denoise is on but its cleaned copy is gone: say so now, not after a hidden minute inside the export (A16)
-        if settings.effective.aiDenoise > 0, !session.hasDenoised, EditSession.hasDenoiseModel {
+        if settings.effective.aiDenoise > 0, !session.hasDenoised {
             message = EditSession.ExportFailure.denoiseMissing.message
             return
         }

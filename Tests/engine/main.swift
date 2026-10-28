@@ -212,7 +212,10 @@ func meanChannelSpread(_ cg: CGImage) -> Double? {
 /// writes them. Rendered with no colour management so the numbers are the raw mask values.
 func maskValues(_ img: CIImage, width: Int = 64) -> (v: [Float], w: Int, h: Int)? {
     let k = CGFloat(width) / img.extent.width
-    let scaled = img.transformed(by: CGAffineTransform(scaleX: k, y: k))
+    // Keep finite mask boundaries opaque during resampling, just as the photo-analysis guide does.
+    // Lazy geometric kernels can otherwise sample transparent support even inside the scaled inset.
+    let scaled = img.clampedToExtent().transformed(by: CGAffineTransform(scaleX: k, y: k))
+        .cropped(to: img.extent.applying(CGAffineTransform(scaleX: k, y: k)))
     // Whole pixels strictly inside the scaled extent, minus a one pixel border: the edge pixels of a fractionally
     // sized image are only partly covered and would read as bogus values.
     let e = scaled.extent
@@ -254,11 +257,55 @@ func floatPixels(_ img: CIImage, width: Int = 64) -> [Float]? {
 
 let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? []
 
+// A small, non-square finite mask must survive the test probe's downsampling without transparent fringes.
+// The owner's 589x710 screenshot exposed this helper assumption; retain its full mask algebra cases below.
+do {
+    let white = EditSession.constant(1, CGRect(x: 0, y: 0, width: 589, height: 710))
+    if let sampled = maskValues(white) {
+        check(sampled.v.allSatisfy { abs($0 - 1) < 0.001 }, "mask probe: opaque small white field lost coverage")
+    } else { check(false, "mask probe: small white field could not be sampled") }
+    if let file = files.first(where: { $0.lastPathComponent == "clarity-car-proxy.png" }),
+       let session = EditSession(url: file), let source = session.makeSource(maxEdge: 1800, materialize: true) {
+        var linear = Mask.make(.linear)
+        linear.components[0].x0 = 0.5; linear.components[0].y0 = 0.2
+        linear.components[0].x1 = 0.5; linear.components[0].y1 = 0.8
+        for (name, mask) in [("linear", linear), ("radial", Mask.make(.radial))] {
+            var inverse = mask; inverse.invert = true
+            if let a = session.maskImage(mask, source: source, gain: 1),
+               let b = session.maskImage(inverse, source: source, gain: 1),
+               let av = maskValues(a), let bv = maskValues(b), av.v.count == bv.v.count {
+                // Check unscaled interior RGBA independently: resampling support must not hide a shader defect.
+                let nativeBounds = CGRect(x: 1, y: source.extent.height - 65, width: 64, height: 64)
+                var nativeA = [Float](repeating: 0, count: 64 * 64 * 4), nativeB = nativeA
+                nativeA.withUnsafeMutableBytes { p in
+                    LumenGPU.context.render(a, toBitmap: p.baseAddress!, rowBytes: 64 * 16,
+                                            bounds: nativeBounds, format: .RGBAf, colorSpace: nil)
+                }
+                nativeB.withUnsafeMutableBytes { p in
+                    LumenGPU.context.render(b, toBitmap: p.baseAddress!, rowBytes: 64 * 16,
+                                            bounds: nativeBounds, format: .RGBAf, colorSpace: nil)
+                }
+                var nativeError: Float = 0, alphaError: Float = 0
+                for i in 0..<(64 * 64) {
+                    nativeError = max(nativeError, abs(nativeA[i * 4] + nativeB[i * 4] - 1))
+                    alphaError = max(alphaError, abs(nativeA[i * 4 + 3] - 1), abs(nativeB[i * 4 + 3] - 1))
+                }
+                check(nativeError < 0.002 && alphaError < 0.002,
+                      "mask probe: native small \(name) complement/alpha is wrong (\(nativeError), \(alphaError))")
+                let worst = zip(av.v, bv.v).map { abs($0 + $1 - 1) }.max() ?? .infinity
+                print("SMALL MASK PROBE \(name): max complement error \(worst)")
+                check(worst < 0.02, "mask probe: small \(name) + inverse loses coverage (\(worst))")
+            } else { check(false, "mask probe: small \(name) cannot be rendered") }
+        }
+    }
+}
+
 // Fast iteration on adjustment rendering, without the unrelated AI/model and memory sequences.
 if args.contains("--imaging") {
     runImagingQualityChecks()
     runClarityQualityChecks()
     runAIRegressionChecks()
+    runMaskRegressionChecks()
     runThumbnailBatchChecks()
     finishChecks()
 }
@@ -619,6 +666,7 @@ if args.contains("--lens-blur") {
 var opened = 0
 runImagingQualityChecks()
 runClarityQualityChecks()
+runMaskRegressionChecks()
 runAIRegressionChecks()
 runThumbnailBatchChecks()
 
@@ -1047,7 +1095,8 @@ for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
         if let small = session.renderData(exportEdits, format: .jpeg, quality: 0.9, maxEdge: 1080),
            let low = session.renderData(exportEdits, format: .jpeg, quality: 0.5, maxEdge: 1080),
            let high = session.renderData(exportEdits, format: .jpeg, quality: 0.98, maxEdge: 1080) {
-            check(longEdge(small) == 1080, "\(stem): export at 1080 px long edge gave \(longEdge(small)) px")
+            let expected = min(1080, Int(max(session.nativeSize.width, session.nativeSize.height)))
+            check(longEdge(small) == expected, "\(stem): export with 1080 px limit gave \(longEdge(small)) px, expected \(expected) (no upscaling)")
             check(low.count < high.count, "\(stem): JPEG quality 50 (\(low.count / 1024) KB) should be smaller than 98 (\(high.count / 1024) KB)")
             print(" export 1080 px: q50 \(low.count / 1024) KB, q90 \(small.count / 1024) KB, q98 \(high.count / 1024) KB")
         } else { check(false, "\(stem): export with a size limit returned nil") }

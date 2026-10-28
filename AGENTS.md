@@ -1,5 +1,18 @@
 # Lumen session entry point
 
+**Current authoritative status, 28 Oct: SideStore 0.1.747 is published and feed/log/asset verified.**
+Main #174 merged e4c9f97 (source39b9c5d), publish40687659637, 356072974 bytes, SHA256
+56e7e0df52bf36d32c1ef7903d8b56305c4bd822a60f1ef34bbdfb671c7a5d36. Clarity's wide hard-edge veto replaced;
+owner-approved actual car crop now responds broadly. All142 focused checks, logic, readiness and3 related UI pass.
+Other-family SDR/HDR isolation checks prove the bad Clarity channel is not reused. Static independent review
+found no actionable numerical/resource/scope defect; phone quality/timing remains unverified.
+Full engine40687563996:1553/1557 passed; four small-fixture mask/export probe assumptions under investigation.
+Full UI40687567667:94/95 passed; event log proves preview reload completed at fixed timeout boundary.
+`clarity-release-followup` corrects test probes and records remaining reviews; do not call broad suites green yet.
+Sandbox#175 has shared fix, OFF/ON/StoreKit40732458311 pending. Owner explicitly requested parallel agents;
+AI, masks/export and effects/blur reviews resumed. See docs/QUALITY-CHECKLIST.md for actual remaining work.
+Earlier dated entries below are historical and do not override this status.
+
 28 Oct next phone finding: owner says 0.1.737 thumbnails work, but Clarity still affects only a tiny bonnet patch.
 Actual +/- screenshots confirm windscreen/background essentially unchanged. `clarity-scene-coverage` removes
 the broad maximum-dilated veto, replaces Clarity base with a bilateral grid and adds owner's car-proxy, dense-edge

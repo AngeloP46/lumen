@@ -3,6 +3,130 @@ import CoreImage
 
 /// Storage/mask regressions that need no model inference. They exercise the helpers used by the real AI paths.
 func runAIRegressionChecks() {
+    // An unavailable model must not turn requested denoise into an uncleaned export. A valid cached residual,
+    // however, needs no model at all. Tiny file/cache fixtures exercise the production export path without ML.
+    do {
+        let previousDirectory = DenoiseStore.directory, previousModel = EditSession.denoiseModelURL
+        let directory = outDir.appendingPathComponent("ai-export-\(UUID().uuidString)")
+        DenoiseStore.directory = directory
+        EditSession.denoiseModelURL = nil
+        defer {
+            DenoiseStore.directory = previousDirectory; EditSession.denoiseModelURL = previousModel
+            try? FileManager.default.removeItem(at: directory)
+        }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let photo = directory.appendingPathComponent("photo.png")
+            let image = CIImage(color: CIColor(red: 0.35, green: 0.4, blue: 0.45))
+                .cropped(to: CGRect(x: 0, y: 0, width: 32, height: 24))
+            try LumenGPU.context.writePNGRepresentation(of: image, to: photo, format: .RGBA8,
+                                                        colorSpace: LumenGPU.displaySpace)
+            guard let session = EditSession(url: photo, expandHDR: false) else {
+                check(false, "AI regression: denoise export fixture cannot be opened"); return
+            }
+            var edits = EditSettings(); edits.hdr = false; edits.aiDenoise = 100
+            for allowClean in [false, true] {
+                let outcome = session.renderDataOutcome(edits, format: .jpeg, quality: 0.9, includeHDR: false,
+                                                        allowClean: allowClean)
+                if case .failed(.denoiseMissing) = outcome {
+                    check(true, "")
+                } else {
+                    check(false, "AI regression: no-model/no-cache denoise silently exports (allowClean \(allowClean))")
+                }
+            }
+            var off = edits; off.aiDenoise = 0
+            let neutral = session.renderData(off, format: .jpeg, quality: 0.9, includeHDR: false)
+            check(neutral != nil, "AI regression: denoise off incorrectly requires a model")
+
+            // A nonzero residual proves cached denoise is applied, rather than merely allowing an export.
+            var noise = [Float16](repeating: 0.02, count: 32 * 24 * 4)
+            for i in stride(from: 3, to: noise.count, by: 4) { noise[i] = 1 }
+            try noise.withUnsafeBytes { try Data($0).write(to: directory.appendingPathComponent("cached.noise")) }
+            let info = DenoiseStore.Info(model: DenoiseStore.modelVersion, scale: 1, width: 32, height: 24,
+                                         file: "cached.noise", kind: DenoiseStore.noiseKind, decoder: session.decoderTag)
+            try JSONEncoder().encode(info).write(to: DenoiseStore.noiseInfoURL(photo), options: .atomic)
+            check(session.hasDenoised, "AI regression: model-free cached residual is unavailable")
+            func mean(_ data: Data) -> Float? {
+                guard let image = CIImage(data: data) else { return nil }
+                let avg = image.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: image.extent)])
+                var values = [Float](repeating: 0, count: 4)
+                LumenGPU.context.render(avg, toBitmap: &values, rowBytes: 16,
+                                        bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                return (values[0] + values[1] + values[2]) / 3
+            }
+            for allowClean in [false, true] {
+                if case .data(let data) = session.renderDataOutcome(edits, format: .jpeg, quality: 0.9, includeHDR: false,
+                                                                  allowClean: allowClean),
+                   let neutral, let original = mean(neutral), let cleaned = mean(data) {
+                    check(cleaned.isFinite && original - cleaned > 0.005,
+                          "AI regression: model-free cached denoise was omitted (allowClean \(allowClean), \(original) -> \(cleaned))")
+                } else {
+                    check(false, "AI regression: model-free cached denoise cannot export (allowClean \(allowClean))")
+                }
+            }
+
+            // Results written before the residual format were PNGs. Preserve readable older results, including
+            // their nil decoder, but reject corrupt/truncated/mis-sized pixels rather than exporting uncleaned.
+            try FileManager.default.removeItem(at: DenoiseStore.noiseInfoURL(photo))
+            let legacyURL = directory.appendingPathComponent("legacy.png")
+            let cleaned = CIImage(color: CIColor(red: 0.2, green: 0.22, blue: 0.24))
+                .cropped(to: CGRect(x: 0, y: 0, width: 32, height: 24))
+            try LumenGPU.context.writePNGRepresentation(of: cleaned, to: legacyURL, format: .RGBA16,
+                                                        colorSpace: LumenGPU.displaySpace)
+            let validPNG = try Data(contentsOf: legacyURL)
+            var legacy = DenoiseStore.Info(model: DenoiseStore.modelVersion, scale: 1, width: 32, height: 24,
+                                           file: "legacy.png", decoder: nil)
+            func writeLegacyInfo() throws {
+                try JSONEncoder().encode(legacy).write(to: DenoiseStore.infoURL(photo, hdr: false), options: .atomic)
+            }
+            try writeLegacyInfo()
+            check(session.hasDenoised, "AI regression: readable legacy PNG with nil decoder was rejected")
+            if case .data(let data) = session.renderDataOutcome(edits, format: .jpeg, quality: 0.9, includeHDR: false,
+                                                               allowClean: false),
+               let neutral, let original = mean(neutral), let applied = mean(data) {
+                check(applied.isFinite && original - applied > 0.005,
+                      "AI regression: readable legacy PNG was omitted from export (\(original) -> \(applied))")
+            } else { check(false, "AI regression: readable legacy PNG cannot export without model") }
+            legacy.decoder = "foreign"; try writeLegacyInfo()
+            check(!session.hasDenoised, "AI regression: foreign-decoder legacy PNG was accepted")
+            legacy.decoder = "plain"; try writeLegacyInfo()
+            check(session.hasDenoised, "AI regression: current-decoder legacy PNG was rejected")
+            func rejectsLegacy(_ label: String) {
+                check(!session.hasDenoised, "AI regression: \(label) legacy PNG counts as available")
+                for allowClean in [false, true] {
+                    if case .failed(.denoiseMissing) = session.renderDataOutcome(edits, format: .jpeg, quality: 0.9,
+                                                                              includeHDR: false, allowClean: allowClean) {
+                        check(true, "")
+                    } else {
+                        check(false, "AI regression: \(label) legacy PNG silently exports (allowClean \(allowClean))")
+                    }
+                }
+            }
+            try Data([0]).write(to: legacyURL, options: .atomic)
+            rejectsLegacy("corrupt")
+            try validPNG.dropLast(12).write(to: legacyURL, options: .atomic)
+            rejectsLegacy("truncated")
+            let wrongSize = cleaned.cropped(to: CGRect(x: 0, y: 0, width: 16, height: 12))
+            try LumenGPU.context.writePNGRepresentation(of: wrongSize, to: legacyURL, format: .RGBA16,
+                                                        colorSpace: LumenGPU.displaySpace)
+            rejectsLegacy("wrong-size")
+
+            // Repairing/replacing a file must invalidate the metadata verdict; a bad optional preview must fall
+            // back to the valid full result rather than reintroducing silent omission or forcing another clean.
+            try validPNG.write(to: legacyURL, options: .atomic)
+            legacy.preview = "bad-preview.png"; legacy.previewWidth = 16; legacy.previewHeight = 12
+            try Data([0]).write(to: directory.appendingPathComponent("bad-preview.png"))
+            try writeLegacyInfo()
+            check(session.hasDenoised, "AI regression: repaired legacy PNG remains falsely unavailable")
+            let recovered = DenoiseStore.image(photo, hdr: false, size: session.nativeSize, maxEdge: 16,
+                                               decoder: session.decoderTag)
+            check(recovered?.0.extent.size == CGSize(width: 32, height: 24),
+                  "AI regression: corrupt legacy preview did not fall back to readable full pixels")
+        } catch {
+            check(false, "AI regression: denoise export fixture failed: \(error)")
+        }
+    }
+
     // A rejected early component must not reappear in the next person's mask through a reused label.
     do {
         let width = 128, height = 128

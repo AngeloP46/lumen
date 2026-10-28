@@ -15,6 +15,44 @@ R4 failures handled · R5 output correct · R6 performance measured.
 
 ## Next adjustment reviews — queued 28 October 2026
 
+**Current status: SideStore 0.1.747, main #174 (e4c9f97), published and feed/hash verified.**
+Clarity's wide edge veto is replaced; 142 focused checks pass, including the approved actual car crop and ten
+SDR/HDR comparisons proving other adjustment families do not read that Clarity channel. Endpoint renders inspected.
+Owner confirms the previous 0.1.737 thumbnail recovery works. New Clarity response still needs phone confirmation.
+Full engine 40687563996: 1553/1557 passed; four failures concern the small fixture's resampling/export assumptions.
+Full UI 40687567667: 94/95 passed; zoom reload exists in event log at fixed timeout boundary. Follow-up test
+corrections and reruns are pending. Sandbox #175/check 40732458311 pending; #172 already merged and passed.
+
+Owner requested parallel agents. Their current-source follow-up separates these concrete defects from visual reviews:
+
+1. **Export fidelity first:** absent AI Denoise model + absent residual silently omitted the requested edit.
+   Minimal guard fix and no-inference missing/valid-cache regressions on `clarity-release-followup`, not yet released.
+   Investigate present-but-corrupt legacy PNG residual acceptance too.
+2. **Automatic selections:** failed Subject can become whole-white Background; requested failed/missing selections
+   have no export gate; failures disappear during large-source/detail/memo transfers; Scene retry can leave stale
+   tried-empty derived landscape keys. Reproduce distinctly from successful empty detection, then fix state/gates.
+3. **Brush compositing:** paint then erase at the same softness can reappear when a distant stroke with another
+   softness switches the global compositing branch. Build an isolated-region regression before changing convention.
+4. **Lens Blur controls:** manual focus fallback can blur the tapped plane; merely entering Refine changes radius.
+   Full HDR radiance-path regression is needed; scalar gain cannot reproduce arbitrary coloured highlight mixing.
+5. **Effects controls:** Grain Size floor collapses 0–80 at 640px / 0–20 at 1600px; circular Vignette on a 3:1
+   frame has no effect above Midpoint ~74.5. Both need production-render regressions and calibrated fixes.
+6. **AI reliability follow-ups:** missing Heal patch files are skipped; failed people detection can be described as
+   none found. Distinguish failed work from valid empty results without blind inference/model changes.
+7. **Quality/performance evidence:** real RAW/ProRAW AI colour/detail/seams, Heal texture/HDR, subject-edge/blur,
+   crop resampling and overlapping-mask/preset/HDR/export interactions remain incompletely validated. Larger-library
+   visible-first/basic-refined scheduler remains a separate draft. No literal 2,000-image run is needed.
+
+**Follow-up reliability implementation, not yet released:** missing-model denoise export guard and bounded legacy
+PNG structural/dimension validation; failed versus valid-empty automatic selection state retained across full-size,
+detail and undo transfers; failed inverted selections suppressed; active failed selections block export explicitly;
+derived Landscape retry invalidates failed outcome; optional successful Sky fallback remains usable. No model weights,
+inference parameters, control gains or layout changed. New deterministic production-path regressions are ready for
+Mac CI. Independent source review found and corrected two integration edges (inverted failure and unnecessary AI
+when no selection is required). Broader photographic quality and effects/blur issues above remain queued.
+
+The older dated status entries below are historical; they do not mean these features are fully reviewed.
+
 **28 Oct urgent phone follow-up:** 0.1.737 supersedes 0.1.728's thumbnail restart/memory regression and weak Clarity.
 See `THUMBNAIL-RECOVERY-2026-10-28.md`: 126 rendered/batch checks and six focused UI cases pass; phone follow-up
 pending. Larger-library priority/basic-refined scheduling is next, separately from this release. No literal
@@ -30,10 +68,9 @@ Angelo resumed these with "carry on" on 28 October. Current batch: Clarity, sing
 deterministic defects from the AI review. These features have NOT all had a comprehensive image-quality review;
 passing existing tests is not proof their algorithms and control ranges are optimal. Preserve the layout/UI he likes.
 
-- [ ] **Clarity too weak — fixed on branch, Mac/phone validation pending:** replace the cancellation-prone overlap
-  subtraction with a bounded medium-detail band, same-guide evaluation and local-range boundary protection.
-  New rendered tests require visible endpoint strength, retained fine grain, unchanged flat fields and bounded
-  hard-edge halos at two sizes, plus -100/0/+100 RAW/JPEG sheets. Angelo's specific phone image remains untested.
+- [ ] **Clarity — released in 0.1.747, phone confirmation pending:** actual car screenshot proxy and dense-edge
+  scenes now respond broadly; endpoint/centre/fine-noise/flat/halo/two-size and other-family isolation checks pass.
+  The owner's original RAW and phone rendering remain to confirm; do not conflate the screenshot proxy with RAW.
 - [ ] **AI Denoise:** model/input colour and HDR handling, real noise versus retained detail, strength blending,
   tile seams, preview/export consistency, speed and peak memory on real RAW/ProRAW and the phone.
 - [ ] **Heal:** fill quality, edge blending, colour/tone matching, texture reconstruction, repeated/large fixes,
