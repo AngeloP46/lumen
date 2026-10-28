@@ -232,7 +232,10 @@ inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
         float q = (lmDec(L1.g) + ev) / 4.5;
         // L2.r is the local encoded log-light range across the broad filter's full footprint.
         // Ordinary structure stays active; hard boundaries are protected from bright/dark halos.
-        float edge = 1.0 - lmStep(1.5, 3.0, max(L2.r, 0.0) * 16.0);
+        float rangeEV = max(L2.r, 0.0) * 16.0;
+        // Half-float analysis can leave a tiny constant residual after resampling. A flat region has
+        // no contrast to change: fade below a small physical range instead of boosting that numeric bias.
+        float edge = lmStep(0.02, 0.08, rangeEV) * (1.0 - lmStep(1.5, 3.0, rangeEV));
         float midtone = 0.35 + 0.65 * exp(-q * q);
         // Positive strength can amplify the band; negative strength stays below one so it remains
         // a convex move towards the broad base, including at frequencies outside the regression fixture.
