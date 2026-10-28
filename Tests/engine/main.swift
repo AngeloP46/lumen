@@ -431,8 +431,21 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
         if let spot { s.heals = [spot] }
     }
     peaks["export"] = stepPeak("export") {
-        check(session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true) != nil,
-              "memory test: the full-size HDR export failed")
+        guard let data = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true),
+              let encoded = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(encoded, 0, nil) as? [CFString: Any] else {
+            check(false, "memory test: the full-size HDR export failed or could not be reopened"); return
+        }
+        let width = properties[kCGImagePropertyPixelWidth] as? Int ?? 0
+        let height = properties[kCGImagePropertyPixelHeight] as? Int ?? 0
+        check(width == Int(session.nativeSize.width) && height == Int(session.nativeSize.height),
+              "memory test: full-size export dimensions changed (\(width)x\(height))")
+        if #available(macOS 15.0, iOS 18.0, *) {
+            let gain = CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeHDRGainMap)
+                ?? CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeISOGainMap)
+            check(gain != nil, "memory test: requested HDR export has no HDR/ISO gain map")
+        }
+        print("MEMORY export verified \(width)x\(height), \(data.count) bytes, HDR gain map inspected")
     }
     if !args.contains("--memory-export"), ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil, EditSession.hasDenoiseModel,
        ProcessInfo.processInfo.environment["LUMEN_MEMORY_SKIP_DENOISE"] == nil {

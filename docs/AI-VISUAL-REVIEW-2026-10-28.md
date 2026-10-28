@@ -1,5 +1,11 @@
 # AI visual follow-up, 28 October 2026
 
+Current disposition: the missing-Heal and typed people-search changes described below are released in0.1.774
+and shared sandbox#181. Six related UI methods40781694994 pass; the actual failure/empty screenshots were
+inspected. Released full quality40783385204 passes1977 checks, including current model outputs. Its long memory
+phase exposes a full24MP HDR export GPU allocation failure, now under follow-up in#184; ProRAW was skipped by
+that failing phase. These reliability results do not expand the photographic/model qualifications below.
+
 Inspected the actual downloaded outputs in `.local/ai-final-renders`, whose RESULT.txt reports all 1644 checks
 passed (engine quality run 40738195410). These examples test the currently accepted models; the new missing-Heal
 and typed people-search reliability changes do not replace/retrain those models or change their pixel generation.
@@ -52,7 +58,7 @@ Large or geometrically structured removals should be evaluated separately from s
 higher model resolution and colour/gradient blending each trade computation/memory against different visible
 defects. Changing them requires measured examples; completion or mean-brightness assertions alone are insufficient.
 
-## Current reliability additions awaiting this batch's CI
+## Reliability additions released in0.1.774
 
 Saved Heal/Remove People patches are checked before export: missing, structurally truncated, dimension-mismatched
 or foreign-owned files must produce a clear failure instead of silently exporting original pixels. The legacy
@@ -63,4 +69,4 @@ Remove People now distinguishes successful empty search from decode/detector/mem
 mask remains usable when another detector fails; failed retries keep the previous good selection. Cancellation
 invalidates the search generation, so a late answer cannot replace the new search or clear another operation's
 busy state. Deterministic no-model regressions are in Tests/engine/heal-reliability.swift; real Vision scene and UI
-tests must accompany them before these candidate changes are called validated or released.
+tests accompanied the release; the exact evidence and remaining phone-only limits are in QUALITY-CHECKLIST.md.
