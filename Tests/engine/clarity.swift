@@ -26,7 +26,14 @@ func runClarityQualityChecks() {
             context.render(img, toBitmap: p.baseAddress!, rowBytes: width * 16,
                            bounds: CGRect(x: 0, y: y, width: CGFloat(width), height: 1), format: .RGBAf, colorSpace: nil)
         }
-        return (0..<width).map { 0.22897 * data[$0 * 4] + 0.69174 * data[$0 * 4 + 1] + 0.07929 * data[$0 * 4 + 2] }
+        var luminance = [Float](repeating: 0, count: width)
+        for x in 0..<width {
+            let r: Float = 0.22897 * data[x * 4]
+            let g: Float = 0.69174 * data[x * 4 + 1]
+            let b: Float = 0.07929 * data[x * 4 + 2]
+            luminance[x] = r + g + b
+        }
+        return luminance
     }
     func developed(_ source: ImageSource, _ amount: Double) -> CIImage {
         var edits = EditSettings(); edits.clarity = amount
