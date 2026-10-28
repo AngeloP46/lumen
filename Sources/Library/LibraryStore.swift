@@ -279,8 +279,8 @@ final class LibraryStore: ObservableObject {
         try? JSONEncoder().encode([removed, kept]).write(to: folder.appendingPathComponent("index.json"))
         let library = LibraryStore(testRoot: folder)
         func spot() -> HealSpot { HealSpot(strokes: [], x: 0, y: 0, w: 0.1, h: 0.1) }
-        let current = spot(), undo = spot(), redo = spot(), shared = spot(), copied = spot(), preset = spot(), active = spot(), dropped = spot()
-        let all = [current, undo, redo, shared, copied, preset, active, dropped]
+        let current = spot(), undo = spot(), redo = spot(), shared = spot(), copied = spot(), preset = spot(), active = spot(), dropped = spot(), backupOnly = spot()
+        let all = [current, undo, redo, shared, copied, preset, active, dropped, backupOnly]
         func exists(_ s: HealSpot) -> Bool {
             fm.fileExists(atPath: HealStore.patchURL(s.id).path) || fm.fileExists(atPath: HealStore.maskURL(s.id).path)
         }
@@ -306,11 +306,15 @@ final class LibraryStore: ObservableObject {
         library.clipboard = Clipboard(settings: clipboard, selection: CopySelection(), sourceName: "Removed")
         var recipe = EditSettings(); recipe.heals = [preset]
         library.userPresets = [UserPreset(name: "Legacy", settings: recipe)]
+        var recoveredRecipe = EditSettings(); recoveredRecipe.heals = [backupOnly]
+        let presetBackup = EditsFile.engineBackupURL(for: folder.appendingPathComponent("presets.json"))
+        try? JSONEncoder().encode([UserPreset(name: "Recovery copy", settings: recoveredRecipe)]).write(to: presetBackup)
         let lease = HealStore.retain([active.id])
         library.delete(removed)
         library.waitForDeletes()
         check([current, undo, redo, dropped].allSatisfy { !exists($0) }, "current undo redo and trimmed owner patches removed")
         check([shared, copied, preset].allSatisfy(exists), "retained history clipboard and preset preserved")
+        check(exists(backupOnly), "preset migration recovery copy retains its Heal pixels")
         check(exists(active), "in-flight render retains patch")
         lease.close()
         check(!exists(active), "last render release cleans pending patch")
@@ -325,6 +329,8 @@ final class LibraryStore: ObservableObject {
         library.delete(kept)
         library.waitForDeletes()
         check(!exists(shared), "shared patch removed after last photo deleted")
+        check(exists(backupOnly) && Self.presetBackupHeals(in: folder)?.contains(backupOnly.id) == true,
+              "recovery-only Heal reference remains visible to the startup sweep")
         // Retained legacy references are intentionally preserved; this is not a global garbage sweep.
         check(!fm.fileExists(atPath: library.fileURL(removed).path) && !fm.fileExists(atPath: library.thumbURL(removed).path), "photo and thumbnail removed")
     }
@@ -655,10 +661,11 @@ final class LibraryStore: ObservableObject {
     /// every edits and history file could be read (otherwise nothing is removed: never delete pixels still needed).
     private func sweepHealPatches() {
         let editsDir = self.editsDir, presets = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
-        let healDir = HealStore.directory
+        let healDir = HealStore.directory, root = self.root
         thumbQueue.async {
             let fm = FileManager.default
-            var used = presets
+            guard let recoveryHeals = Self.presetBackupHeals(in: root) else { return }
+            var used = presets.union(recoveryHeals)
             // can't list the edits folder: nothing is known to be unused, so nothing is removed
             guard let editFiles = try? fm.contentsOfDirectory(at: editsDir, includingPropertiesForKeys: nil) else { return }
             for url in editFiles where url.pathExtension == "json" {
@@ -681,6 +688,19 @@ final class LibraryStore: ObservableObject {
             HealStore.remove(unused)
             Diagnostics.shared.note("heal patches nothing uses any more: \(unused.count) removed")
         }
+    }
+
+    /// Preset migration copies live beside presets.json, outside edits/. They remain recovery recipes even
+    /// after a user changes/deletes the active preset. Unreadable copies make pixel cleanup unsafe.
+    nonisolated private static func presetBackupHeals(in root: URL) -> Set<UUID>? {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return nil }
+        var used = Set<UUID>()
+        for file in files where file.pathExtension == "json" && file.lastPathComponent.hasPrefix("presets.pre-engine-") {
+            guard let data = try? Data(contentsOf: file), let json = try? JSONSerialization.jsonObject(with: data) else { return nil }
+            used.formUnion(HealStore.references(in: json))
+        }
+        return used
     }
 
     // MARK: AI Denoise for many photos
@@ -965,7 +985,7 @@ final class LibraryStore: ObservableObject {
         try? fm.removeItem(at: fileURL)
         let presetHeals = Set(userPresets.flatMap { $0.settings.heals.map(\.id) })
         let clipHeals = Set(clipboard?.settings.heals.map(\.id) ?? [])
-        let editsDir = editsDir, id = item.id.uuidString
+        let editsDir = editsDir, root = self.root, id = item.id.uuidString
         deleteQueue.async { [weak self] in
             let fm = FileManager.default
             var patches = owned
@@ -985,6 +1005,8 @@ final class LibraryStore: ObservableObject {
             // being removed by another delete is never half read.
             var retained: Set<UUID>? = patches.isEmpty ? [] : presetHeals.union(clipHeals)
             if !patches.isEmpty {
+                if let recoveryHeals = Self.presetBackupHeals(in: root) { retained?.formUnion(recoveryHeals) }
+                else { retained = nil }
                 if let names {
                     for name in names where name.hasSuffix(".json") && !own.contains(name) && retained != nil {
                         guard let data = try? Data(contentsOf: editsDir.appendingPathComponent(name)),
