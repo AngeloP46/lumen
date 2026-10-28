@@ -198,9 +198,16 @@ func runClarityQualityChecks() {
                         let small = EditSession.downscaled(crop, 64 / max(crop.extent.width, crop.extent.height))
                         let width = Int(small.extent.width.rounded()), height = Int(small.extent.height.rounded())
                         var values = [Float](repeating: 0, count: width * height * 4)
-                        context.render(small, toBitmap: &values, rowBytes: width * 16,
-                                       bounds: CGRect(x: 0, y: 0, width: width, height: height), format: .RGBAf, colorSpace: nil)
-                        return (0..<(width * height)).map { values[$0 * 4] + values[$0 * 4 + 1] + values[$0 * 4 + 2] }
+                        values.withUnsafeMutableBytes { p in
+                            context.render(small, toBitmap: p.baseAddress!, rowBytes: width * 16,
+                                           bounds: CGRect(x: 0, y: 0, width: width, height: height), format: .RGBAf, colorSpace: nil)
+                        }
+                        var sums = [Float](repeating: 0, count: width * height)
+                        for i in sums.indices {
+                            let r = values[i * 4], g = values[i * 4 + 1], b = values[i * 4 + 2]
+                            sums[i] = (r + g) + b
+                        }
+                        return sums
                     }
                     let neutral = photo.develop(EditSettings(), source: src, geometry: false, lens: .off)
                     if amount != 0 {
