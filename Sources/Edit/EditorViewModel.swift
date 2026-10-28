@@ -334,7 +334,6 @@ final class EditorViewModel: ObservableObject {
         }
         let url = store.fileURL(item)
         let wantsHDR = settings.hdr
-        let processingVersion = settings.processingVersion
         let heals = settings.effective.heals
         let denoise = settings.effective.aiDenoise / 100
         let asked = Date()
@@ -346,7 +345,7 @@ final class EditorViewModel: ObservableObject {
                 let s = EditSession(url: url, expandHDR: wantsHDR)
                 s?.heals = heals
                 s?.denoiseAmount = denoise
-                return (s, s?.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true, processingVersion: processingVersion))
+                return (s, s?.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true))
             } ?? (nil, nil)
             let (s, src) = made
             // Simulator interaction fixture only; real builds always use estimated camera-photo depth.
@@ -393,7 +392,7 @@ final class EditorViewModel: ObservableObject {
                 self.warmDenoiseIfNeeded()
                 self.refreshUnhealed()
                 // HDR was switched while the photo was still loading: decode it again the other way
-                if self.settings.hdr != wantsHDR || self.settings.processingVersion != processingVersion { self.reloadSource() }
+                if self.settings.hdr != wantsHDR { self.reloadSource() }
             }
         }
     }
@@ -654,7 +653,6 @@ final class EditorViewModel: ObservableObject {
         let generation = loadGeneration
         let url = store.fileURL(item)
         let wantsHDR = settings.hdr
-        let processingVersion = settings.processingVersion
         let heals = settings.effective.heals
         let denoise = settings.effective.aiDenoise / 100
         let previous = source
@@ -671,7 +669,7 @@ final class EditorViewModel: ObservableObject {
                 let s = EditSession(url: url, expandHDR: wantsHDR)
                 s?.heals = heals
                 s?.denoiseAmount = denoise
-                return (s, s?.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true, processingVersion: processingVersion))
+                return (s, s?.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true))
             } ?? (nil, nil)
             let (s, src) = made
             Diagnostics.shared.note(String(format: "preview decode: done in %.1f s", Date().timeIntervalSince(reloadBegan)))
@@ -755,8 +753,7 @@ final class EditorViewModel: ObservableObject {
         requestRender()
         if settings.masks != old.masks || settings.lensBlur != old.lensBlur { prepareAutoMasksIfNeeded() }
         // HDR changes how the file is decoded; heals are painted in while decoding
-        if settings.hdr != old.hdr || settings.effective.heals != old.effective.heals
-            || settings.processingVersion != old.processingVersion { reloadSource() }
+        if settings.hdr != old.hdr || settings.effective.heals != old.effective.heals { reloadSource() }
         else if settings.effective.aiDenoise != old.effective.aiDenoise { denoiseChanged() }
         upgradeCropIfNeeded()   // an undo, paste or preset in the Crop tool can bring back an older crop
     }
@@ -807,9 +804,6 @@ final class EditorViewModel: ObservableObject {
     /// Rebuilds the (lazy) graph and hands it to the Metal view. Cheap enough to call on every slider tick.
     func requestRender() {
         guard let session, let source else { return }
-        // Reset / preset / undo can change the recipe generation. Keep the last frame until its matching analysis
-        // arrives, instead of briefly combining the new shader with the previous generation's detail layers.
-        guard source.processingVersion == settings.renderingVersion else { return }
         BlackBox.shared.crumb("render")
         BlackBox.shared.count("render")
         let buildStart = CACurrentMediaTime()
@@ -972,10 +966,9 @@ final class EditorViewModel: ObservableObject {
         if DemoMode.isOn { DemoMode.log("detail: building \(Int(edge))") }
         let generation = loadGeneration
         let mp = megapixels
-        let processingVersion = settings.processingVersion
         workQueue.async {
             let src = HeavyWork.shared.run(.fullSizeCopy, megapixels: mp, optional: true) {
-                session.makeSource(maxEdge: edge, materialize: true, processingVersion: processingVersion)
+                session.makeSource(maxEdge: edge, materialize: true)
             } ?? nil
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -1375,8 +1368,8 @@ final class EditorViewModel: ObservableObject {
         guard let source else { return }
         let rgb = source.stats.average(atNormalized: p.x, p.y, radius: 2)
         let r = Double(max(rgb.x, 1e-5)), g = Double(max(rgb.y, 1e-5)), b = Double(max(rgb.z, 1e-5))
-        // Solve the same relative white adaptation as this recipe's shader (legacy RGB or Bradford cones).
-        let correction = RelativeWhiteBalance.solve((Float(r), Float(g), Float(b)), processingVersion: settings.processingVersion)
+        // Solve the same relative white adaptation as the develop shader.
+        let correction = RelativeWhiteBalance.solve((Float(r), Float(g), Float(b)))
         var s = settings
         s.temperature = correction.temperature.rounded()
         s.tint = correction.tint.rounded()
@@ -1389,7 +1382,7 @@ final class EditorViewModel: ObservableObject {
 
     func apply(preset edits: EditSettings) {
         lastChange = .distantPast
-        var s = edits
+        var s = edits.currentRecipe
         s.masks = settings.masks
         s.heals = settings.heals
         s.aiDenoise = settings.aiDenoise   // a preset never starts or drops a photo's AI Denoise
@@ -1583,14 +1576,12 @@ final class EditorViewModel: ObservableObject {
         guard !heals.isEmpty || denoised, let session else { unhealedSource = nil; return }
         guard denoiseProgress == nil else { return }
         // the photo without heals doesn't change when heals do, only when HDR changes how it is decoded
-        if let original = unhealedSource, unhealedHDR == settings.hdr,
-           original.processingVersion == settings.renderingVersion { return }
+        if unhealedSource != nil && unhealedHDR == settings.hdr { return }
         // one at a time: a reload while it is being made used to throw it away and start another (diagnostics
         // 22 Oct: "original copy: making it" five times in 20 s after an AI Denoise change)
         guard unhealedBuilding != settings.hdr else { return }
         unhealedSource = nil
         let hdr = settings.hdr
-        let processingVersion = settings.processingVersion
         BlackBox.shared.crumb("original copy")
         unhealedBuilding = hdr
         Diagnostics.shared.note("original copy (no heals, no AI Denoise): making it")
@@ -1598,15 +1589,14 @@ final class EditorViewModel: ObservableObject {
         workQueue.async {
             // the estimate is the photo's size (checklist A8): megapixels 0 declared 450 MB for every photo
             let src = HeavyWork.shared.run(.original, megapixels: mp, optional: true) {
-                session.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true, heals: [], denoise: false,
-                                   processingVersion: processingVersion)
+                session.makeSource(maxEdge: MemoryBudget.previewEdge, materialize: true, heals: [], denoise: false)
             } ?? nil
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if self.unhealedBuilding == hdr { self.unhealedBuilding = nil }
                 // it depends only on the file and HDR, so a reload for heals or AI Denoise meanwhile doesn't matter
                 guard let src, src.size == self.source?.size else { return }
-                guard hdr == self.settings.hdr, processingVersion == self.settings.processingVersion else { self.refreshUnhealed(); return }
+                guard hdr == self.settings.hdr else { self.refreshUnhealed(); return }
                 self.unhealedSource = src
                 self.unhealedHDR = hdr
                 if self.showOriginal || self.splitCompare { self.requestRender() }
@@ -1825,12 +1815,8 @@ final class EditorViewModel: ObservableObject {
         jobs += user.map { ($0.id.uuidString, $0.settings) }
         let turns = settings.quarterTurns
         workQueue.async {
-            var sources: [Int: ImageSource] = [:]
+            guard let thumbSource = session.makeSource(maxEdge: 200, materialize: true) else { return }
             for (key, var s) in jobs {
-                if sources[s.processingVersion] == nil {
-                    sources[s.processingVersion] = session.makeSource(maxEdge: 200, materialize: true, processingVersion: s.processingVersion)
-                }
-                guard let thumbSource = sources[s.processingVersion] else { continue }
                 s.masks = []
                 s.quarterTurns = turns
                 guard let cg = session.renderCGImage(s, source: thumbSource) else { continue }

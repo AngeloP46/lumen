@@ -706,8 +706,11 @@ extension EditSession {
         struct Piece { var id: Int32; var count = 0; var x0 = Int.max, y0 = Int.max, x1 = -1, y1 = -1 }
         var pieces: [Piece] = []
         var stack: [Int] = []
+        var nextLabel: Int32 = 1
         for start in 0..<n where grown[start] && label[start] == 0 {
-            var p = Piece(id: Int32(pieces.count + 1))
+            // A rejected crumb still owns its label in `label`. Never reuse it for the next accepted person.
+            var p = Piece(id: nextLabel)
+            nextLabel += 1
             label[start] = p.id
             stack.append(start)
             while let i = stack.popLast() {

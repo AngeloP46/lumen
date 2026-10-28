@@ -257,6 +257,8 @@ let files = (try? FileManager.default.contentsOfDirectory(at: inDir, includingPr
 // Fast iteration on adjustment rendering, without the unrelated AI/model and memory sequences.
 if args.contains("--imaging") {
     runImagingQualityChecks()
+    runClarityQualityChecks()
+    runAIRegressionChecks()
     finishChecks()
 }
 
@@ -615,6 +617,8 @@ if args.contains("--lens-blur") {
 
 var opened = 0
 runImagingQualityChecks()
+runClarityQualityChecks()
+runAIRegressionChecks()
 
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
     let stem = file.deletingPathExtension().lastPathComponent

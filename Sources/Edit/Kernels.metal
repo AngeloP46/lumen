@@ -16,15 +16,6 @@ inline float lmStep(float e0, float e1, float x) {
 inline float lmEnc(float y) { return clamp((log2(max(y, 1e-5) / 0.18) + 8.0) / 16.0, 0.0, 1.0); }
 inline float lmDec(float e) { return e * 16.0 - 8.0; }
 
-inline float3 lmToLab(float3 c) {
-    float l = 0.481327291 * c.r + 0.462067912 * c.g + 0.056495603 * c.b;
-    float m = 0.228838101 * c.r + 0.653234400 * c.g + 0.117954413 * c.b;
-    float s = 0.083986018 * c.r + 0.224272789 * c.g + 0.692220839 * c.b;
-    l = pow(max(l, 0.0), 1.0 / 3.0); m = pow(max(m, 0.0), 1.0 / 3.0); s = pow(max(s, 0.0), 1.0 / 3.0);
-    return float3(0.210454255 * l + 0.793617785 * m - 0.004072047 * s,
-                  1.977998495 * l - 2.428592205 * m + 0.450593710 * s,
-                  0.025904037 * l + 0.782771766 * m - 0.808675766 * s);
-}
 inline float3 lmFromLab(float3 v) {
     float l = v.x + 0.396337792 * v.y + 0.215803758 * v.z;
     float m = v.x - 0.105561342 * v.y - 0.063854175 * v.z;
@@ -35,9 +26,9 @@ inline float3 lmFromLab(float3 v) {
                   -0.026013650 * l - 0.508027649 * m + 1.533316682 * s);
 }
 
-// Processing version 2. Keep the version 1 routines below unchanged for saved edits.
+// One shared adjustment engine for all recipes, including migrated saved edits.
 inline float lmCubeRoot(float x) { return sign(x) * pow(fabs(x), 1.0 / 3.0); }
-inline float3 lmToLabV2(float3 c) {
+inline float3 lmToLab(float3 c) {
     float l = lmCubeRoot(dot(c, float3(0.481327291, 0.462067912, 0.056495603)));
     float m = lmCubeRoot(dot(c, float3(0.228838101, 0.653234400, 0.117954413)));
     float s = lmCubeRoot(dot(c, float3(0.083986018, 0.224272789, 0.692220839)));
@@ -67,7 +58,7 @@ inline float3 lmBradfordInverse(float3 c) {
                   dot(c, float3(-0.0085286646, 0.0400428217, 0.9684866958)));
 }
 // A relative adjustment to Apple's already-developed as-shot base, not a Kelvin RAW-WB control.
-inline float3 lmWhiteBalanceV2(float3 c, float temp, float tint) {
+inline float3 lmWhiteBalance(float3 c, float temp, float tint) {
     if (temp == 0.0 && tint == 0.0) return c;
     float y = lmLum(c);
     float3 white = float3(exp2(0.6 * temp), exp2(-0.4 * tint), exp2(-0.6 * temp));
@@ -80,7 +71,7 @@ inline float3 lmWhiteBalanceV2(float3 c, float temp, float tint) {
 inline bool lmInGamut(float3 c) { return all(c >= 0.0) && all(c <= 1.0); }
 // Compress chroma along a constant OkLab hue/lightness ray, rather than clip RGB channels.
 // The original chroma raises the knee so an arbitrarily small adjustment has no onset jump.
-inline float3 lmGamutV2(float3 lab, float originalChroma) {
+inline float3 lmGamut(float3 lab, float originalChroma) {
     lab.x = clamp(lab.x, 0.0, 1.0);
     float C = length(lab.yz);
     if (C < 1e-5 || lab.x <= 0.0 || lab.x >= 1.0) return float3(lab.x * lab.x * lab.x);
@@ -156,7 +147,7 @@ float4 lumenAnalysisApply(sample_t guide, sample_t ab) {
 
 // ------------------------------------------------------------------ the main develop kernel
 
-inline float3 lmDevelopToneV2(float3 base, float4 L1, float4 L2, float3 chroma,
+inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
                               float4 pa, float4 pb, float4 pc, float4 pd, float4 pe,
                               float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
     float3 c = max(base, 0.0);
@@ -190,7 +181,7 @@ inline float3 lmDevelopToneV2(float3 base, float4 L1, float4 L2, float3 chroma,
         float w = nrC * edge / (1.0 + 4.0 * distance * distance);
         c = mix(ch0, chb, w) * y0;
     }
-    c = lmWhiteBalanceV2(c, temp, tint);
+    c = lmWhiteBalance(c, temp, tint);
     float expGain = exp2(ev);
     c *= expGain;
 
@@ -199,7 +190,7 @@ inline float3 lmDevelopToneV2(float3 base, float4 L1, float4 L2, float3 chroma,
         float d = clamp(L2.g / max(g6.w, 1e-4), 0.0, 1.0);
         // Air shares the image's adaptation, but its brightness is bounded after exposure. A few
         // HDR lamps must not make a -1 tick pour many stops of light into the entire photograph.
-        float3 air = max(lmWhiteBalanceV2(max(g6.xyz, 0.0), temp, tint), 0.0) * expGain;
+        float3 air = max(lmWhiteBalance(max(g6.xyz, 0.0), temp, tint), 0.0) * expGain;
         air /= max(1.0, max(air.r, max(air.g, air.b)));
         float amount = dz * dz;                 // fine control around zero; endpoints remain useful
         float yBefore = max(lmLum(c), 1e-6);
@@ -235,15 +226,16 @@ inline float3 lmDevelopToneV2(float3 base, float4 L1, float4 L2, float3 chroma,
     float detail = ((boost - attenuationFine) * clamp(fine, -1.5, 1.5)
                      + (boost - attenuationMedium) * clamp(medium, -1.5, 1.5)) * detailReach;
     if (clar != 0.0) {
-        // The guided broad layer can be sharper at a real edge than the Gaussian texture layer.
-        // Remove only same-direction overlap: direct subtraction could reverse Clarity at that edge.
-        float wideResidual = lpre - lmDec(L1.b);
-        float broad = sign(wideResidual) * max(fabs(wideResidual)
-                       - max(sign(wideResidual) * textureDetail, 0.0), 0.0);
-        float q = (lpre + ev) / 3.2;
-        float edge = 1.0 - lmStep(0.7, 2.5, fabs(broad));
-        detail += clar * 0.6 * clamp(broad, -2.0, 2.0) * edge
-                    * (0.35 + 0.65 * exp(-q * q)) * detailReach;
+        // Both sides of this band use the same medium-resolution guide. Fine texture/noise is
+        // excluded before subtracting the broad base, rather than zero-clamping useful Clarity away.
+        float broad = lmDec(L1.g) - lmDec(L1.b);
+        float q = (lmDec(L1.g) + ev) / 4.5;
+        // L2.r is the local encoded log-light range across the broad filter's full footprint.
+        // Ordinary structure stays active; hard boundaries are protected from bright/dark halos.
+        float edge = 1.0 - lmStep(1.5, 3.0, max(L2.r, 0.0) * 16.0);
+        float midtone = 0.35 + 0.65 * exp(-q * q);
+        float amount = clar > 0.0 ? clar * 0.9 : clar * 0.85;
+        detail += amount * clamp(broad, -1.4, 1.4) * edge * midtone * detailReach;
     }
     if (sharp > 0.0) {
         float ds = lpre - lmDec(L1.r);
@@ -272,155 +264,9 @@ inline float3 lmDevelopToneV2(float3 base, float4 L1, float4 L2, float3 chroma,
     return c * exp2(clamp(l - start, -4.0, 4.0));
 }
 
-// Tone part: everything up to and including the log-luminance tone delta (scene linear, may exceed 1).
-inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
-                            float4 pa, float4 pb, float4 pc, float4 pd, float4 pe,
-                            float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
-    if (g4.z >= 2.0) return lmDevelopToneV2(base, L1, L2, chroma, pa, pb, pc, pd, pe, g0, g1, g2, g3, g4, g6);
-    float3 c = max(base, 0.0);
-
-    // ---- accumulated parameters (global + local)
-    float ev = g0.x + pa.x * 4.0;                // local exposure plane stores EV/4
-    float contrast = g0.y + pa.y;
-    float hl = g0.z + pa.z;
-    float sh = g0.w + pb.x;
-    float wh = g1.x + pb.y;
-    float bk = g1.y + pb.z;
-    float temp = g1.z + pc.x;
-    float tint = g1.w + pc.y;
-    float clar = g2.w + pd.x;
-    float tex = g2.z + pd.y;
-    float dz = g3.x + pd.z;
-    float sharp = g3.y + pe.x;
-    float nrL = clamp(g3.w + pe.y, 0.0, 1.5);
-    float nrC = g4.x;
-    float br = g4.y + pe.z;                      // brightness (global + local), -1...1
-
-    float lpre = clamp(log2(max(lmLum(c), 1e-5) / 0.18), -8.0, 8.0);
-
-    // ---- colour noise reduction: borrow smoothed chromaticity where it differs only slightly
-    if (nrC > 0.0) {
-        float y0 = max(lmLum(c), 1e-5);
-        float yb = max(lmLum(chroma), 1e-5);
-        float3 ch0 = c / y0;
-        float3 chb = chroma / yb;
-        float w = nrC * (1.0 - lmStep(0.05, 0.30, length(ch0 - chb)));
-        c = mix(ch0, chb, w) * y0;
-    }
-
-    // ---- white balance (relative to as shot); luminance is preserved
-    if (temp != 0.0 || tint != 0.0) {
-        float y0 = lmLum(c);
-        c *= float3(exp2(0.6 * temp), exp2(-0.4 * tint), exp2(-0.6 * temp));
-        c *= y0 / max(lmLum(c), 1e-6);
-    }
-
-    // ---- exposure
-    float expGain = exp2(ev);
-    c *= expGain;
-
-    // ---- dehaze (scene linear)
-    if (dz != 0.0) {
-        float darkNorm = max(g6.w, 1e-4);
-        float d = clamp(L2.g / darkNorm, 0.0, 1.0);
-        float3 air = g6.xyz * expGain;
-        if (dz > 0.0) {
-            float t = max(1.0 - 0.9 * min(dz, 1.0) * d, 0.18);
-            c = max((c - air * (1.0 - t)) / t, 0.0);
-        } else {
-            float k = min(-dz, 1.0) * 0.6 * (0.35 + 0.65 * d);
-            c = c + (air * 0.9 - c) * k;
-        }
-    }
-
-    // ---- tone controls in log luminance
-    float yNow = max(lmLum(c), 1e-6);
-    float l1 = log2(yNow / 0.18);
-    float shift = l1 - (lpre + ev);
-    float baseLog = lmDec(L2.r) + ev + shift;
-    float bb = mix(l1, baseLog, 0.75);
-    float delta = 0.0;
-
-    if (sh != 0.0 || hl != 0.0) {
-        float ws = 1.0 - lmStep(-4.8, 0.3, bb);
-        float whh = lmStep(-1.0, 2.8, bb);
-        delta += sh * 1.7 * ws * sqrt(ws) + hl * 1.7 * whh;
-    }
-    // Brightness (owner, 25 Oct 2026, like Apple's): the mid-tones up or down by up to 1 EV, fading to nothing at white
-    // (l1 ~2.5) and in the deepest shadows, so the photo gets brighter without the highlights going white. A tone curve
-    // on each pixel's own level: measured on the local base (as Shadows / Highlights are), a small bright patch among
-    // mid-tones was lifted like them and pressed into white (engine test: near-white rose +0.19, Exposure +1 gave +0.20).
-    // Monotonic for |br| <= 1.
-    if (br != 0.0) delta += br * lmStep(-7.5, -2.5, l1) * (1.0 - lmStep(-0.5, 2.4, l1));
-    if (wh != 0.0) delta += wh * 0.8 * lmStep(0.5, 3.0, l1);
-    if (bk != 0.0) delta += bk * 0.8 * (1.0 - lmStep(-6.0, -1.5, l1));
-    if (contrast != 0.0) delta += contrast * 0.22 * clamp(l1, -6.0, 4.0);
-
-    if (clar != 0.0) {
-        float det = clamp(lpre - lmDec(L1.b), -2.5, 2.5);
-        float q = bb / 3.2;
-        delta += clar * 0.6 * det * (0.35 + 0.65 * exp(-q * q));
-    }
-    float dt = lpre - lmDec(L1.g);
-    if (tex != 0.0) {
-        float tame = 1.0 - 0.6 * lmStep(0.4, 1.6, fabs(dt));
-        delta += tex * 1.1 * clamp(dt, -1.0, 1.0) * tame;
-    }
-    if (sharp != 0.0) {
-        float ds = lpre - lmDec(L1.r);
-        float sm = g3.z;
-        float mk = sm > 0.0 ? lmStep(sm * 0.25, sm * 0.25 + 0.15, fabs(ds)) : 1.0;
-        delta += sharp * 1.0 * clamp(ds, -0.8, 0.8) * mk;
-    }
-    if (nrL > 0.0) {
-        delta -= nrL * 0.9 * dt * (1.0 - lmStep(0.1, 0.5, fabs(dt)));
-    }
-    delta = clamp(delta, -4.0, 4.0);
-    c *= exp2(delta);
-    return c;
-}
-
 // Colour part: highlight shoulder, >1 desaturation, vibrance / saturation, final clamp.
 inline float3 lmDevelopColor(float3 c, float vib, float sat) {
-    // ---- highlight shoulder: identity below 0.85, rolls off towards 1; keeps hue by scaling
-    float y = lmLum(c);
-    if (y > 0.85) {
-        float k = 0.85;
-        float yo = k + (1.0 - k) * (1.0 - exp(-(y - k) / (1.0 - k)));
-        c *= yo / y;
-    }
-    // channels still above 1: desaturate towards the luminance
-    float mx = max(c.r, max(c.g, c.b));
-    if (mx > 1.0) {
-        float yy = lmLum(c);
-        float t = clamp((mx - 1.0) / max(mx - yy, 1e-5), 0.0, 1.0);
-        c = c + (float3(yy) - c) * t;
-    }
-
-    // ---- vibrance / saturation in OkLab
-    if (vib != 0.0 || sat != 0.0) {
-        float3 lab = lmToLab(c);
-        float C = length(lab.yz);
-        float h = atan2(lab.z, lab.y);
-        float k = 1.0;
-        if (vib != 0.0) {
-            float low = 1.0 - clamp(C / 0.22, 0.0, 1.0);
-            float skin = 1.0;
-            if (vib > 0.0) {
-                float q = (fmod(h - 0.85 + 3.14159265 + 6.2831853, 6.2831853) - 3.14159265) / 0.35;
-                skin = 1.0 - 0.6 * exp(-q * q);
-            }
-            k *= max(1.0 + vib * low * low * skin * 1.2, 0.0);
-        }
-        k *= max(1.0 + sat, 0.0);
-        lab.yz *= k;
-        c = lmFromLab(lab);
-    }
-    return clamp(c, 0.0, 1.0);
-}
-
-inline float3 lmDevelopColorV2(float3 c, float vib, float sat) {
-    // Same luminance shoulder as version 1, before perceptual colour work.
+    // Luminance shoulder before perceptual colour work.
     float y = lmLum(c);
     if (y > 0.85) {
         float yo = 0.85 + 0.15 * (1.0 - exp(-(y - 0.85) / 0.15));
@@ -429,7 +275,7 @@ inline float3 lmDevelopColorV2(float3 c, float vib, float sat) {
     vib = clamp(vib, -1.0, 1.0);
     sat = clamp(sat, -1.0, 1.0);
     if (vib == 0.0 && sat == 0.0 && lmInGamut(c)) return c;
-    float3 lab = lmToLabV2(c);
+    float3 lab = lmToLab(c);
     float originalChroma = length(lab.yz);
     float gain = 1.0;
     if (vib != 0.0) {
@@ -443,7 +289,7 @@ inline float3 lmDevelopColorV2(float3 c, float vib, float sat) {
         gain *= max(1.0 + vib * low * low * skin * 1.2, 0.0);
     }
     lab.yz *= gain * max(1.0 + sat, 0.0);
-    return lmGamutV2(lab, originalChroma);
+    return lmGamut(lab, originalChroma);
 }
 
 inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
@@ -451,10 +297,6 @@ inline float3 lmDevelop(float3 base, float4 L1, float4 L2, float3 chroma,
                         float4 g0, float4 g1, float4 g2, float4 g3, float4 g4, float4 g6) {
     float sat = g2.y + pc.z;
     float3 tone = lmDevelopTone(base, L1, L2, chroma, pa, pb, pc, pd, pe, g0, g1, g2, g3, g4, g6);
-    // Use the same gamut handling before and after the first slider tick. Switching algorithms
-    // only after an edit introduced an onset jump on already out-of-gamut highlights.
-    // Version 1 keeps its original rendition for saved recipes.
-    if (g4.z >= 2.0) return lmDevelopColorV2(tone, g2.x, sat);
     return lmDevelopColor(tone, g2.x, sat);
 }
 

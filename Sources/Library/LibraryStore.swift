@@ -164,8 +164,24 @@ final class LibraryStore: ObservableObject {
         }
         loadIndex()
         fillInDatesTaken()
-        // thumbnails that never got made (or were lost) are made again
-        for it in items where !fm.fileExists(atPath: thumbURL(it).path) { refreshThumbnail(it) }
+        // Cached JPEG thumbnails must adopt the same engine as the editor after this update. The serial queue
+        // writes the marker after the refresh jobs, so an interrupted launch retries rather than keeping old looks.
+        let thumbnailEngineURL = root.appendingPathComponent("thumbnail-engine.txt")
+        let thumbnailEngine = String(EditSettings.currentFormat)
+        let refreshAll = (try? String(contentsOf: thumbnailEngineURL, encoding: .utf8)) != thumbnailEngine
+        var cacheCleared = true
+        for it in items where refreshAll || !fm.fileExists(atPath: thumbURL(it).path) {
+            if refreshAll, fm.fileExists(atPath: thumbURL(it).path) {
+                do { try fm.removeItem(at: thumbURL(it)) }   // derived JPEG only; originals and recipes are elsewhere
+                catch { cacheCleared = false; Diagnostics.shared.note("couldn't clear an old thumbnail: \(error.localizedDescription)") }
+            }
+            refreshThumbnail(it)
+        }
+        // A failed render then leaves a missing JPEG, which the normal startup check retries next time.
+        // If even cache removal failed, retain the old marker so the whole migration is retried too.
+        if refreshAll && cacheCleared {
+            thumbQueue.async { try? Data(thumbnailEngine.utf8).write(to: thumbnailEngineURL, options: .atomic) }
+        }
         if let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
            let decoded = try? JSONDecoder().decode([UserPreset].self, from: data) {
             userPresets = decoded
@@ -179,6 +195,8 @@ final class LibraryStore: ObservableObject {
                 return UserPreset(id: id, name: name, settings: Self.decodeSettings(d))
             }
         }
+        if !userPresets.isEmpty, let data = try? Data(contentsOf: root.appendingPathComponent("presets.json")),
+           EditsFile.needsEngineMigration(data) { savePresets() }
         // after the presets are read: they count as references too
         if testRoot == nil { sweepHealPatches() }
     }
@@ -402,6 +420,10 @@ final class LibraryStore: ObservableObject {
         if let pending = failedSaves[item.id] { return pending.settings }
         guard let data = try? Data(contentsOf: editURL(item)) else { return EditSettings() }
         let (s, report) = EditsFile.load(data)
+        if report.engineMigrated {
+            do { try EditsFile.preserveBeforeEngineMigration(file: editURL(item), original: data) }
+            catch { reportSaveFailure(error) }
+        }
         // anything this version couldn't read: the original file is kept before anything can be saved over it
         if report.lostSomething {
             var backedUp = false
@@ -491,12 +513,15 @@ final class LibraryStore: ObservableObject {
     func save(_ s: EditSettings, for item: LibraryItem, history supplied: EditHistory? = nil) {
         // A debounced editor save may arrive after library deletion; never recreate its sidecar.
         guard items.contains(where: { $0.id == item.id }) else { return }
+        let s = s.currentRecipe
+        let supplied = supplied?.currentRecipes
         let url = editURL(item), file = historyURL(item)
         // the old sidecar is read before it is overwritten: it may still hold a pre-move `_undoHistory`
         let oldData = supplied == nil ? try? Data(contentsOf: url) : nil
         let previous = supplied == nil ? failedSaves[item.id]?.settings ?? oldData.map(Self.decodeSettings) ?? EditSettings() : nil
         // small, fast and synchronous: what the photo looks like is never lost; a failed write is said and retried
         do {
+            try EditsFile.preserveBeforeEngineMigration(file: url)
             if let original = pendingBackups[item.id] {
                 try keepCopy(of: original, for: item)
                 pendingBackups[item.id] = nil
@@ -533,7 +558,8 @@ final class LibraryStore: ObservableObject {
         for file in files {
             guard let history = pendingHistory.removeValue(forKey: file) else { continue }
             do {
-                try JSONEncoder().encode(history).write(to: file, options: .atomic)
+                try EditsFile.preserveBeforeEngineMigration(file: file)
+                try JSONEncoder().encode(history.currentRecipes).write(to: file, options: .atomic)
             } catch {
                 if pendingHistory[file] == nil { pendingHistory[file] = history }
                 Diagnostics.shared.note("undo history not saved: \(error.localizedDescription)")
@@ -946,7 +972,8 @@ final class LibraryStore: ObservableObject {
             // queued history writes first: they may name Heal patches, and must not recreate the file afterwards
             historyQueue.sync { LibraryStore.writePendingHistory(historyURL) }
             let names = (try? fm.contentsOfDirectory(atPath: editsDir.path))
-            let own = Set((names ?? []).filter { $0 == "\(id).json" || $0 == "\(id).history.json" || $0 == "\(id).damaged.json" || $0.hasPrefix("\(id).kept-") })
+            let own = Set((names ?? []).filter { $0 == "\(id).json" || $0 == "\(id).history.json" || $0 == "\(id).damaged.json"
+                || $0.hasPrefix("\(id).kept-") || $0.hasPrefix("\(id).pre-engine-") || $0.hasPrefix("\(id).history.pre-engine-") })
             for name in own where name.hasSuffix(".json") {
                 if let data = try? Data(contentsOf: editsDir.appendingPathComponent(name)), let json = try? JSONSerialization.jsonObject(with: data) {
                     patches.formUnion(HealStore.references(in: json))
@@ -1023,7 +1050,9 @@ final class LibraryStore: ObservableObject {
 
     private func savePresets() {
         do {
-            try JSONEncoder().encode(userPresets).write(to: root.appendingPathComponent("presets.json"), options: .atomic)
+            let file = root.appendingPathComponent("presets.json")
+            try EditsFile.preserveBeforeEngineMigration(file: file)
+            try JSONEncoder().encode(userPresets).write(to: file, options: .atomic)
             presetsSaveFailed = false
         } catch {
             presetsSaveFailed = true

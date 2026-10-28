@@ -1,6 +1,48 @@
 # Lumen – project notes for Claude
 
-## Adjustment engine quality — 27 October 2026 (in progress)
+## Resumed 28 October — Clarity and one shared processing engine (in progress)
+- Angelo said "carry on": resumed Clarity first, the approved all-recipes migration, then remaining quality review.
+  Branch `clarity-single-engine` from personal main 0607d03 (SideStore 0.1.714). Previous full UI run 40604410069
+  finished successfully. No changes to the layout, model weights, paywall, pricing or original photo files.
+- Clarity: replace the cancelled residual with a bounded mid-scale contrast band, retain fine noise and protect
+  strong boundaries using local log-light range. New rendered checks require useful -100/+100 strength as well as
+  flat-field and edge safety, at two image sizes, plus real RAW/JPEG comparison sheets.
+- One renderer: every old sidecar/history/preset/pasted recipe now uses current processing; values stay intact.
+  Exact old JSON is backed up before first overwrite; save failures remain pending. Old rendering implementations
+  and version dispatch are removed. Existing looks can change as Angelo explicitly requested. Edits format 3
+  protects rollback to 0.1.714; metadata processingVersion is compatibility information only.
+- AI review found three concrete defects: rejected mask crumbs reused by a later person, paused noise rows lacked
+  decoder identity, and rounded noise-preview dimensions could leave an unwritten white row/column. Regression
+  fixes are included; older noise previews are rebuilt from full residuals without rerunning AI. See the new AI
+  quality review report for scope and remaining unproven photographic quality.
+- Validation/publication pending. Shared code must also reach sandbox PR #168 (the previous OFF/ON builds passed;
+  its StoreKit fixture's first product load failed). Preserve the unrelated local marketing/listing edits there.
+
+## Adjustment engine quality — 28 October 2026 (SideStore published; review follow-up)
+- **First phone follow-up: Clarity too weak.** Angelo reports barely seeing a difference between -100 and +100
+  after the release. Prioritise this before the remaining feature audits. V2 guided smoothing plus zero-clamped
+  texture-overlap removal can cancel Clarity's signal; plausible cause, not yet reproduced on his photo. Check
+  processing generation first; old edits still use v1. Details and reproduction plan are first in the queued
+  quality checklist. No additional app change/build was made in response to this feedback.
+- **Next task list saved at Angelo's request:** `docs/QUALITY-CHECKLIST.md`, "Next adjustment reviews — queued
+  28 October 2026": AI Denoise, Heal, Remove People, Lens Blur, mask generation, Vignette/Grain, Crop/Straighten/
+  Perspective, then finish partially reviewed interactions. Resume when he has usage; no further testing now.
+- **Owner's latest direction, superseding legacy preservation:** Angelo wants the next update to migrate ALL
+  existing saved edits to the new processing engine, retain saved adjustment values/original photos, and remove
+  duplicate legacy rendering code. Old copied edits and presets must also use the new engine. Explain that the
+  same values can render differently; do not retain the old engine indefinitely or require Reset/reimport. This
+  is NOT implemented in 0.1.714. He stopped further testing in this turn because of remaining chat usage. Plan a
+  backed-up, versioned migration (sidecars/history/presets/paste), then remove v1 paths and test before release.
+- **SideStore 0.1.714 verified:** main PR #167 merged as 0607d03; publish run 40607002239. Fresh feed, publish log
+  and GitHub IPA digest match: 356067143 bytes, SHA-256
+  edd165e23def35438b5a04df1e481e5872d528f6ebb47495a58a232020c348b7. All 1,270 engine quality checks and the memory
+  sequences passed in 40604699557; focused GPU 44 checks passed in 40604409841; iPhone release/readiness passed.
+- Angelo requested prioritising publication with 5% chat usage remaining, with review afterwards. Follow up full
+  UI run 40604410069 and sandbox PR #168 (shared code aligned, OFF/ON builds passed but later check 40604979559
+  failed; not merged). Unrelated local sandbox MARKETING.md / docs/appstore/LISTING.md edits are preserved.
+- The finite local publication watcher was stopped after successful publication; it hit a verification parsing
+  error, so the assistant verified feed/log/asset manually. State is .local/imaging-release-state.json. Do not
+  restart it. PR #167's description is the complete GitHub handoff; baseline remains 2ad11b8 for rollback.
 - Angelo approved implementing the adjustment review and publishing the tested SideStore build. Branch
   `imaging-quality-v2`, baseline `2ad11b89995c3ff30ea2ec6ba8336486c6aa8006` (0.1.703). See
   `docs/IMAGING-QUALITY.md`: v2 tone/detail/Dehaze, Bradford relative white balance, P3 gamut mapping, B&W Grade,
@@ -8,7 +50,7 @@
 - Existing saved recipes/history/presets retain processing 1; new/reset recipes use 2. Edits format 2 triggers the
   prior app's copy-before-save warning after rollback. Code is recoverable from the baseline; new v2 edits cannot
   render identically in an older engine. Do not delete the app to roll back.
-- Checks and publication pending. Phone: test new/imported or Reset photos (undo restores prior edits), subtle
+- Phone: test new/imported or Reset photos (undo restores prior edits), subtle
   Dehaze, combined tone controls, saturated paint/lights, noise/detail, B&W grading, HDR/export and responsiveness.
   If a saved older photo feels unchanged, it is intentionally on processing 1 until Reset or a replacement preset.
 

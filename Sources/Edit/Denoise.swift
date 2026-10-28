@@ -40,7 +40,6 @@ extension Float16: ShrinkPixel {
 /// one small row in memory (21 Oct: the 4096 px copy averaged in one go held ~200 MB during a clean).
 final class RowShrinker<P: ShrinkPixel> {
     let width: Int, height: Int, smallWidth: Int, smallHeight: Int
-    private let k: Double
     private let columnOf: [Int]
     private var acc: [Float], hits: [Float]
     private var row = 0, written = 0
@@ -48,23 +47,27 @@ final class RowShrinker<P: ShrinkPixel> {
     private(set) var failed = false
 
     init?(width: Int, height: Int, maxEdge: Int, url: URL) {
+        guard width > 0, height > 0, maxEdge > 0 else { return nil }
         self.width = width; self.height = height
-        k = min(1, Double(maxEdge) / Double(max(width, height)))
+        let k = min(1, Double(maxEdge) / Double(max(width, height)))
         smallWidth = max(1, Int((Double(width) * k).rounded())); smallHeight = max(1, Int((Double(height) * k).rounded()))
         guard FileManager.default.createFile(atPath: url.path, contents: nil), let h = try? FileHandle(forWritingTo: url) else { return nil }
         handle = h
-        let sw = smallWidth, kk = k
-        columnOf = (0..<width).map { min(sw - 1, Int(Double($0) * kk)) }
+        let sw = smallWidth
+        // Use the actual rounded output dimensions for bin assignment too. Using the unrounded scale left
+        // the last bin empty for common shapes (6000 x 4000 -> 4096 x 2731), writing RGB 1 into a noise map.
+        columnOf = (0..<width).map { min(sw - 1, $0 * sw / width) }
         acc = [Float](repeating: 0, count: smallWidth * 3); hits = [Float](repeating: 0, count: smallWidth)
     }
 
     /// The small row a full row `y` falls into.
-    private func smallRow(_ y: Int) -> Int { min(smallHeight - 1, Int(Double(y) * k)) }
+    private func smallRow(_ y: Int) -> Int { min(smallHeight - 1, y * smallHeight / height) }
 
     private func flush() {
         guard written < smallHeight else { return }
         var out = [P](repeating: P.opaque, count: smallWidth * 4)
-        for x in 0..<smallWidth where hits[x] > 0 {
+        for x in 0..<smallWidth {
+            guard hits[x] > 0 else { failed = true; return }
             for c in 0..<3 { out[x * 4 + c] = P(averaging: acc[x * 3 + c] / hits[x]) }
         }
         if (try? out.withUnsafeBytes { try handle.write(contentsOf: Data($0)) }) == nil { failed = true }
@@ -87,9 +90,8 @@ final class RowShrinker<P: ShrinkPixel> {
     /// After the last row; false if anything couldn't be written.
     func finish() -> Bool {
         flush()
-        while written < smallHeight && !failed { flush() }   // rounding: repeat the last row
         try? handle.close()
-        return !failed && row == height
+        return !failed && row == height && written == smallHeight
     }
 }
 
@@ -104,6 +106,8 @@ enum DenoiseStore {
     static let noiseKind = "noise"
     /// The small copy's long edge: as big as the 100 % view's copy, so that view never reads the whole result.
     static let previewEdge = 4096
+    /// Version 2 assigns samples using the rounded output dimensions (no empty last row/column).
+    static let previewVersion = 2
 
     struct Info: Codable {
         var model: String
@@ -118,6 +122,7 @@ enum DenoiseStore {
         /// The RAW decoder the photo was read with when this was made (`EditSession.decoderTag`); nil for results from
         /// before 23 Oct, which are taken as right.
         var decoder: String? = nil
+        var previewVersion: Int? = nil
     }
 
     /// A clean that paused (Lumen left the screen or was swiped away): its rows so far are in `file`.
@@ -130,6 +135,15 @@ enum DenoiseStore {
         var hdr: Bool
         var model: String
         var photo: String       // the photo's file name, for the library's "Continue" banner
+        /// Residual rows only fit the exact decoder that produced them. Unknown older partials restart safely.
+        var decoder: String? = nil
+    }
+
+    /// The same compatibility gate used before appending any rows to a paused result. Completed legacy results
+    /// retain their existing read policy; this stricter rule prevents mixing two decoders in a newly completed file.
+    static func canResume(_ partial: Partial, width: Int, height: Int, hdr: Bool, decoder: String) -> Bool {
+        partial.width == width && partial.height == height && partial.hdr == hdr && partial.model == modelVersion
+            && partial.rows > 0 && partial.rows < height && partial.decoder == decoder
     }
 
     static func stem(_ photo: URL) -> String { photo.deletingPathExtension().lastPathComponent }
@@ -151,6 +165,8 @@ enum DenoiseStore {
                   // made with another RAW decoder (an iOS update): the noise no longer fits the picture exactly
                   decoder == nil || i.decoder == nil || i.decoder == decoder,
                   FileManager.default.fileExists(atPath: directory.appendingPathComponent(i.file).path) else { return nil }
+            if ["noise", "rgba16"].contains((i.file as NSString).pathExtension),
+               !rawFileFits(i.file, width: i.width, height: i.height) { return nil }
             return i
         }
         return valid(read(noiseInfoURL(photo))) ?? valid(read(infoURL(photo, hdr: hdr)))
@@ -161,51 +177,76 @@ enum DenoiseStore {
     /// decoding; iOS can drop the pages again); results made before 21 Oct may be 16-bit PNGs.
     static func image(_ photo: URL, hdr: Bool, size: CGSize, maxEdge: CGFloat? = nil, decoder: String? = nil) -> (CIImage, Info)? {
         guard var i = info(photo, hdr: hdr, size: size, decoder: decoder) else { return nil }
-        if i.kind == nil, let maxEdge, maxEdge <= CGFloat(previewEdge) + 1,
-           maxEdge > CGFloat(max(i.previewWidth ?? 0, i.previewHeight ?? 0)) + 1, let bigger = upgradePreview(photo, hdr: hdr, info: i) {
+        if let maxEdge, maxEdge <= CGFloat(previewEdge) + 1,
+           ["noise", "rgba16"].contains((i.file as NSString).pathExtension),
+           (!previewFits(i) || maxEdge > CGFloat(max(i.previewWidth ?? 0, i.previewHeight ?? 0)) + 1),
+           let bigger = upgradePreview(photo, hdr: hdr, info: i) {
             i = bigger
         }
-        var file = i.file, w = i.width, h = i.height
-        if let maxEdge, let p = i.preview, let pw = i.previewWidth, let ph = i.previewHeight, maxEdge <= CGFloat(max(pw, ph)) + 1,
-           FileManager.default.fileExists(atPath: directory.appendingPathComponent(p).path) {
-            file = p; w = pw; h = ph
+        func load(_ file: String, width w: Int, height h: Int) -> CIImage? {
+            let url = directory.appendingPathComponent(file), size = CGSize(width: w, height: h)
+            switch url.pathExtension {
+            case "noise":
+                guard let data = try? Data(contentsOf: url, options: .alwaysMapped), data.count == w * h * 8 else { return nil }
+                return CIImage(bitmapData: data, bytesPerRow: w * 8, size: size, format: .RGBAh, colorSpace: nil)
+            case "rgba16":
+                guard let data = try? Data(contentsOf: url, options: .alwaysMapped), data.count == w * h * 8,
+                      let p3 = CGColorSpace(name: CGColorSpace.displayP3) else { return nil }
+                return CIImage(bitmapData: data, bytesPerRow: w * 8, size: size, format: .RGBA16, colorSpace: p3)
+            default: return CIImage(contentsOf: url)
+            }
         }
-        let url = directory.appendingPathComponent(file)
-        let size = CGSize(width: w, height: h)
-        switch url.pathExtension {
-        case "noise":
-            guard let data = try? Data(contentsOf: url, options: .alwaysMapped), data.count == w * h * 8 else { return nil }
-            return (CIImage(bitmapData: data, bytesPerRow: w * 8, size: size, format: .RGBAh, colorSpace: nil), i)
-        case "rgba16":
-            guard let data = try? Data(contentsOf: url, options: .alwaysMapped), data.count == w * h * 8,
-                  let p3 = CGColorSpace(name: CGColorSpace.displayP3) else { return nil }
-            return (CIImage(bitmapData: data, bytesPerRow: w * 8, size: size, format: .RGBA16, colorSpace: p3), i)
-        default:
-            return CIImage(contentsOf: url).map { ($0, i) }
-        }
+        if let maxEdge, previewFits(i), let p = i.preview, let pw = i.previewWidth, let ph = i.previewHeight,
+           maxEdge <= CGFloat(max(pw, ph)) + 1, let small = load(p, width: pw, height: ph) { return (small, i) }
+        // A repair that cannot be written, or a preview replaced between lookup and mapping, never means no denoise.
+        return load(i.file, width: i.width, height: i.height).map { ($0, i) }
     }
 
     private static let upgradeLock = NSLock()
-    /// A `previewEdge` copy for an older cleaned copy whose small copy is smaller (owner's phone, 21 Oct: a 48 MP
-    /// ProRAW cleaned with a 2560 px copy made the 100 % view read the whole 372 MB result, and iOS closed Lumen).
-    /// Made once, row by row from the memory-mapped result; nil for PNG results (they are read as before).
+    private static func rawFileFits(_ file: String, width: Int, height: Int) -> Bool {
+        guard width > 0, height > 0,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(file).path),
+              let count = attributes[.size] as? NSNumber else { return false }
+        return count.int64Value == Int64(width) * Int64(height) * 8
+    }
+    private static func previewFits(_ i: Info) -> Bool {
+        guard let file = i.preview, let w = i.previewWidth, let h = i.previewHeight,
+              w > 0, h > 0, w <= i.width, h <= i.height else { return false }
+        if ["noise", "rgba16"].contains((i.file as NSString).pathExtension) {
+            return i.previewVersion == previewVersion && rawFileFits(file, width: w, height: h)
+        }
+        return FileManager.default.fileExists(atPath: directory.appendingPathComponent(file).path)
+    }
+
+    /// Rebuild an old/invalid small copy using the unchanged full-resolution bytes, without running the model.
+    /// Rows are mapped/read one at a time; a unique file is completed before its metadata is installed atomically.
     private static func upgradePreview(_ photo: URL, hdr: Bool, info i: Info) -> Info? {
         upgradeLock.lock(); defer { upgradeLock.unlock() }
-        let fullURL = directory.appendingPathComponent(i.file)
-        guard fullURL.pathExtension == "rgba16",
-              let data = try? Data(contentsOf: fullURL, options: .alwaysMapped), data.count == i.width * i.height * 8 else { return nil }
-        let name = (i.file as NSString).deletingPathExtension + "-preview\(previewEdge).rgba16"
-        let url = directory.appendingPathComponent(name)
-        guard let shrinker = RowShrinker<UInt16>(width: i.width, height: i.height, maxEdge: previewEdge, url: url) else { return nil }
-        data.withUnsafeBytes { raw in
-            let px = raw.bindMemory(to: UInt16.self)
-            for y in 0..<i.height { autoreleasepool { shrinker.add(px.baseAddress! + y * i.width * 4) } }
+        let infoFile = i.kind == noiseKind ? noiseInfoURL(photo) : infoURL(photo, hdr: hdr)
+        guard let current: Info = read(infoFile), current.file == i.file else { return nil }
+        if previewFits(current), max(current.previewWidth ?? 0, current.previewHeight ?? 0) >= min(previewEdge, max(i.width, i.height)) {
+            return current
         }
-        guard shrinker.finish() else { try? FileManager.default.removeItem(at: url); return nil }
-        var n = i
+        let fullURL = directory.appendingPathComponent(i.file)
+        guard ["noise", "rgba16"].contains(fullURL.pathExtension),
+              let data = try? Data(contentsOf: fullURL, options: .alwaysMapped), data.count == i.width * i.height * 8 else { return nil }
+        let name = (i.file as NSString).deletingPathExtension + "-preview-v\(previewVersion)-\(UUID().uuidString)." + fullURL.pathExtension
+        let url = directory.appendingPathComponent(name)
+        func shrink<P: ShrinkPixel>(_ type: P.Type) -> (Int, Int)? {
+            guard let shrinker = RowShrinker<P>(width: i.width, height: i.height, maxEdge: previewEdge, url: url) else { return nil }
+            data.withUnsafeBytes { raw in
+                let px = raw.bindMemory(to: P.self)
+                for y in 0..<i.height { autoreleasepool { shrinker.add(px.baseAddress! + y * i.width * 4) } }
+            }
+            return shrinker.finish() ? (shrinker.smallWidth, shrinker.smallHeight) : nil
+        }
+        guard let dimensions = fullURL.pathExtension == "noise" ? shrink(Float16.self) : shrink(UInt16.self) else {
+            try? FileManager.default.removeItem(at: url); return nil
+        }
+        var n = current
         let old = n.preview
-        n.preview = name; n.previewWidth = shrinker.smallWidth; n.previewHeight = shrinker.smallHeight
-        guard let json = try? JSONEncoder().encode(n), (try? json.write(to: infoURL(photo, hdr: hdr), options: .atomic)) != nil else {
+        n.preview = name; n.previewWidth = dimensions.0; n.previewHeight = dimensions.1; n.previewVersion = previewVersion
+        guard let json = try? JSONEncoder().encode(n), (try? json.write(to: infoFile, options: .atomic)) != nil else {
             try? FileManager.default.removeItem(at: url); return nil
         }
         if let old, old != name { try? FileManager.default.removeItem(at: directory.appendingPathComponent(old)) }
@@ -245,6 +286,7 @@ enum DenoiseStore {
 
     /// Every finished result of this photo (both HDR modes, both kinds), except the files named in `keep`.
     static func removeResults(_ photo: URL, keeping keep: Set<String> = []) {
+        upgradeLock.lock(); defer { upgradeLock.unlock() }
         removeFiles(of: noiseInfoURL(photo), keeping: keep)
         for hdr in [false, true] { removeFiles(of: infoURL(photo, hdr: hdr), keeping: keep) }
     }
@@ -258,6 +300,7 @@ enum DenoiseStore {
     /// At launch: files no result or paused clean refers to any more are removed, paused cleans older than two weeks
     /// go, and the folder is kept out of iCloud backups (results can be made again).
     static func sweep() {
+        upgradeLock.lock(); defer { upgradeLock.unlock() }
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
         var dir = directory
@@ -414,8 +457,13 @@ extension EditSession {
         let fm = FileManager.default
         try? fm.createDirectory(at: DenoiseStore.directory, withIntermediateDirectories: true)
         // a paused clean of this photo, in this mode, by this model, carries on (its scale too)
-        let paused = DenoiseStore.partial(originalURL).flatMap { p -> DenoiseStore.Partial? in
-            guard p.width == W, p.height == H, p.hdr == hdrDecode, p.model == DenoiseStore.modelVersion, p.rows > 0, p.rows < H,
+        let candidate = DenoiseStore.partial(originalURL)
+        if let candidate, candidate.decoder != decoderTag {
+            log?(candidate.decoder == nil ? "denoise: restarting paused clean (its RAW decoder is unknown)"
+                                         : "denoise: restarting paused clean (the RAW decoder changed)")
+        }
+        let paused = candidate.flatMap { p -> DenoiseStore.Partial? in
+            guard DenoiseStore.canResume(p, width: W, height: H, hdr: hdrDecode, decoder: decoderTag),
                   fm.fileExists(atPath: DenoiseStore.directory.appendingPathComponent(p.file).path) else { return nil }
             return p
         }
@@ -480,7 +528,7 @@ extension EditSession {
         }
         func savePartial() {
             let p = DenoiseStore.Partial(file: fileName, width: W, height: H, rows: rowsWritten, scale: scale, hdr: hdrDecode,
-                                         model: DenoiseStore.modelVersion, photo: originalURL.lastPathComponent)
+                                         model: DenoiseStore.modelVersion, photo: originalURL.lastPathComponent, decoder: decoderTag)
             if let data = try? JSONEncoder().encode(p) { try? data.write(to: DenoiseStore.partialURL(originalURL), options: .atomic) }
         }
         savePartial()
@@ -643,7 +691,7 @@ extension EditSession {
                                      preview: previewWritten ? previewName : nil,
                                      previewWidth: previewWritten ? shrinker.smallWidth : nil,
                                      previewHeight: previewWritten ? shrinker.smallHeight : nil, kind: DenoiseStore.noiseKind,
-                                     decoder: decoderTag)
+                                      decoder: decoderTag, previewVersion: previewWritten ? DenoiseStore.previewVersion : nil)
         guard let data = try? JSONEncoder().encode(info),
               (try? data.write(to: DenoiseStore.noiseInfoURL(originalURL), options: .atomic)) != nil else { return .failed }
         try? fm.removeItem(at: DenoiseStore.partialURL(originalURL))

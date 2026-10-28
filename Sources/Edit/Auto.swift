@@ -142,7 +142,7 @@ extension EditSession {
         s.vibrance = (s.blackAndWhite || colour < 0.03) ? 0 : Double(max(0, min(25, (0.32 - colour) * 110)).rounded())
 
         // --- White balance (stats are the photo as decoded, so this is absolute: tapping Auto twice gives the same)
-        if !s.blackAndWhite, let wb = autoWhiteBalance(lum: lum, rgb: rgbCells, white: white, processingVersion: s.processingVersion) {
+        if !s.blackAndWhite, let wb = autoWhiteBalance(lum: lum, rgb: rgbCells, white: white) {
             s.temperature = wb.0; s.tint = wb.1
         }
 
@@ -152,7 +152,7 @@ extension EditSession {
 
     /// Temperature / tint (the develop kernel's units) that take most of the cast off the near-neutral areas,
     /// or nil when the photo gives too little to go on.
-    static func autoWhiteBalance(lum: [Float], rgb: [SIMD3<Float>], white: Float, processingVersion: Int = 2) -> (Double, Double)? {
+    static func autoWhiteBalance(lum: [Float], rgb: [SIMD3<Float>], white: Float) -> (Double, Double)? {
         // log chroma per cell: blue vs red, and green vs the red/blue average
         var ab: [Float] = [], gm: [Float] = []
         for (i, c) in rgb.enumerated() where lum[i] > 0.03 && lum[i] < 0.9 * white {
@@ -170,7 +170,7 @@ extension EditSession {
         }
         // the picker's maths for a spot of this colour (r = 1, b = 2^ab, g = 2^gm * sqrt(b))
         let r = 1.0, b = Double(exp2(cab)), g = Double(exp2(cgm)) * b.squareRoot()
-        let correction = RelativeWhiteBalance.solve((Float(r), Float(g), Float(b)), processingVersion: processingVersion)
+        let correction = RelativeWhiteBalance.solve((Float(r), Float(g), Float(b)))
         // most of the way, less for a very strong cast (likely deliberate light), and within sensible limits
         let strength = abs(cab) > 1.2 ? 0.3 : 0.6
         let temp = min(max(correction.temperature * strength, -30), 30).rounded()

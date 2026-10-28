@@ -9,10 +9,8 @@ enum ColorCube {
     // Band centres as OkLab hue angles (radians): red, orange, yellow, green, aqua, blue, purple, magenta.
     private static let bandHue: [Float] = [29, 55, 100, 142, 195, 264, 300, 345].map { $0 * .pi / 180 }
 
-    static func make(curves: ToneCurves, hsl: HSLSettings, grading: ColorGrading, blackAndWhite: Bool,
-                     processingVersion: Int = 2) -> Data {
+    static func make(curves: ToneCurves, hsl: HSLSettings, grading: ColorGrading, blackAndWhite: Bool) -> Data {
         let n = dim
-        let modern = processingVersion >= 2
         let useCurves = !curves.isNeutral
         let lm = ToneCurves.lut(for: curves.master)
         let lr = ToneCurves.lut(for: curves.red)
@@ -29,7 +27,7 @@ enum ColorCube {
         let mid = Float(0.5 - grading.balance / 100 * 0.25)
         let width = Float(0.15 + grading.blending / 100 * 0.5)
         let hasGradeLuminance = [grading.shadows, grading.midtones, grading.highlights, grading.global].contains { $0.lum != 0 }
-        let gradeLuminance = modern && hasGradeLuminance
+        let gradeLuminance = hasGradeLuminance
             ? gradeLuminanceTable(mid: mid, width: width, shadows: tS.l, midtones: tM.l, highlights: tH.l, global: tG.l)
             : []
 
@@ -80,24 +78,19 @@ enum ColorCube {
                             }
                             var a = chroma * cos(hue)
                             var bb = chroma * sin(hue)
-                            if useGrade && (modern || !blackAndWhite) {
+                            if useGrade {
                                 let wS: Float = 1 - smooth(mid - width, mid + width * 0.25, lab.0)
                                 let wH: Float = smooth(mid - width * 0.25, mid + width, lab.0)
                                 let wM: Float = max(0, 1 - wS - wH)
                                 // Keep black and white endpoints when adding a tint, including to a B&W conversion.
-                                // Version 1 retains its original behaviour for already-saved edits.
-                                let fade: Float = modern ? smooth(0, 0.12, lab.0) * (1 - smooth(0.88, 1, lab.0)) : 1
+                                let fade = smooth(0, 0.12, lab.0) * (1 - smooth(0.88, 1, lab.0))
                                 a += (wS * tS.a + wM * tM.a + wH * tH.a + tG.a) * fade
                                 bb += (wS * tS.b + wM * tM.b + wH * tH.b + tG.b) * fade
-                                if modern {
-                                    if !gradeLuminance.isEmpty { lab.0 = sample(gradeLuminance, lab.0) }
-                                } else {
-                                    lab.0 += wS * tS.l + wM * tM.l + wH * tH.l + tG.l
-                                }
+                                if !gradeLuminance.isEmpty { lab.0 = sample(gradeLuminance, lab.0) }
                             }
                             let changed = abs(lab.0 - originalLab.0) > 1e-7 || abs(a - originalLab.1) > 1e-7
                                 || abs(bb - originalLab.2) > 1e-7
-                            let lin = modern && changed
+                            let lin = changed
                                 ? Ok.gamutCompressed(lab.0, a, bb, originalChroma: originalChroma)
                                 : Ok.fromLab(lab.0, a, bb)
                             r = Ok.encode(lin.0)
@@ -276,47 +269,37 @@ enum Ok {
     }
 }
 
-/// Relative warm/cool and green/magenta corrections around the decoded image's white balance. Version 2
+/// Relative warm/cool and green/magenta corrections around the decoded image's white balance. This
 /// applies the ICC linear Bradford cone transform, not independent display RGB channel gains. Slider units
 /// remain -100...100; these relative controls deliberately do not claim to be a Kelvin measurement.
 enum RelativeWhiteBalance {
     typealias RGB = (Float, Float, Float)
 
-    static func apply(_ rgb: RGB, temperature: Double, tint: Double, processingVersion: Int = 2) -> RGB {
+    static func apply(_ rgb: RGB, temperature: Double, tint: Double) -> RGB {
         guard temperature.isFinite, tint.isFinite else { return rgb }
         if temperature == 0 && tint == 0 { return rgb }
         let t = Float(temperature / 100), n = Float(tint / 100)
         let gain: RGB = (exp2f(0.6 * t), exp2f(-0.4 * n), exp2f(-0.6 * t))
         let oldY = luminance(rgb)
-        let result: RGB
-        if processingVersion < 2 {
-            result = (rgb.0 * gain.0, rgb.1 * gain.1, rgb.2 * gain.2)
-        } else {
-            let whiteY = max(luminance(gain), 1e-6)
-            let white = toCone((gain.0 / whiteY, gain.1 / whiteY, gain.2 / whiteY))
-            let d65 = toCone((1, 1, 1))
-            let cone = toCone(rgb)
-            result = fromCone((cone.0 * white.0 / d65.0, cone.1 * white.1 / d65.1, cone.2 * white.2 / d65.2))
-        }
+        let whiteY = max(luminance(gain), 1e-6)
+        let white = toCone((gain.0 / whiteY, gain.1 / whiteY, gain.2 / whiteY))
+        let d65 = toCone((1, 1, 1))
+        let cone = toCone(rgb)
+        let result = fromCone((cone.0 * white.0 / d65.0, cone.1 * white.1 / d65.1, cone.2 * white.2 / d65.2))
         let scale = oldY / max(luminance(result), 1e-6)
         return (result.0 * scale, result.1 * scale, result.2 * scale)
     }
 
     /// The inverse of `apply` for a sampled neutral patch. The return value is bounded to the controls;
     /// callers can impose smaller Auto limits or round for display after solving.
-    static func solve(_ rgb: RGB, processingVersion: Int = 2) -> (temperature: Double, tint: Double) {
+    static func solve(_ rgb: RGB) -> (temperature: Double, tint: Double) {
         guard rgb.0.isFinite, rgb.1.isFinite, rgb.2.isFinite else { return (0, 0) }
         let sample: RGB = (max(rgb.0, 1e-5), max(rgb.1, 1e-5), max(rgb.2, 1e-5))
-        let white: RGB
-        if processingVersion < 2 {
-            white = (1 / sample.0, 1 / sample.1, 1 / sample.2)
-        } else {
-            let cone = toCone(sample), d65 = toCone((1, 1, 1))
-            // Adapt sample's cone response back to neutral D65. A common scale has no chromatic effect.
-            white = fromCone((d65.0 * d65.0 / max(cone.0, 1e-6),
+        let cone = toCone(sample), d65 = toCone((1, 1, 1))
+        // Adapt sample's cone response back to neutral D65. A common scale has no chromatic effect.
+        let white = fromCone((d65.0 * d65.0 / max(cone.0, 1e-6),
                               d65.1 * d65.1 / max(cone.1, 1e-6),
                               d65.2 * d65.2 / max(cone.2, 1e-6)))
-        }
         let r = Double(max(white.0, 1e-6)), g = Double(max(white.1, 1e-6)), b = Double(max(white.2, 1e-6))
         let t = log2(r / b) / 1.2 * 100
         let n = -log2(g / sqrt(r * b)) / 0.4 * 100
