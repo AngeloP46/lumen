@@ -709,7 +709,7 @@ final class EditSession: @unchecked Sendable {
         let gw = Int(guide.extent.width.rounded()), gh = Int(guide.extent.height.rounded())
         var pixels = [Float](repeating: 0, count: gw * gh * 4)
         pixels.withUnsafeMutableBytes { p in
-            ctx.render(guide.clampedToExtent(), toBitmap: p.baseAddress!, rowBytes: gw * 16,
+            LumenGPU.drawContext.render(guide.clampedToExtent(), toBitmap: p.baseAddress!, rowBytes: gw * 16,
                        bounds: CGRect(x: 0, y: 0, width: gw, height: gh), format: .RGBAf, colorSpace: nil)
         }
         let values = (0..<(gw * gh)).map { pixels[$0 * 4] * 16 - 8 }
@@ -743,7 +743,7 @@ final class EditSession: @unchecked Sendable {
         let w = max(1, Int(img.extent.width.rounded())), h = max(1, Int(img.extent.height.rounded()))
         var data = [Float](repeating: 0, count: w * h * 4)
         data.withUnsafeMutableBytes { p in
-            ctx.render(img, toBitmap: p.baseAddress!, rowBytes: w * 16, bounds: CGRect(x: 0, y: 0, width: w, height: h),
+            LumenGPU.drawContext.render(img, toBitmap: p.baseAddress!, rowBytes: w * 16, bounds: CGRect(x: 0, y: 0, width: w, height: h),
                        format: .RGBAf, colorSpace: LumenGPU.workingSpace)
         }
         return PixelGrid(width: w, height: h, data: data)

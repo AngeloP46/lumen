@@ -3,6 +3,7 @@ import CoreImage.CIFilterBuiltins
 import CoreGraphics
 import Vision
 import CoreML
+import Metal
 
 /// Local adjustments. Every mask becomes one grey image (white = fully affected). Each mask's slider offsets are
 /// multiplied by that image and summed into five "parameter planes" the develop kernel reads per pixel, so any
@@ -186,6 +187,10 @@ extension EditSession {
 
     // MARK: Brush
 
+    /// Test-only observation of checkpoint renders, distinct borrowed CVPixelBuffer addresses, and pool use.
+    /// The observer receives counts only; it cannot retain the buffers or extend a rebuild's resource lifetime.
+    nonisolated(unsafe) static var brushCheckpointProbe: ((Int, Int, Bool) -> Void)?
+
     private func brushImage(_ c: MaskComponent, source: ImageSource) -> CIImage? {
         if let hit = source.cachedRaster(c) { return hit }
         // A rebuild owns many temporary run graphs. Only its final component may escape this pool.
@@ -196,9 +201,21 @@ extension EditSession {
         let mh = max(1, Int(1024 * ext.height / longSide))
         let side = CGFloat(max(mw, mh))
         let refPoints: [Pt] = c.strokes.filter { !$0.erase }.flatMap(\.points)
+        let probe = Self.brushCheckpointProbe
+        var checkpointRenders = 0, checkpointAddresses = Set<UInt>()
+        var checkpointPool: CVPixelBufferPool?
+        let bufferOptions: [CFString: Any] = [kCVPixelBufferWidthKey: mw, kCVPixelBufferHeightKey: mh,
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_OneComponent16Half,
+            kCVPixelBufferIOSurfacePropertiesKey: [String: Any](), kCVPixelBufferMetalCompatibilityKey: true]
+        let poolOptions = [kCVPixelBufferPoolMinimumBufferCountKey: 2] as CFDictionary
+        let poolCreated = CVPixelBufferPoolCreate(nil, poolOptions, bufferOptions as CFDictionary,
+                                                  &checkpointPool) == kCVReturnSuccess
+        var usedPool = poolCreated
+        defer { probe?(checkpointRenders, checkpointAddresses.count, usedPool) }
 
         /// Scalar GPU barriers, through the non-caching context, avoid retaining checkpoint intermediates
-        /// in the shared develop cache and allocate one channel rather than fresh RGBA IOSurfaces.
+        /// in the shared develop cache. A per-build pool reuses released half-float checkpoint surfaces;
+        /// the final 8-bit raster is independent of that pool and is the only cached output.
         /// Half precision is retained between runs; 8-bit quantization happens only for the final component.
         func scalarCopy(_ image: CIImage, final: Bool = false) -> CIImage? {
             let bounds = image.extent
@@ -208,8 +225,20 @@ extension EditSession {
             let options: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
                                            kCVPixelBufferMetalCompatibilityKey: true]
             let format = final ? kCVPixelFormatType_OneComponent8 : kCVPixelFormatType_OneComponent16Half
-            guard CVPixelBufferCreate(nil, width, height, format, options as CFDictionary, &pixelBuffer) == kCVReturnSuccess,
-                  let buffer = pixelBuffer else { return nil }
+            if !final, let pool = checkpointPool {
+                if CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer) != kCVReturnSuccess { usedPool = false }
+            }
+            // No allocation threshold: ordinary in-flight GPU references must not make a mask disappear.
+            // Pool setup/borrow failure retains the prior independent-allocation behavior.
+            if pixelBuffer == nil {
+                guard CVPixelBufferCreate(nil, width, height, format, options as CFDictionary,
+                                          &pixelBuffer) == kCVReturnSuccess else { return nil }
+            }
+            guard let buffer = pixelBuffer else { return nil }
+            if !final, probe != nil {
+                checkpointRenders += 1
+                checkpointAddresses.insert(UInt(bitPattern: Unmanaged.passUnretained(buffer).toOpaque()))
+            }
             LumenGPU.drawContext.render(image, to: buffer, bounds: bounds, colorSpace: nil)
             let scalar = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
             return scalar.transformed(by: CGAffineTransform(translationX: bounds.minX, y: bounds.minY))
@@ -247,27 +276,42 @@ extension EditSession {
         // One convention for all histories: soften coverage, then add paint or cut away with erase.
         // A remote stroke with a different softness must not reinterpret every earlier paint/erase boundary.
         var acc: CIImage?
-        var i = 0, runs = 0
-        while i < c.strokes.count {
-            var j = i + 1
-            while j < c.strokes.count, c.strokes[j].erase == c.strokes[i].erase, feathers[j] == feathers[i] { j += 1 }
-            let previous = acc
-            guard let next = autoreleasepool(invoking: { () -> CIImage? in
-                guard let img = layer(c.strokes[i..<j], feather: feathers[i]) else { return nil }
-                let base = previous ?? Self.constant(0, img.extent)
-                let combined: CIImage
-                if c.strokes[i].erase {
-                    combined = img.applyingFilter("CIColorInvert").applyingFilter("CIMultiplyCompositing",
-                        parameters: [kCIInputBackgroundImageKey: base]).cropped(to: img.extent)
-                } else {
-                    combined = img.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: base])
-                        .cropped(to: img.extent)
+        var i = 0
+        func renderRunGroup(_ previous: CIImage?) -> CIImage? {
+            autoreleasepool { () -> CIImage? in
+                var group = previous
+                var count = 0
+                while i < c.strokes.count, count < 8 {
+                    var j = i + 1
+                    while j < c.strokes.count, c.strokes[j].erase == c.strokes[i].erase, feathers[j] == feathers[i] { j += 1 }
+                    guard let img = layer(c.strokes[i..<j], feather: feathers[i]) else { return nil }
+                    let base = group ?? Self.constant(0, img.extent)
+                    if c.strokes[i].erase {
+                        group = img.applyingFilter("CIColorInvert").applyingFilter("CIMultiplyCompositing",
+                            parameters: [kCIInputBackgroundImageKey: base]).cropped(to: img.extent)
+                    } else {
+                        group = img.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: base])
+                            .cropped(to: img.extent)
+                    }
+                    count += 1; i = j
                 }
-                // Bound the lazy graph and retained per-run rasters. Half-float checkpoints avoid accumulating
-                // 8-bit rounding through a long history; no prefix cache is retained between brush rebuilds.
-                return (runs + 1) % 8 == 0 ? scalarCopy(combined) : combined
-            }) else { return nil }
-            acc = next; runs += 1; i = j
+                guard let group else { return nil }
+                // Only the detached checkpoint escapes a full group's pool. The final short group is
+                // consumed by the independent R8 render below, preserving the existing checkpoint boundaries.
+                return count == 8 ? scalarCopy(group) : group
+            }
+        }
+        while i < c.strokes.count {
+            guard let next = renderRunGroup(acc) else { return nil }
+            acc = next
+            // CPU wrappers and the previous accumulator have now been released. Complete outstanding GPU
+            // references before the next pool borrow, so released checkpoint surfaces are actually reusable.
+            autoreleasepool {
+                if let barrier = LumenGPU.queue?.makeCommandBuffer() {
+                    barrier.commit(); barrier.waitUntilCompleted()
+                }
+                LumenGPU.drawContext.clearCaches()
+            }
         }
         let raster = acc ?? Self.constant(0, CGRect(x: 0, y: 0, width: mw, height: mh))
         // Cache only a finished small component, not a graph retaining every stroke's bitmap and blur.

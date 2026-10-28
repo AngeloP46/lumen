@@ -405,34 +405,38 @@ extension EditSession {
         hdrImg = hdrImg.map { $0.settingProperties(meta) }
         Self.healProbe?("export: graphs built")
         defer { Self.healProbe?("export: encoded") }
+        // Export renders a one-off full-size graph (twice for SDR + HDR gain-map encoding). The caching context
+        // can retain its RAW/Heal/filter intermediates beside the encoder; use the same colour/precision options
+        // with intermediate caching disabled. Resolution, HDR data and failure handling remain unchanged.
+        let outputContext = LumenGPU.drawContext
         switch format {
         case .jpeg:
             if let hdrImg {
                 if #available(iOS 18.0, macOS 15.0, *) {
                     var o = q
                     o[.hdrImage] = hdrImg
-                    if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
+                    if let d = try? outputContext.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
                 }
                 return .failed(.hdrEncode)
             }
-            if let d = try? ctx.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
+            if let d = try? outputContext.jpegRepresentation(of: img, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
             return .failed(.encode)
         case .heic:
             if let hdrImg {
                 if #available(iOS 18.0, macOS 15.0, *) {
                     var o = q
                     o[.hdrImage] = hdrImg
-                    if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
+                    if let d = try? outputContext.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: o) { return .data(d) }
                 } else if let hlg = CGColorSpace(name: CGColorSpace.itur_2100_HLG),
-                          let d = try? ctx.heif10Representation(of: hdrImg, colorSpace: hlg, options: q) {
+                          let d = try? outputContext.heif10Representation(of: hdrImg, colorSpace: hlg, options: q) {
                     return .data(d)
                 }
                 return .failed(.hdrEncode)
             }
-            if let d = try? ctx.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
+            if let d = try? outputContext.heifRepresentation(of: img, format: .RGBA8, colorSpace: LumenGPU.displaySpace, options: q) { return .data(d) }
             return .failed(.encode)
         case .tiff:
-            if let d = try? ctx.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:]) { return .data(d) }
+            if let d = try? outputContext.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:]) { return .data(d) }
             return .failed(.encode)
         }
     }

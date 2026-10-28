@@ -151,6 +151,10 @@ func runBrushRegressionChecks() {
     // uses the same component ID so storeRaster must replace its old version rather than retaining history.
     let benchmarkSource = source(1024)
     var component = MaskComponent.make(.brush)
+    let previousProbe = EditSession.brushCheckpointProbe
+    var checkpointUsage: [(renders: Int, buffers: Int, pooled: Bool)] = []
+    EditSession.brushCheckpointProbe = { checkpointUsage.append(($0, $1, $2)) }
+    defer { EditSession.brushCheckpointProbe = previousProbe }
     for runs in [1, 20, 100] {
         autoreleasepool {
             component.strokes = (0..<runs).map { i in
@@ -174,6 +178,7 @@ func runBrushRegressionChecks() {
         print("BRUSH BENCH \(runs) runs after GPU cache release, final component retained: \(footprint()) MB")
     }
     var retained: [Int] = []
+    var fingerprints: [Int: UInt64] = [:]
     // Warm the GPU's reusable texture heaps before measuring retention. Early cold allocations vary by the
     // preceding RAW/model checks; they must not be mistaken for a component retaining its earlier graphs.
     // Sixteen measured rebuilds after eight warm-ups still expose linear growth, with the same 64 MB bound.
@@ -182,7 +187,13 @@ func runBrushRegressionChecks() {
         autoreleasepool {
             // The benchmark ends at .10: start at .11 so every iteration really rebuilds.
             component.strokes[0].points[0].x = repeatIndex % 2 == 0 ? 0.11 : 0.10
-            _ = values(mask(component, benchmarkSource))
+            let pixels = values(mask(component, benchmarkSource))
+            let fingerprint = pixels.reduce(UInt64(1469598103934665603)) {
+                ($0 ^ UInt64($1.bitPattern)) &* 1099511628211
+            }
+            if let expected = fingerprints[repeatIndex % 2] {
+                check(fingerprint == expected, "brush regression: checkpoint pool reuse changes identical rebuilt pixels")
+            } else { fingerprints[repeatIndex % 2] = fingerprint }
         }
         let afterBuild = footprint()
         settleGPUResources()
@@ -199,4 +210,8 @@ func runBrushRegressionChecks() {
         check(first >= 0 && highest - first < 64,
               "brush regression: replacing one component retains prior 100-run graphs (\(retained) MB)")
     }
+    let longRebuilds = checkpointUsage.filter { $0.renders >= 12 }
+    print("BRUSH checkpoint pool long-rebuild usage (renders, distinct buffers, pooled): \(longRebuilds)")
+    check(longRebuilds.count >= 24 && longRebuilds.allSatisfy { $0.pooled && $0.buffers <= 3 },
+          "brush regression: 100-run rebuild does not reuse its bounded checkpoint backings (\(longRebuilds))")
 }
