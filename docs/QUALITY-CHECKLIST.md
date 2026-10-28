@@ -15,6 +15,11 @@ R4 failures handled · R5 output correct · R6 performance measured.
 
 ## Next adjustment reviews — queued 28 October 2026
 
+**28 Oct urgent phone follow-up:** 0.1.737 supersedes 0.1.728's thumbnail restart/memory regression and weak Clarity.
+See `THUMBNAIL-RECOVERY-2026-10-28.md`: 126 rendered/batch checks and six focused UI cases pass; phone follow-up
+pending. Larger-library priority/basic-refined scheduling is next, separately from this release. No literal
+2,000-photo test is required; use small deterministic scheduling tests and modest repeated real-RAW memory checks.
+
 Current release: SideStore 0.1.728 verified, main #169 a44a6bd; all 1,315 engine quality checks and the focused 89
 checks and both memory sequences passed (40671575491). Shared sandbox #168 merged 7efb41d, OFF/ON/policy/StoreKit
 passed in 40671675913. Full UI follow-up: 40671255251; six targeted save/history/paste/Heal-retention cases: 40673361219.

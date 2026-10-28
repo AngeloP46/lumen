@@ -1,5 +1,12 @@
 # Lumen session entry point
 
+**Latest: SideStore 0.1.737 published and feed/hash verified**, main #171 merged 300008d, publish 40678586380.
+It fixes the owner's 0.1.728 startup thumbnail restart/memory regression, releases retained model hand-offs and
+strengthens Clarity with fine squared travel near zero. 126 rendered/batch checks, logic/readiness and six targeted
+UI cases pass. See docs/THUMBNAIL-RECOVERY-2026-10-28.md for exact evidence, limitations and next scheduler work.
+Sandbox #172/check 40678793157 pending. No 2,000-image test is needed; owner requested recovery publication first.
+Larger-library queue draft is separate and not in 0.1.737. Phone confirmation and broad UI 40677638862 remain.
+
 Urgent 28 Oct follow-up: owner's 0.1.728 diagnostics show repeated startup thumbnail kills at 3371/3375 MB.
 Branch `thumbnail-recovery-clarity` replaces batch invalidation with per-photo revision-named JPEG checkpoints,
 preserves older display JPEGs until success, bounds decoded cache, drains each RAW render and uses HeavyWork's
