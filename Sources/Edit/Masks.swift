@@ -188,12 +188,32 @@ extension EditSession {
 
     private func brushImage(_ c: MaskComponent, source: ImageSource) -> CIImage? {
         if let hit = source.cachedRaster(c) { return hit }
+        // A rebuild owns many temporary run graphs. Only its final component may escape this pool.
+        return autoreleasepool { () -> CIImage? in
         let ext = source.extent
         let longSide = max(ext.width, ext.height)
         let mw = max(1, Int(1024 * ext.width / longSide))
         let mh = max(1, Int(1024 * ext.height / longSide))
         let side = CGFloat(max(mw, mh))
         let refPoints: [Pt] = c.strokes.filter { !$0.erase }.flatMap(\.points)
+
+        /// Scalar GPU barriers, through the non-caching context, avoid retaining checkpoint intermediates
+        /// in the shared develop cache and allocate one channel rather than fresh RGBA IOSurfaces.
+        /// Half precision is retained between runs; 8-bit quantization happens only for the final component.
+        func scalarCopy(_ image: CIImage, final: Bool = false) -> CIImage? {
+            let bounds = image.extent
+            let width = Int(bounds.width.rounded()), height = Int(bounds.height.rounded())
+            guard width > 0, height > 0 else { return nil }
+            var pixelBuffer: CVPixelBuffer?
+            let options: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [String: Any](),
+                                           kCVPixelBufferMetalCompatibilityKey: true]
+            let format = final ? kCVPixelFormatType_OneComponent8 : kCVPixelFormatType_OneComponent16Half
+            guard CVPixelBufferCreate(nil, width, height, format, options as CFDictionary, &pixelBuffer) == kCVReturnSuccess,
+                  let buffer = pixelBuffer else { return nil }
+            LumenGPU.drawContext.render(image, to: buffer, bounds: bounds, colorSpace: nil)
+            let scalar = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
+            return scalar.transformed(by: CGAffineTransform(translationX: bounds.minX, y: bounds.minY))
+        }
 
         /// Coverage of one paint/erase run. Erase uses the same white coverage and is inverted at composition.
         func layer(_ strokes: ArraySlice<BrushStroke>, feather: Double) -> CIImage? {
@@ -245,13 +265,13 @@ extension EditSession {
                 }
                 // Bound the lazy graph and retained per-run rasters. Half-float checkpoints avoid accumulating
                 // 8-bit rounding through a long history; no prefix cache is retained between brush rebuilds.
-                return (runs + 1) % 8 == 0 ? Self.materialized(combined) : combined
+                return (runs + 1) % 8 == 0 ? scalarCopy(combined) : combined
             }) else { return nil }
             acc = next; runs += 1; i = j
         }
         let raster = acc ?? Self.constant(0, CGRect(x: 0, y: 0, width: mw, height: mh))
         // Cache only a finished small component, not a graph retaining every stroke's bitmap and blur.
-        guard let ci = Self.materializedMask(raster) else { return nil }
+        guard let ci = scalarCopy(raster, final: true) else { return nil }
         let placement = CGAffineTransform(translationX: -ci.extent.minX, y: -ci.extent.minY)
             .scaledBy(x: ext.width / ci.extent.width, y: ext.height / ci.extent.height)
             .translatedBy(x: ext.minX, y: ext.minY)
@@ -273,6 +293,7 @@ extension EditSession {
         }
         source.storeRaster(c, out)
         return out
+        }
     }
 
     /// Single-channel images come in as (v,0,0); copy red into all channels and make it opaque.

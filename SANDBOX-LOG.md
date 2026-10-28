@@ -414,3 +414,5 @@ Detail/AI/Heal keep existing Pro gates, Light/Colour remain free. No Store code 
 a bounded local-catalog readiness preflight after the prior cold first-test failure; production product loading,
 prices and purchase assertions unchanged. OFF/ON/StoreKit validation pending; merge follows personal publication.
 Unrelated MARKETING.md and docs/appstore/LISTING.md edits excluded.
+
+28 Oct release follow-up (from main #180, source8777ed5): release materialized RAW decoder caches with identical-options recreation; non-caching single-channel half-float brush checkpoints and final R8 raster; show explicit Heal results before generic availability notice. Sixteen rebuild memory/pixel tests and corrected saturated Lens Add fixture. No Store code, Pro/free policy, weights or inference settings changed. Personal validation and exact-branch OFF/ON/StoreKit required before merge.

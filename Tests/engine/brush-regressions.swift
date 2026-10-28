@@ -162,12 +162,21 @@ func runBrushRegressionChecks() {
         print("BRUSH BENCH \(runs) runs after GPU cache release, final component retained: \(footprint()) MB")
     }
     var retained: [Int] = []
-    for repeatIndex in 0..<6 {
+    // Long enough to expose linear per-checkpoint retention even with single-channel surfaces.
+    for repeatIndex in 0..<16 {
+        let before = footprint(), started = ProcessInfo.processInfo.systemUptime
         autoreleasepool {
             component.strokes[0].points[0].x = repeatIndex % 2 == 0 ? 0.10 : 0.11
             _ = values(mask(component, benchmarkSource))
         }
-        context.clearCaches(); retained.append(footprint())
+        let afterBuild = footprint()
+        context.clearCaches()
+        let settled = footprint(); retained.append(settled)
+        print(String(format: "BRUSH REBUILD %d: %.1f ms, footprint %d -> %d -> %d MB after cache release; cached component rasters %d",
+                     repeatIndex + 1, (ProcessInfo.processInfo.systemUptime - started) * 1000,
+                     before, afterBuild, settled, benchmarkSource.cachedRasterCount))
+        check(benchmarkSource.cachedRasterCount == 1,
+              "brush regression: repeated rebuild retains multiple component-cache entries")
     }
     print("BRUSH BENCH 100-run replacement settled footprints MB: \(retained)")
     if let first = retained.first, let last = retained.last {

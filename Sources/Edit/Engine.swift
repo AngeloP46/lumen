@@ -195,6 +195,7 @@ final class ImageSource: @unchecked Sendable {
     func storeScene(_ s: SceneField?) { lock.lock(); defer { lock.unlock() }; if let s { scene = s } }
 
     func cachedRaster(_ c: MaskComponent) -> CIImage? { lock.lock(); defer { lock.unlock() }; return raster[RasterKey(c)] }
+    var cachedRasterCount: Int { lock.lock(); defer { lock.unlock() }; return raster.count }
     func storeRaster(_ c: MaskComponent, _ img: CIImage) {
         lock.lock(); defer { lock.unlock() }
         raster = raster.filter { $0.key.id != c.id }   // older versions of this brush
@@ -466,7 +467,8 @@ struct PixelGrid: Sendable {
 /// One opened photo. RAW files (Sony ARW, ProRAW/DNG, ...) go through Apple's CIRAWFilter;
 /// anything else (JPEG/HEIC) is loaded as a plain CIImage.
 final class EditSession: @unchecked Sendable {
-    private let raw: CIRAWFilter?
+    /// Recreated under decodeLock after a materialized source has detached from the decoder's large cache.
+    private var raw: CIRAWFilter?
     private let plain: CIImage?
     let nativeSize: CGSize
     let originalURL: URL
@@ -506,19 +508,11 @@ final class EditSession: @unchecked Sendable {
         originalURL = url
         hdrDecode = expandHDR
         let isRaw = UTType(filenameExtension: url.pathExtension.lowercased())?.conforms(to: .rawImage) ?? false
-        if isRaw, let f = CIRAWFilter(imageURL: url) {
+        if isRaw, let f = Self.cameraRawFilter(url, expandHDR: expandHDR) {
             // Deliberate hybrid pipeline: retain Apple's camera-specific base rendering (tone/gamut mapping,
             // baseline exposure and RAW noise reduction), then apply Lumen's relative edits in linear P3.
             // Linear colour encoding does not make that default rendering scene-referred sensor data.
             // Changing this base would also invalidate the saved Heal patches and AI Denoise residuals.
-            f.extendedDynamicRangeAmount = expandHDR ? 2.0 : 1.0
-            f.sharpnessAmount = 0
-            if let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
-               let o = props[kCGImagePropertyOrientation] as? UInt32,
-               let orientation = CGImagePropertyOrientation(rawValue: o) {
-                f.orientation = orientation
-            }
             raw = f
             plain = nil
             decoderTag = f.decoderVersion.rawValue
@@ -535,6 +529,19 @@ final class EditSession: @unchecked Sendable {
         } else {
             return nil
         }
+    }
+
+    /// Keep every decode option in one factory: dropping a cache must never change camera rendering,
+    /// orientation or the HDR mode used by saved residuals and Heal patches.
+    private static func cameraRawFilter(_ url: URL, expandHDR: Bool) -> CIRAWFilter? {
+        guard let filter = CIRAWFilter(imageURL: url) else { return nil }
+        filter.extendedDynamicRangeAmount = expandHDR ? 2.0 : 1.0
+        filter.sharpnessAmount = 0
+        if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let value = properties[kCGImagePropertyOrientation] as? UInt32,
+           let orientation = CGImagePropertyOrientation(rawValue: value) { filter.orientation = orientation }
+        return filter
     }
 
     private static func loadPlain(_ url: URL, expandHDR: Bool) -> CIImage? {
@@ -570,9 +577,14 @@ final class EditSession: @unchecked Sendable {
     func decodeCamera(maxEdge: CGFloat?) -> CIImage? {
         let longEdge = max(nativeSize.width, nativeSize.height)
         let target = maxEdge.map { min(1, $0 / longEdge) } ?? 1
-        if let raw {
-            raw.scaleFactor = Float(target)
-            guard let o = raw.outputImage else { return nil }
+        if plain == nil {
+            if raw == nil {
+                guard let replacement = Self.cameraRawFilter(originalURL, expandHDR: hdrDecode),
+                      replacement.decoderVersion.rawValue == decoderTag else { return nil }
+                raw = replacement
+            }
+            raw?.scaleFactor = Float(target)
+            guard let o = raw?.outputImage else { return nil }
             return Self.normalized(o)
         }
         guard var img = plain else { return nil }
@@ -593,18 +605,33 @@ final class EditSession: @unchecked Sendable {
     /// Decodes and analyses the photo. `materialize` renders the pieces into GPU buffers so slider drags are cheap.
     func makeSource(maxEdge: CGFloat?, materialize: Bool) -> ImageSource? {
         autoreleasepool {
-            guard LumenKernels.shared != nil, let decoded = decode(maxEdge: maxEdge) else { return nil }
-            return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
+            guard LumenKernels.shared != nil,
+                  let base = autoreleasepool(invoking: { sourceBase(maxEdge: maxEdge, materialize: materialize) }) else { return nil }
+            return analyse(base, materialize: materialize)
         }
     }
 
-    /// The decoded photo in a GPU buffer. If that fails the lazy graph is used, which re-runs the RAW engine for every
-    /// render (21 Oct review: a likely cause of memory running out), so it is tried again once and logged.
-    private func materializedOrLazy(_ decoded: CIImage, _ materialize: Bool) -> CIImage {
+    /// Materialization finishes while the decoder lock is held. A competing source build cannot keep a second
+    /// mutable filter/cache alive during this handoff. Only a completed independent bitmap releases the filter;
+    /// lazy outputs and a failed allocation keep the original decoder/provider alive as before.
+    private func sourceBase(maxEdge: CGFloat?, materialize: Bool, heals list: [HealSpot]? = nil,
+                            denoise: Bool = true) -> CIImage? {
+        decodeLock.lock(); defer { decodeLock.unlock() }
+        let camera = denoise ? decodeUnhealed(maxEdge: maxEdge) : decodeCamera(maxEdge: maxEdge)
+        guard let camera else { return nil }
+        let decoded = HealStore.apply(list ?? healList, to: camera)
         guard materialize else { return decoded }
-        if let m = Self.materialized(decoded) { return m }
+        if let m = Self.materialized(decoded) {
+            if plain == nil { raw = nil }
+            ctx.clearCaches()
+            return m
+        }
         ctx.clearCaches()
-        if let m = Self.materialized(decoded) { return m }
+        if let m = Self.materialized(decoded) {
+            if plain == nil { raw = nil }
+            ctx.clearCaches()
+            return m
+        }
         Self.stepNote?("couldn't keep a \(Int(decoded.extent.width))x\(Int(decoded.extent.height)) copy in memory: working from the file")
         return decoded
     }
@@ -613,16 +640,9 @@ final class EditSession: @unchecked Sendable {
     func makeSource(maxEdge: CGFloat?, materialize: Bool, heals list: [HealSpot], denoise: Bool = true) -> ImageSource? {
         autoreleasepool {
         guard LumenKernels.shared != nil else { return nil }
-        let decoded: CIImage?
-        if denoise { decoded = decode(maxEdge: maxEdge, heals: list) }
-        else {
-            // the original: as the camera made it (no AI Denoise), with only the heals asked for
-            decodeLock.lock()
-            decoded = decodeCamera(maxEdge: maxEdge).map { HealStore.apply(list, to: $0) }
-            decodeLock.unlock()
-        }
-        guard let decoded else { return nil }
-        return analyse(materializedOrLazy(decoded, materialize), materialize: materialize)
+        guard let base = autoreleasepool(invoking: { sourceBase(maxEdge: maxEdge, materialize: materialize,
+                                                               heals: list, denoise: denoise) }) else { return nil }
+        return analyse(base, materialize: materialize)
         }
     }
 
