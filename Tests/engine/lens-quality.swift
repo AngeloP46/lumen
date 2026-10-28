@@ -140,14 +140,31 @@ func runLensQualityChecks() {
         for operation in [MaskOp.add, .subtract] {
             edits.masks[0] = initial
             var brush = MaskComponent.make(.radial, op: operation)
-            brush.x0 = 0.7; brush.y0 = 0.75; brush.x1 = 0.08; brush.y1 = 0.12; brush.feather = 50
+            // Add must target the partial depth selection: at depth .7 the initial selection is already one,
+            // so adding coverage legitimately does nothing. Subtract keeps its fully selected far-plane target.
+            brush.x0 = operation == .add ? 0.35 : 0.7
+            brush.y0 = 0.75; brush.x1 = operation == .add ? 0.04 : 0.08; brush.y1 = 0.12; brush.feather = 50
             edits.masks[0].components.append(brush)
             if let adjusted = session.lensBlurMask(edits, source: source) {
                 let baseline = pixels(linked), changed = pixels(adjusted)
+                let targetX = Int(brush.x0 * 256), targetY = Int((1 - brush.y0) * 128)
+                func targetRadius(_ map: CIImage) -> Float {
+                    var value = [Float](repeating: 0, count: 4)
+                    context.render(map, toBitmap: &value, rowBytes: 16,
+                                   bounds: CGRect(x: targetX, y: targetY, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+                    return value[0]
+                }
+                let targetBefore = targetRadius(linked), targetAfter = targetRadius(adjusted)
+                let delta = maximumDifference(linked, adjusted)
+                print("LENS refinement \(operation), segmented \(segmented): target radius \(targetBefore) -> \(targetAfter), max delta \(delta)")
                 check(zip(baseline, changed).allSatisfy { operation == .add ? $1.x >= $0.x - 0.002 : $1.x <= $0.x + 0.002 },
                       "lens quality: refinement \(operation) moves radius in the wrong direction")
-                check(maximumDifference(linked, adjusted) > 0.01,
-                      "lens quality: refinement \(operation) has no useful effect")
+                check(delta > 0.01,
+                      "lens quality: refinement \(operation) has no useful effect (target \(targetBefore) -> \(targetAfter), max \(delta))")
+                if operation == .add {
+                    check(targetBefore < 0.95 && targetAfter > targetBefore + 0.01,
+                          "lens quality: Add does not increase the partial-selection target (\(targetBefore) -> \(targetAfter))")
+                }
             }
         }
         let roundTrip = try? JSONDecoder().decode(EditSettings.self, from: JSONEncoder().encode(edits))

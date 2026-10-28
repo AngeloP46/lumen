@@ -1,5 +1,14 @@
 # Lumen session entry point
 
+**28 Oct resumed release follow-up:** owner explicitly resumed and wants the remaining fixes published efficiently.
+PR#180 remains the active completion batch; SideStore0.1.756 stays live until a verified new publication.
+Focused40758279578 completed430/433: two Lens Add assertions targeted an already100%selected fixture;
+the other failure was repeated100-run brush memory growth. UI screenshots40749873518 show the general
+missing-model notice hiding the injected people-search result. Correct those causes and verify the actual messages.
+Subjectmemory2703/2650MB still needs measured improvement; do not raise budgets. See the completion report for
+candidate RAWdecoder-cache release and bounded scalar brush checkpoints. No2,000photo run or model changes.
+The older pause checkpoint below is historical; user has now asked to continue.
+
 **28 Oct usage checkpoint — owner requested a quick conclusion and continuation after usage resets.**
 Personal SideStore0.1.756 remains verified live. Do not merge/publish completion PR#180 yet.
 Source6f09c23d8d8f356c9cd6a4d372ad3bb3746a5e2a on `adjustment-quality-completion` compiles (40749848570).

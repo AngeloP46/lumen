@@ -421,7 +421,10 @@ if args.contains("--memory") || args.contains("--memory-subject") {
         check(spot != nil, "memory test: the heal failed")
         if let spot { s.heals = [spot] }
     }
-    peaks["export"] = stepPeak("export") { _ = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true) }
+    peaks["export"] = stepPeak("export") {
+        check(session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true) != nil,
+              "memory test: the full-size HDR export failed")
+    }
     if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil, EditSession.hasDenoiseModel,
        ProcessInfo.processInfo.environment["LUMEN_MEMORY_SKIP_DENOISE"] == nil {
         DenoiseStore.directory = outDir.appendingPathComponent("denoise-memory")

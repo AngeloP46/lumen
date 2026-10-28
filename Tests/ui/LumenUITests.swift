@@ -907,7 +907,7 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(el("heal-people").waitForExistence(timeout: 20))
         el("heal-people").tap()
         XCTAssertTrue(el("heal-note").waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "couldn't")).firstMatch.exists,
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "couldn't")).firstMatch.waitForExistence(timeout: 20),
                       "failed detection must explain failure")
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "No people found")).firstMatch.exists)
         XCTAssertFalse(el("heal-busy").exists)
@@ -916,7 +916,7 @@ final class LumenUITests: XCTestCase {
         XCTAssertTrue(el("heal-people").waitForExistence(timeout: 20))
         el("heal-people").tap()
         XCTAssertTrue(el("heal-note").waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "No people found")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "No people found")).firstMatch.waitForExistence(timeout: 20))
         XCTAssertFalse(el("heal-busy").exists)
         shot("people-search-empty")
     }

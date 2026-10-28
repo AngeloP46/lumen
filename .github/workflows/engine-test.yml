@@ -88,8 +88,13 @@ jobs:
           if [ "$ENGINE_TEST_ONLY" = "ai-state" ]; then EXTRA="--ai-state"; fi
           if [ "$ENGINE_TEST_ONLY" = "memory-subject" ]; then EXTRA="--memory-subject"; fi
           if [ "$ENGINE_TEST_ONLY" = "adjustments" ]; then EXTRA="--adjustments"; fi
+          if [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then EXTRA="--adjustments"; fi
           ./out/engine-test out/k.metallib samples out/render $EXTRA
           code=$?
+          if [ "$code" -eq 0 ] && [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then
+            ./out/engine-test out/k.metallib samples out/memory-subject --memory-subject
+            code=$?
+          fi
           echo "engine-test exit code: $code"
           if [ "$code" -gt 1 ]; then
             echo "::group::lldb backtrace (the test crashed)"
