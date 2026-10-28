@@ -1,5 +1,17 @@
 # Lumen session entry point
 
+**28 Oct usage checkpoint — owner requested a quick conclusion and continuation after usage resets.**
+Personal SideStore0.1.756 remains verified live. Do not merge/publish completion PR#180 yet.
+Source6f09c23d8d8f356c9cd6a4d372ad3bb3746a5e2a on `adjustment-quality-completion` compiles (40749848570).
+Logic passes320a724 (40749723296); newer changes since that are view extraction/tests only.
+TargetedSubjectmemory40749869459 still fails2703/2650MB; pools+coefficient barrier are NOT a measured solution.
+TargetedUI40749873518: five methods pass; newpeople failure/empty method has two failed text assertions910/919.
+Do not assume testaccessibility vsactualmessaging until inspectingits artifact. Newfocused adjustments run40758279578
+was started on6f09c23; re-check its live/terminal state rather than restarting blindly. Allnewpixel regressions,
+grain/brush timings and geometryreferences still need execution/outputinspection. FullUI and finalmemory/ProRAW
+also remain; no2,000photo run. Sandbox draft `sandbox-adjustment-completion` is prepared but unvalidated, preserves
+unrelated MARKETING.md and docs/appstore/LISTING.md. Read docs/COMPLETION-CHECKPOINT-2026-10-28.md first next time.
+
 **Active completion batch, 28 Oct:** `adjustment-quality-completion` from currentmain c2472cb. Owner said
 "dont stop till youre done" and authorized parallel agents. Candidate: brush compositing consistency and bounded
 rasters; Lens Blur manual focus/refinement/HDR radiance; filtered Grain Size and aspect-normalized Vignette;
