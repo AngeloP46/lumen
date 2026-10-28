@@ -1,6 +1,7 @@
 import Foundation
 import CoreImage
 import Darwin
+import Metal
 
 /// Actual brush raster/develop invariants; no model inference or mirrored compositing implementation.
 func runBrushRegressionChecks() {
@@ -135,6 +136,17 @@ func runBrushRegressionChecks() {
         }
         return status == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
+    func settleGPUResources() {
+        // Both contexts use this Metal queue. Wait for submitted GPU work before releasing their reusable
+        // resources, then drain the barrier's own autoreleases before calling the footprint settled.
+        autoreleasepool {
+            if let barrier = LumenGPU.queue?.makeCommandBuffer() {
+                barrier.commit(); barrier.waitUntilCompleted()
+            }
+            context.clearCaches()
+            LumenGPU.drawContext.clearCaches()
+        }
+    }
     // Render real 1/20/100-run graphs, then time cached reuse and report retained process footprint. Each rebuild
     // uses the same component ID so storeRaster must replace its old version rather than retaining history.
     let benchmarkSource = source(1024)
@@ -158,7 +170,7 @@ func runBrushRegressionChecks() {
                   && maximumDifference(rendered, cached) < 0.001,
                   "brush regression: \(runs)-run raster invalid or cached reuse differs")
         }
-        context.clearCaches()
+        settleGPUResources()
         print("BRUSH BENCH \(runs) runs after GPU cache release, final component retained: \(footprint()) MB")
     }
     var retained: [Int] = []
@@ -166,11 +178,12 @@ func runBrushRegressionChecks() {
     for repeatIndex in 0..<16 {
         let before = footprint(), started = ProcessInfo.processInfo.systemUptime
         autoreleasepool {
-            component.strokes[0].points[0].x = repeatIndex % 2 == 0 ? 0.10 : 0.11
+            // The benchmark ends at .10: start at .11 so all sixteen iterations really rebuild.
+            component.strokes[0].points[0].x = repeatIndex % 2 == 0 ? 0.11 : 0.10
             _ = values(mask(component, benchmarkSource))
         }
         let afterBuild = footprint()
-        context.clearCaches()
+        settleGPUResources()
         let settled = footprint(); retained.append(settled)
         print(String(format: "BRUSH REBUILD %d: %.1f ms, footprint %d -> %d -> %d MB after cache release; cached component rasters %d",
                      repeatIndex + 1, (ProcessInfo.processInfo.systemUptime - started) * 1000,

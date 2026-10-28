@@ -189,7 +189,7 @@ extension EditSession {
     private func brushImage(_ c: MaskComponent, source: ImageSource) -> CIImage? {
         if let hit = source.cachedRaster(c) { return hit }
         // A rebuild owns many temporary run graphs. Only its final component may escape this pool.
-        return autoreleasepool { () -> CIImage? in
+        let result = autoreleasepool { () -> CIImage? in
         let ext = source.extent
         let longSide = max(ext.width, ext.height)
         let mw = max(1, Int(1024 * ext.width / longSide))
@@ -294,6 +294,10 @@ extension EditSession {
         source.storeRaster(c, out)
         return out
         }
+        // The non-caching context still owns reusable GPU resource heaps. Clear only after the run graphs
+        // and checkpoint images have left their pool, so their resources are reclaimable on every rebuild.
+        LumenGPU.drawContext.clearCaches()
+        return result
     }
 
     /// Single-channel images come in as (v,0,0); copy red into all channels and make it opaque.
