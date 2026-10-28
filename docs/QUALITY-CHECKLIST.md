@@ -15,6 +15,10 @@ R4 failures handled · R5 output correct · R6 performance measured.
 
 ## Next adjustment reviews — queued 28 October 2026
 
+Active main#180 shared candidate completes the queued brush/blur/effects/Heal/scheduler defects, with new rendered,
+logic and UI fixtures. See ADJUSTMENT-COMPLETION-2026-10-28.md. Mac memory remains under investigation; no budgets
+raised. Actual AI model visual limits are documented in AI-VISUAL-REVIEW-2026-10-28.md; models unchanged.
+
 **Latest verified release: SideStore0.1.756 / sandbox #177 a54fa93.** Both builds, export policy and all four
 StoreKit tests pass40737807973. Full engine quality passes1644 checks40738195410;132 focused checks and six
 related UI cases pass. Long memory and phone follow-up remain; see AI-RELIABILITY-2026-10-28.md.

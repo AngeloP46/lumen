@@ -3,6 +3,48 @@ import CoreImage
 
 /// Storage/mask regressions that need no model inference. They exercise the helpers used by the real AI paths.
 func runAIRegressionChecks() {
+    // A materialized source releases Apple's RAW cache; recreating the decoder must preserve the same pixels,
+    // orientation, HDR options and residual decoder identity. No denoise model is run for this lifecycle check.
+    if let file = files.first(where: { $0.pathExtension.lowercased() == "arw" }) {
+        for hdr in [false, true] {
+            autoreleasepool {
+                guard let session = EditSession(url: file, expandHDR: hdr),
+                      let initial = session.decodeCameraLocked(maxEdge: 320),
+                      let reference = EditSession.materialized(initial),
+                      let first = session.makeSource(maxEdge: 320, materialize: true),
+                      let smaller = session.makeSource(maxEdge: 160, materialize: true),
+                      let repeated = session.makeSource(maxEdge: 320, materialize: true) else {
+                    check(false, "AI regression: RAW cache lifecycle fixture failed in HDR \(hdr)"); return
+                }
+                func values(_ image: CIImage) -> [Float] {
+                    let extent = image.extent, width = Int(extent.width.rounded()), height = Int(extent.height.rounded())
+                    var pixels = [Float](repeating: 0, count: width * height * 4)
+                    pixels.withUnsafeMutableBytes { p in
+                        LumenGPU.context.render(image, toBitmap: p.baseAddress!, rowBytes: width * 16,
+                                                bounds: CGRect(x: 0, y: 0, width: width, height: height),
+                                                format: .RGBAf, colorSpace: nil)
+                    }
+                    return pixels
+                }
+                let expected = values(reference)
+                for (label, image) in [("materialized", first.base), ("recreated", repeated.base)] {
+                    let actual = values(image)
+                    guard actual.count == expected.count else {
+                        check(false, "AI regression: \(label) RAW dimensions changed in HDR \(hdr)"); continue
+                    }
+                    var worst: Float = 0, squared: Float = 0
+                    for (a, b) in zip(expected, actual) { let d = abs(a - b); worst = max(worst, d); squared += d * d }
+                    let rms = sqrt(squared / Float(expected.count))
+                    print("RAW cache lifecycle \(label), HDR \(hdr): max \(worst), RMS \(rms)")
+                    check(actual.allSatisfy(\.isFinite) && worst < 0.002 && rms < 0.0002,
+                          "AI regression: \(label) RAW changed after cache handoff (\(worst), \(rms), HDR \(hdr))")
+                }
+                check(smaller.longEdge <= 161 && first.size == repeated.size && session.decoderTag != "plain",
+                      "AI regression: RAW recreation changed dimensions/orientation/decoder identity")
+            }
+        }
+    } else { check(false, "AI regression: RAW cache lifecycle requires the ARW fixture") }
+
     // An unavailable model must not turn requested denoise into an uncleaned export. A valid cached residual,
     // however, needs no model at all. Tiny file/cache fixtures exercise the production export path without ML.
     do {

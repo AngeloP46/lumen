@@ -1,5 +1,17 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## Active 28 October completion batch (main #180)
+Shared candidate source6f09c23: consistent brush compositing; manual/refined Lens Blur and RGB HDR radiance;
+filtered source-relative grain and normalized vignette; missing Heal/people-search failure; one-active visible-first
+basic/refined thumbnails with rendererrevision4, safe generation installs and editor/background pause. Original
+pixels/values and existing Pro/free gates retained. No Store code or model weights/inference settings changed.
+Memory test40738195410 failedSubject2658/2650; pools alone candidate5d97a5f still2758/2650. Exact guided-filter
+coefficient materialization barrier and innerVisionpool are being checked; thresholds unchanged. First app compile
+hit LibraryView typechecking timeout; lifecycle modifiers moved outside its large existing expression.
+New production-path/logic/UI fixtures await Mac validation; do not claim a release or phone proof. Personal0.1.756
+remains live. Sandbox RAW compile list includes ThumbnailFiles now required by shared Graph. Marketing/listing edits
+are unrelated and must remain uncommitted. See ADJUSTMENT-COMPLETION-2026-10-28.md and AI visual review.
+
 ## Latest: 28 October release and parity complete
 Personal SideStore 0.1.756 published and feed/log/asset verified, main #176 merge737e4fe, sourcef6e3465,
 publish40738521966. Shared sandbox #177 merged a54fa93 after OFF/ON/export-policy/four StoreKit tests pass

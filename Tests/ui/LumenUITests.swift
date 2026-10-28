@@ -902,6 +902,25 @@ final class LumenUITests: XCTestCase {
         XCTAssertFalse(el("person-pin").exists, "the picker should be closed")
     }
 
+    func testRemovePeopleFailureIsDifferentFromNoPeople() {
+        launch(open: 0, tool: "Heal", extra: ["-lumenDemoPeopleFailure", "1"])
+        XCTAssertTrue(el("heal-people").waitForExistence(timeout: 20))
+        el("heal-people").tap()
+        XCTAssertTrue(el("heal-note").waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "couldn't")).firstMatch.waitForExistence(timeout: 20),
+                      "failed detection must explain failure")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "No people found")).firstMatch.exists)
+        XCTAssertFalse(el("heal-busy").exists)
+        shot("people-search-failed")
+        launch(open: 0, tool: "Heal", extra: ["-lumenDemoPeopleEmpty", "1"])
+        XCTAssertTrue(el("heal-people").waitForExistence(timeout: 20))
+        el("heal-people").tap()
+        XCTAssertTrue(el("heal-note").waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "No people found")).firstMatch.waitForExistence(timeout: 20))
+        XCTAssertFalse(el("heal-busy").exists)
+        shot("people-search-empty")
+    }
+
     // MARK: navigation
 
     func testSwipeToNextPhoto() {

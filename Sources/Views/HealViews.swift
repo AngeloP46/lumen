@@ -214,7 +214,9 @@ struct HealPanel: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !EditSession.hasHealModel {
+            if let msg = vm.healMessage {
+                note(msg)
+            } else if !EditSession.hasHealModel {
                 note("Heal isn't available in this build.")
             } else if vm.healPreparing {
                 HStack(spacing: 8) {
@@ -223,8 +225,6 @@ struct HealPanel: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityIdentifier("heal-preparing")
-            } else if let msg = vm.healMessage {
-                note(msg)
             } else {
                 Text(vm.settings.heals.isEmpty
                      ? "Paint over what you want gone and lift your finger. Tap a pin to pick an earlier fix."

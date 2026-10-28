@@ -1,5 +1,11 @@
 # SANDBOX-LOG — what was drafted and what Claude must check
 
+## 28 Oct 2026: remaining adjustment completion (from main #180)
+Candidate6f09c23: brush consistency, Lens Blur focus/refinement/RGBHDR, filtered grain/vignette, Heal/detection
+failure and staged basic/refined thumbnail scheduling. Exact-mask lifetime barrier under memory validation;
+no limits raised. Tests/review reports mirrored. Existing Pro/free gates retained. No Store code changed.
+Validation/personal publication pending; do not merge before tested personal update. Unrelated marketing/listing kept.
+
 ## 28 Oct 2026: release validation complete (from main #176)
 SideStore0.1.756 verified, sandbox #177 merged a54fa93 after40737807973 passes both flag builds, export policy
 and four StoreKit tests. Main full quality passes1644 checks;132 focused regressions and six related UI cases pass.
@@ -408,3 +414,5 @@ Detail/AI/Heal keep existing Pro gates, Light/Colour remain free. No Store code 
 a bounded local-catalog readiness preflight after the prior cold first-test failure; production product loading,
 prices and purchase assertions unchanged. OFF/ON/StoreKit validation pending; merge follows personal publication.
 Unrelated MARKETING.md and docs/appstore/LISTING.md edits excluded.
+
+28 Oct release follow-up (from main #180, source8777ed5): release materialized RAW decoder caches with identical-options recreation; non-caching single-channel half-float brush checkpoints and final R8 raster; show explicit Heal results before generic availability notice. Sixteen rebuild memory/pixel tests and corrected saturated Lens Add fixture. No Store code, Pro/free policy, weights or inference settings changed. Personal validation and exact-branch OFF/ON/StoreKit required before merge.
