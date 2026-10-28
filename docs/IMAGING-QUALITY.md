@@ -3,6 +3,19 @@
 Angelo approved implementing the adjustment review and publishing the verified personal build to SideStore.
 The layout and controls stay the same. Main remains unlocked; shared code is ported to the sandbox separately.
 
+## Current status (supersedes the historical validation below)
+
+SideStore **0.1.774** is published and verified: main #180 (`24c29b7`), sandbox #181 (`079a63f`). Clarity's
+bilateral correction shipped in **0.1.747**; AI selection/cache/export failure fixes in **0.1.756**; brush,
+Lens Blur, Grain/Vignette, Heal/detection and bounded basic/refined thumbnails in **0.1.774**. One renderer serves
+all saved recipes, with recipe format 3 and exact recovery JSON; no legacy shader dispatch was restored.
+Full engine quality **40783385204 passes all 1,977 checks**. Its 24 MP/ProRAW memory stages and full UI
+**40783388166** are still follow-ups, not yet recorded as passed here. The new `brush-checkpoint-pooling`
+candidate is unvalidated/unpublished. Current scope, measurements and limits are in
+[ADJUSTMENT-COMPLETION-2026-10-28.md](ADJUSTMENT-COMPLETION-2026-10-28.md),
+[CLARITY-COVERAGE-2026-10-28.md](CLARITY-COVERAGE-2026-10-28.md), and
+[AI-VISUAL-REVIEW-2026-10-28.md](AI-VISUAL-REVIEW-2026-10-28.md).
+
 ## Compatibility and rollback
 
 - Starting main revision: `2ad11b89995c3ff30ea2ec6ba8336486c6aa8006` (last personal release 0.1.703).
@@ -26,10 +39,12 @@ The layout and controls stay the same. Main remains unlocked; shared code is por
 - Two-scale, amplitude-aware ordinary luminance noise reduction, with stronger shadow gates. Negative Texture and
   Noise combine as nonnegative remaining-detail gains. Sharpening avoids re-amplifying suppressed weak noise.
   This remains a fast photographic approximation, not camera-calibrated noise estimation or AI Denoise.
-- Clarity uses a fast guided log-light analysis (coefficients at <=640 px) and a medium-detail residual evaluated
-  on the same medium-scale guide. This replaces the earlier overlap subtraction that could cancel the useful
-  signal. A bounded positive/negative gain changes medium structure, leaves fine grain largely alone and fades
-  near strong boundaries using local log-light range. Endpoint strength and halo tests cover two image sizes.
+- Clarity uses a compact bilateral grid over a medium-scale log-light guide at <=640 px. Spatial/intensity weights
+  preserve boundaries without vetoing whole surrounding surfaces. The former guided base plus broadly expanded
+  edge veto failed on the owner's car and was removed in 0.1.747. A strictly immediate edge guard, bounded signed
+  gains and squared slider travel retain smooth central adjustment and useful endpoints while leaving fine grain
+  largely alone. Dense-edge scenes, the owner-approved car screenshot proxy, flat fields, halos and two-size
+  response have rendered regressions; the original RAW and phone rendering still require owner confirmation.
 - Signed quadratic Dehaze response gives fine control near zero. Atmospheric colour shares white adaptation;
   its post-exposure brightness is bounded so HDR lamps cannot wash out deep shadows at a -1 tick. Positive haze
   removal also protects luminance from going negative. The endpoints remain intentionally strong effects.
@@ -56,7 +71,11 @@ reduction, not necessarily an entirely un-denoised RAW decode.
 
 - [Apple: Capture and process ProRAW images](https://developer.apple.com/videos/play/wwdc2021/10160/) — default look
   versus scene-referred output; why a full RAW-base change needs deliberate validation.
-- [He et al.: Guided image filtering](https://people.csail.mit.edu/kaiming/eccv10/) — local linear edge-aware model.
+- [Durand and Dorsey: Fast bilateral filtering](https://people.csail.mit.edu/fredo/PUBLI/Siggraph2002/) and
+  [Chen, Paris and Durand: Bilateral grid](https://groups.csail.mit.edu/graphics/bilagrid/) — current Clarity's
+  spatial/intensity filtering principles; independently implemented, not Lightroom's proprietary algorithm.
+- [He et al.: Guided image filtering](https://people.csail.mit.edu/kaiming/eccv10/) — automatic-mask edge refinement;
+  the earlier guided Clarity implementation is historical.
 - [ICC: Chromatic adaptation](https://www.color.org/chadtag.xalter) — linear Bradford adaptation.
 - [Bjorn Ottosson: Gamut clipping](https://bottosson.github.io/posts/gamutclipping/) — perceptual constant-hue
   mapping; the implementation targets Display P3 and adds a soft chroma shoulder.
@@ -72,7 +91,7 @@ repair), and `Tests/logic/main.swift` (recipe/history/preset migration and exact
 CPU prototypes alone are not Metal/device proof. See `AI-QUALITY-REVIEW-2026-10-28.md` for the separate AI audit.
 
 Prior release evidence: 0.1.714 passed 1,270 engine checks and its memory sequences (40604699557); its full UI
-run 40604410069 also passed. Current source 73c0abf: independent code reviews complete, migration logic passed,
+run 40604410069 also passed. Historical 0.1.728 source 73c0abf: independent code reviews complete, migration logic passed,
 all 89 focused GPU checks passed (40671254430), RAW/JPEG sheets inspected. Clarity mid-band amplitude at 1280 px
 is .250/.350/.503 EV for -100/0/+100, versus .251/.350/.501 at 2560 px; fine band stays near .060 EV. The negative
 gain remains below one; a tiny local-range fade prevents flat-field rounding bias. No test thresholds weakened.
