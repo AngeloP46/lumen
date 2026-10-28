@@ -614,7 +614,7 @@ final class EditSession: @unchecked Sendable {
             img.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: max(1, sigmaClar)])
                 .cropped(to: sext)
         }
-        let epsilon = pow(1.0 / 16, 2)  // one-stop variance: modest structure is not mistaken for a hard edge
+        let epsilon: CGFloat = 1.0 / 256  // (1 stop / 16)^2: modest structure is not mistaken for a hard edge
         guard let moments = pack.apply(extent: sext, arguments: [logS]),
               let ab = coef.apply(extent: sext, arguments: [box(moments), CIVector(x: epsilon, y: 0, z: 0, w: 0)])
         else { return nil }

@@ -88,7 +88,9 @@ enum EditsFile {
         }
         // every setting this version knows, laid over the default; one that doesn't read is left at its default
         var merged = defaults
-        for (k, v) in old where k != "masks" && defaults[k] != nil {
+        // cropVersion must stay absent in the template for genuinely older geometry, but a saved explicit
+        // value is still a known setting. Dropping it during tolerant loading reinterprets modern crop values.
+        for (k, v) in old where k != "masks" && (defaults[k] != nil || k == "cropVersion") {
             var trial = merged
             trial[k] = Self.overlay(v, on: defaults[k] ?? v)
             if decodes(trial) != nil { merged = trial } else { report.droppedSettings.append(k) }

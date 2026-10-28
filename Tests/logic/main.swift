@@ -85,6 +85,9 @@ do {
     old["vignetteMidpoint"] = nil
     let tolerant = EditsFile.decodeSettings(data(old))
     check(tolerant == rich, "processing: tolerant migration must preserve old adjustments on the current engine")
+    check(tolerant.cropVersion == rich.cropVersion, "processing: tolerant migration must retain an explicit crop coordinate version")
+    old["cropVersion"] = nil
+    check(EditsFile.decodeSettings(data(old)).cropVersion == nil, "processing: a missing old crop version must remain absent")
     check(EditsFile.decodeSettings(data(encoded(migrated))) == rich, "processing: migrated edits fail a save/load round trip")
     for version in [-1, 0, 1, 2, 99] {
         var obj = encoded(rich); obj["processingVersion"] = version
