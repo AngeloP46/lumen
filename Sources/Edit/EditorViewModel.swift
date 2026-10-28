@@ -187,6 +187,8 @@ final class EditorViewModel: ObservableObject {
         let state = source.snapshotMasks(), required = EditSession.requiredExportMaskKeys(s)
         let ready = required.allSatisfy { state.tried.contains($0) && !state.failures.contains($0) }
             && (!required.contains(EditSession.aiDepth) || state.masks[EditSession.aiDepth] != nil)
+            && ThumbnailFiles.hasRequiredDenoise(s, denoiseAvailable: session.hasDenoised)
+            && !reloadFlight.running && sourceHeals == s.effective.heals.map(\.id)
         let quality: ThumbnailFiles.Quality = ready ? .refined : .basic
         let rendition = ready ? s : ThumbnailFiles.basicRecipe(s)
         workQueue.async {

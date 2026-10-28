@@ -1323,7 +1323,6 @@ final class LibraryStore: ObservableObject {
         let src = fileURL(item), id = item.id, directory = thumbsDir, gate = thumbnailGate
         let token = gate.token(id)
         let settings = settings(for: item)
-        let quality: ThumbnailFiles.Quality = ThumbnailFiles.requiresRefinement(settings) ? .basic : .refined
         let patches = HealStore.retain(Set(settings.heals.map(\.id)))
         thumbQueue.async {
             defer { patches.close() }
@@ -1338,6 +1337,7 @@ final class LibraryStore: ObservableObject {
                     decodeFailed = true
                     return false
                 }
+                let quality = ThumbnailFiles.backgroundQuality(settings, denoiseAvailable: session.hasDenoised)
                 let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
                 return HeavyWork.shared.run(.thumbnail, megapixels: mp, optional: true) {
                     let began = Date()

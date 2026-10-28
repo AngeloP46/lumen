@@ -82,6 +82,16 @@ func runThumbnailWorkChecks() {
         check(ThumbnailFiles.requiresRefinement(edits) && quick.lensBlur.amount == 0 && quick.masks == [manual],
               "thumbnail quality: basic rendition runs AI or inverts an unprepared automatic mask")
         check(!ThumbnailFiles.requiresRefinement(quick), "thumbnail quality: manual/global edits incorrectly need AI refinement")
+        var denoise = EditSettings(); denoise.aiDenoise = 75
+        check(ThumbnailFiles.backgroundQuality(denoise, denoiseAvailable: false) == .basic
+              && !ThumbnailFiles.hasRequiredDenoise(denoise, denoiseAvailable: false),
+              "thumbnail quality: missing requested denoise is certified as refined")
+        check(ThumbnailFiles.backgroundQuality(denoise, denoiseAvailable: true) == .refined
+              && ThumbnailFiles.hasRequiredDenoise(denoise, denoiseAvailable: true),
+              "thumbnail quality: cached denoise cannot refine without model inference")
+        denoise.setOn(.detail, false)
+        check(ThumbnailFiles.backgroundQuality(denoise, denoiseAvailable: false) == .refined,
+              "thumbnail quality: disabled denoise unnecessarily blocks refinement")
         let blockedID = UUID(), fallback = ThumbnailFiles.legacy(in: directory, id: blockedID)
         try Data([8]).write(to: fallback)
         try FileManager.default.createDirectory(at: ThumbnailFiles.current(in: directory, id: blockedID), withIntermediateDirectories: true)

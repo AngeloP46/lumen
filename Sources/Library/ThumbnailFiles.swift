@@ -53,6 +53,12 @@ enum ThumbnailFiles {
             m.amount > 0 && !m.adjust.isNeutral && m.components.contains { $0.amount > 0 && $0.kind.needsAnalysis }
         }
     }
+    static func hasRequiredDenoise(_ edits: EditSettings, denoiseAvailable: Bool) -> Bool {
+        edits.effective.aiDenoise <= 0 || denoiseAvailable
+    }
+    static func backgroundQuality(_ edits: EditSettings, denoiseAvailable: Bool) -> Quality {
+        requiresRefinement(edits) || !hasRequiredDenoise(edits, denoiseAvailable: denoiseAvailable) ? .basic : .refined
+    }
     static func basicRecipe(_ edits: EditSettings) -> EditSettings {
         var s = edits.effective
         s.lensBlur.amount = 0

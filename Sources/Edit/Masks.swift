@@ -567,8 +567,13 @@ extension EditSession {
         }
         guard let packed = pack.apply(extent: ext, arguments: [source.base, mask, CIVector(x: 0, y: 0, z: 0, w: 0)]),
               let packedIP = pack.apply(extent: ext, arguments: [source.base, mask, CIVector(x: 1, y: 0, z: 0, w: 0)]),
-              let ab = coef.apply(extent: ext, arguments: [box(packed), box(packedIP), CIVector(x: eps, y: 0, z: 0, w: 0)]),
-              let q = apply.apply(extent: ext, arguments: [box(ab), source.base,
+              let ab = coef.apply(extent: ext, arguments: [box(packed), box(packedIP), CIVector(x: eps, y: 0, z: 0, w: 0)])
+        else { return mask }
+        // Finish the coefficient pass before applying it. Otherwise the nested full-resolution box graphs
+        // and Vision's temporary buffers can be live beside the final mask. This keeps the same guide/window.
+        let coefficients = autoreleasepool { Self.materialized(ab) }
+        if coefficients != nil { ctx.clearCaches() }
+        guard let q = apply.apply(extent: ext, arguments: [box(coefficients ?? ab), source.base,
                                                           depth ? CIVector(x: 0, y: 1, z: 0, w: 0) : CIVector(x: 0.12, y: 1 / 0.76, z: 0, w: 0)])
         else { return mask }
         return Self.materializedMask(q) ?? Self.materialized(q) ?? q
@@ -910,6 +915,7 @@ extension EditSession {
 
     /// Apple's on-device foreground segmentation (Vision, iOS 17+).
     private func computeSubject(_ source: ImageSource, at point: Pt? = nil) -> CIImage? {
+        autoreleasepool {
         let ext = source.extent
         let k = min(1, 1024 / max(ext.width, ext.height))
         let small = Self.normalized(source.base.transformed(by: CGAffineTransform(scaleX: k, y: k)))
@@ -943,5 +949,6 @@ extension EditSession {
         ci = Self.blur(ci, 1.2, ci.extent)
         if let m = Self.materialized(ci) { ci = m }
         return Self.fit(ci, to: ext)
+        }
     }
 }
