@@ -175,7 +175,7 @@ func runImagingQualityChecks() {
                 let b = pixels(fresh.l1)
                 let log = kernels.logLum.apply(extent: fresh.extent, arguments: [fresh.base])!
                 let reference = pixels(log)
-                let gaussian = pixels(EditSession.blur(log, 0.018 * fresh.longEdge, fresh.extent))
+                let gaussian = pixels(EditSession.blur(log, 0.035 * fresh.longEdge, fresh.extent))
                 let oldBleed = abs(gaussian[x].x - reference[x].x), newBleed = abs(b[x].z - reference[x].x)
                 check(finite(b) && newBleed < oldBleed * 0.7,
                       "imaging: guided clarity does not protect an edge at \(edge) (\(oldBleed) -> \(newBleed))")

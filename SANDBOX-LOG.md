@@ -1,5 +1,13 @@
 # SANDBOX-LOG — what was drafted and what Claude must check
 
+## 28 Oct 2026: urgent thumbnail recovery and stronger Clarity (from main #171)
+Port 4df9b79: per-photo thumbnail checkpoints survive interrupted migration, old JPEGs retained until successful
+replacement, bounded decoded-image cache, per-job autorelease/GPU/model cleanup and optional MP-sized memory
+admission separated from editor work. LoadedModel no longer retains its last hand-off after waiters finish.
+Clarity endpoints stronger, signed squared response near zero, local abrupt-boundary protection. All existing Pro/
+free gates unchanged. No Store code changed. Main 126 focused rendering/batch checks pass; sandbox OFF/ON/StoreKit
+checks pending. Larger-library queue/refinement draft excluded at owner's request to get the recovery update first.
+
 **Session:** 13 Oct 2026, by the local LLM (PC ASSISTANT, on Angelo's PC) — drafting the App
 Store code per `docs/APPSTORE-PLAN.md` (v2, export-gate model) and `SANDBOX-BRIEF.md`.
 
