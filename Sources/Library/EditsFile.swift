@@ -69,6 +69,7 @@ enum EditsFile {
         guard var defaults = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(template))) as? [String: Any],
               let maskTemplate = (defaults["masks"] as? [Any])?.first else { return (EditSettings(), report) }
         defaults["masks"] = [Any]()
+        defaults["processingVersion"] = 1  // missing in an older file: never silently change its rendering engine
         // Lens Blur reads the absence of these to recognise an old save (old amount scale; a saved choice): the
         // template must not fill them in
         defaults["cropVersion"] = nil   // absent = an older crop; the template must not make it a new one

@@ -352,6 +352,8 @@ enum DefaultZone: DefaultValue { static let value = GradeZone() }
 enum DefaultLensBlur: DefaultValue { static let value = LensBlurSettings() }
 /// Files without the key were written before 22 Oct 2026: today's format (they read fine).
 enum DefaultFormat: DefaultValue { static let value = EditSettings.currentFormat }
+/// An absent processing key means the original engine, even when a damaged sidecar needs tolerant loading.
+enum DefaultLegacyProcessing: DefaultValue { static let value = 1 }
 
 /// Decodes to the default when the key is absent, so sidecars and saved presets from before the key existed still load.
 @propertyWrapper
@@ -377,6 +379,12 @@ extension KeyedDecodingContainer {
 
 /// Every non-destructive adjustment for one photo. Stored as a JSON sidecar; the original is never touched.
 struct EditSettings: Codable, Equatable {
+    /// New recipes use the calibrated engine. Existing recipes without this key retain their exact original look.
+    /// Reset all starts a new recipe; undo restores the previous engine together with its settings.
+    @Defaulted<DefaultLegacyProcessing> var processingVersion: Int = 2
+    /// Unknown future integers can still preview with the closest supported engine; formatVersion keeps rollback
+    /// copies safe. Never let a malformed/future integer leave the canvas waiting for an impossible source version.
+    var renderingVersion: Int { processingVersion >= 2 ? 2 : 1 }
     // Light
     var exposure: Double = 0       // EV, -5...5
     /// -100...100: lifts or lowers the mid-tones and leaves white and black where they are, like Apple's Brightness
@@ -458,12 +466,16 @@ struct EditSettings: Codable, Equatable {
     @Defaulted<DefaultFormat> var formatVersion: Int
     /// Raise this whenever a change to what is saved would lose information in an older Lumen (a new required key, a
     /// renamed case, a new mask kind): older versions then recognise a newer file, keep a copy of it and say so.
-    static let currentFormat = 1
+    static let currentFormat = 2
 
     var hasCrop: Bool { cropL > 0 || cropT > 0 || cropR < 1 || cropB < 1 }
     var hasTransform: Bool { tVertical != 0 || tHorizontal != 0 || tAspect != 0 || tScale != 100 || tOffX != 0 || tOffY != 0 }
 
-    var isDefault: Bool { self == EditSettings() }
+    var isDefault: Bool {
+        var d = EditSettings()
+        d.processingVersion = processingVersion; d.formatVersion = formatVersion
+        return self == d
+    }
 }
 
 // MARK: - Sections (Edits sheet: switch a tool's edits off / on, reset one tool)
@@ -571,6 +583,8 @@ extension EditSettings {
     /// The edits `before` -> `after` at `t` (0 = before, 1 = after): the preset Strength slider. Numbers are mixed;
     /// on/off settings and curves switch over halfway. Masks, crop and HDR stay as they are.
     static func blend(_ a: EditSettings, _ b: EditSettings, _ t: Double) -> EditSettings {
+        // The zero-strength endpoint must restore the original recipe, including its processing generation.
+        if t <= 0 { return a }
         func m(_ x: Double, _ y: Double) -> Double { x + (y - x) * t }
         func z(_ x: GradeZone, _ y: GradeZone) -> GradeZone {
             GradeZone(hue: y.sat > 0 ? y.hue : x.hue, sat: m(x.sat, y.sat), lum: m(x.lum, y.lum))
