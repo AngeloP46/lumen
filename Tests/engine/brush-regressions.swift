@@ -211,7 +211,7 @@ func runBrushRegressionChecks() {
               "brush regression: replacing one component retains prior 100-run graphs (\(retained) MB)")
     }
     let longRebuilds = checkpointUsage.filter { $0.renders >= 12 }
-    print("BRUSH checkpoint pool long-rebuild usage (renders, distinct buffers, pooled): \(longRebuilds)")
-    check(longRebuilds.count >= 24 && longRebuilds.allSatisfy { $0.pooled && $0.buffers <= 3 },
+    print("BRUSH checkpoint pool long-rebuild usage (renders, distinct IOSurface backings, pooled): \(longRebuilds)")
+    check(longRebuilds.count >= 24 && longRebuilds.allSatisfy { $0.pooled && $0.buffers > 0 && $0.buffers <= 3 },
           "brush regression: 100-run rebuild does not reuse its bounded checkpoint backings (\(longRebuilds))")
 }

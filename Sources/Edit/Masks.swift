@@ -4,6 +4,7 @@ import CoreGraphics
 import Vision
 import CoreML
 import Metal
+import IOSurface
 
 /// Local adjustments. Every mask becomes one grey image (white = fully affected). Each mask's slider offsets are
 /// multiplied by that image and summed into five "parameter planes" the develop kernel reads per pixel, so any
@@ -187,7 +188,7 @@ extension EditSession {
 
     // MARK: Brush
 
-    /// Test-only observation of checkpoint renders, distinct borrowed CVPixelBuffer addresses, and pool use.
+    /// Test-only observation of checkpoint renders, distinct IOSurface backing IDs, and pool use.
     /// The observer receives counts only; it cannot retain the buffers or extend a rebuild's resource lifetime.
     nonisolated(unsafe) static var brushCheckpointProbe: ((Int, Int, Bool) -> Void)?
 
@@ -202,7 +203,7 @@ extension EditSession {
         let side = CGFloat(max(mw, mh))
         let refPoints: [Pt] = c.strokes.filter { !$0.erase }.flatMap(\.points)
         let probe = Self.brushCheckpointProbe
-        var checkpointRenders = 0, checkpointAddresses = Set<UInt>()
+        var checkpointRenders = 0, checkpointSurfaces = Set<UInt32>()
         var checkpointPool: CVPixelBufferPool?
         let bufferOptions: [CFString: Any] = [kCVPixelBufferWidthKey: mw, kCVPixelBufferHeightKey: mh,
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_OneComponent16Half,
@@ -211,7 +212,7 @@ extension EditSession {
         let poolCreated = CVPixelBufferPoolCreate(nil, poolOptions, bufferOptions as CFDictionary,
                                                   &checkpointPool) == kCVReturnSuccess
         var usedPool = poolCreated
-        defer { probe?(checkpointRenders, checkpointAddresses.count, usedPool) }
+        defer { probe?(checkpointRenders, checkpointSurfaces.count, usedPool) }
 
         /// Scalar GPU barriers, through the non-caching context, avoid retaining checkpoint intermediates
         /// in the shared develop cache. A per-build pool reuses released half-float checkpoint surfaces;
@@ -237,7 +238,13 @@ extension EditSession {
             guard let buffer = pixelBuffer else { return nil }
             if !final, probe != nil {
                 checkpointRenders += 1
-                checkpointAddresses.insert(UInt(bitPattern: Unmanaged.passUnretained(buffer).toOpaque()))
+                // A pool may return a new CVPixelBuffer wrapper around a reused IOSurface. Count the
+                // backing storage, not wrapper addresses; no ownership is taken by this observation.
+                if let surface = CVPixelBufferGetIOSurface(buffer) {
+                    let identifier = IOSurfaceGetID(surface.takeUnretainedValue())
+                    if identifier == 0 { usedPool = false }
+                    else { checkpointSurfaces.insert(identifier) }
+                } else { usedPool = false }
             }
             LumenGPU.drawContext.render(image, to: buffer, bounds: bounds, colorSpace: nil)
             let scalar = Self.expandRed(CIImage(cvPixelBuffer: buffer, options: [.colorSpace: NSNull()]))
