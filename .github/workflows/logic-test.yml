@@ -25,5 +25,5 @@ jobs:
           swift --version
           swiftc -swift-version 5 -o logic-test \
             Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/Paste.swift Sources/Edit/LoadedModel.swift Sources/Library/EditsFile.swift Sources/Edit/CopyPlan.swift Sources/Edit/SingleFlight.swift Sources/Edit/CropMath.swift Sources/Edit/CropFit.swift Sources/HeavyWork.swift Sources/EndStop.swift \
-            Sources/Library/ThumbnailFiles.swift Tests/logic/main.swift
+            Sources/Library/ThumbnailFiles.swift Sources/Edit/BilateralClarity.swift Tests/logic/main.swift
           ./logic-test

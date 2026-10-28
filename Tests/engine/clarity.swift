@@ -95,6 +95,60 @@ func runClarityQualityChecks() {
         context.clearCaches()
     }
 
+    // Real scenes contain many bright/dark boundaries. The former expanded maximum vetoed every surface
+    // between them, even where medium-scale texture was far from the actual edges (owner's car screenshots).
+    do {
+        let width = 1280
+        let fixture = image(width, 192) { x, _ in
+            let cell = x % 96
+            if cell < 8 { return 0.02 }
+            if cell < 16 { return 0.8 }
+            return Float(0.18 * exp2(0.35 * sin(2 * .pi * Double(x) / 64)))
+        }
+        if let src = session.analyse(fixture, materialize: true) {
+            let rows = [-100.0, 0, 100].map { row(developed(src, $0)) }
+            let indices = (96..<(width - 96)).filter { (32..<80).contains($0 % 96) }
+            let values = rows.map { r in indices.map { log2(Double(max(r[$0], 1e-6)) / 0.18) } }
+            func contrast(_ r: [Double]) -> Double {
+                let mean = r.reduce(0, +) / Double(r.count)
+                return sqrt(r.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(r.count))
+            }
+            let strength = values.map(contrast)
+            print("CLARITY busy scene medium contrast -100/0/+100: \(strength)")
+            check(strength[2] > strength[1] * 1.5 && strength[0] < strength[1] * 0.65,
+                  "clarity: nearby hard edges disable contrast across the surrounding scene (\(strength))")
+            // Scope audit: poisoning the Clarity-only channel must not alter any other adjustment family.
+            let poisoned = src.l2.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                "inputBiasVector": CIVector(x: 1, y: 0, z: 0, w: 0)])
+            let alternate = ImageSource(base: src.base, l1: src.l1, l2: poisoned, chroma: src.chroma,
+                                        air: src.air, darkNorm: src.darkNorm, stats: src.stats)
+            var light = EditSettings(); light.exposure = 0.5; light.brightness = 25; light.contrast = 30
+            light.highlights = -30; light.shadows = 35; light.whites = 15; light.blacks = -10
+            var colour = EditSettings(); colour.temperature = 15; colour.tint = -10; colour.saturation = 20; colour.vibrance = 25
+            colour.hsl.bands[2].hue = 15; colour.grading.shadows = GradeZone(hue: 220, sat: 20, lum: -5)
+            var detail = EditSettings(); detail.texture = 30; detail.sharpness = 40; detail.noiseReduction = 25; detail.colorNoise = 30
+            var haze = EditSettings(); haze.dehaze = 35
+            var local = EditSettings(); var mask = Mask.make(.linear)
+            mask.adjust.exposure = 0.5; mask.adjust.brightness = 20; mask.adjust.texture = -25; mask.adjust.noise = 15
+            local.masks = [mask]
+            for (name, recipe) in [("light", light), ("colour/grade", colour), ("texture/sharpen/noise", detail), ("dehaze", haze), ("local non-Clarity", local)] {
+                for hdrWeight in [0.0, 1] {
+                    var edits = recipe; edits.hdr = hdrWeight > 0
+                    let a = row(session.develop(edits, source: src, geometry: false, hdrWeight: hdrWeight, lens: .off))
+                    let b = row(session.develop(edits, source: alternate, geometry: false, hdrWeight: hdrWeight, lens: .off))
+                    check(finite(a) && difference(a, b) < 0.00001,
+                          "clarity scope: edge channel leaks into \(name), HDR weight \(hdrWeight)")
+                }
+            }
+            for amount in [-100.0, 100] {
+                var edits = EditSettings(); edits.clarity = amount; edits.hdr = true
+                let hdr = session.develop(edits, source: src, geometry: false, hdrWeight: 1, lens: .off)
+                check(finite(row(hdr)), "clarity: busy scene HDR result invalid at \(amount)")
+            }
+        } else { check(false, "clarity: busy-scene analysis unavailable") }
+    }
+
     // Clarity is local contrast: a perfectly flat tone must remain flat, and a strong isolated boundary
     // must not acquire broad bright/dark bands. This catches both signal inversion and edge-filter mismatch.
     for isStep in [false, true] {
@@ -135,6 +189,26 @@ func runClarityQualityChecks() {
             for amount in [-100.0, 0, 100] {
                 var edits = EditSettings(); edits.clarity = amount
                 let img = photo.develop(edits, source: src, geometry: false, lens: .off)
+                if file.lastPathComponent == "clarity-car-proxy.png" {
+                    // The owner's screenshot crop is a scene proxy, not the untouched RAW. Its windscreen
+                    // was exactly unchanged in the reported +/- endpoints. Test that region explicitly.
+                    func region(_ image: CIImage) -> [Float] {
+                        let rect = CGRect(x: 20, y: image.extent.height - 210, width: 350, height: 180)
+                        let crop = EditSession.normalized(image.cropped(to: rect))
+                        let small = EditSession.downscaled(crop, 64 / max(crop.extent.width, crop.extent.height))
+                        let width = Int(small.extent.width.rounded()), height = Int(small.extent.height.rounded())
+                        var values = [Float](repeating: 0, count: width * height * 4)
+                        context.render(small, toBitmap: &values, rowBytes: width * 16,
+                                       bounds: CGRect(x: 0, y: 0, width: width, height: height), format: .RGBAf, colorSpace: nil)
+                        return (0..<(width * height)).map { values[$0 * 4] + values[$0 * 4 + 1] + values[$0 * 4 + 2] }
+                    }
+                    let neutral = photo.develop(EditSettings(), source: src, geometry: false, lens: .off)
+                    if amount != 0 {
+                        let delta = difference(region(img), region(neutral)) / 3
+                        print("CLARITY owner car windscreen mean change at \(amount): \(delta)")
+                        check(delta > 0.003, "clarity: the owner's windscreen remains effectively excluded at \(amount) (\(delta))")
+                    }
+                }
                 renders.append(row(img))
                 if let cg = context.createCGImage(img, from: img.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace) {
                     cells.append(("Clarity \(Int(amount))", cg))

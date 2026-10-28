@@ -1,5 +1,11 @@
 # Lumen session entry point
 
+28 Oct next phone finding: owner says 0.1.737 thumbnails work, but Clarity still affects only a tiny bonnet patch.
+Actual +/- screenshots confirm windscreen/background essentially unchanged. `clarity-scene-coverage` removes
+the broad maximum-dilated veto, replaces Clarity base with a bilateral grid and adds owner's car-proxy, dense-edge
+coverage and other-slider isolation tests. Read docs/CLARITY-COVERAGE-2026-10-28.md. Validation/publication pending.
+Do not claim another gain increase fixes coverage. Thumbnail recovery and larger-library draft remain separate.
+
 **Latest: SideStore 0.1.737 published and feed/hash verified**, main #171 merged 300008d, publish 40678586380.
 It fixes the owner's 0.1.728 startup thumbnail restart/memory regression, releases retained model hand-offs and
 strengthens Clarity with fine squared travel near zero. 126 rendered/batch checks, logic/readiness and six targeted

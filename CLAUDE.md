@@ -1,5 +1,16 @@
 # Lumen – project notes for Claude
 
+## Latest phone finding: Clarity coverage is still broken in 0.1.737
+Owner confirms thumbnails now work. Supplied car screenshots (+96/-100) show virtually no windscreen, grille or
+background change; only a bonnet patch responds. Root cause: local range was maximum-dilated by twice the broad
+filter radius and used as a hard veto. Crowded edges disabled entire surfaces. Earlier isolated frequency/edge
+tests missed this. Owner asked to audit every shared adjustment for the same error; don't repeat gain-only tweaks.
+Candidate `clarity-scene-coverage`: bilateral medium-log base, no broad veto, strictly immediate-edge guard;
+owner car-proxy/windscreen and dense-edge coverage tests, plus poisoned-channel tests prove non-Clarity controls
+independent in SDR/HDR. Shared Clarity affects global/local/HDR; other slider families don't read the faulty channel.
+Read docs/CLARITY-COVERAGE-2026-10-28.md; validation pending, 0.1.737 remains live. Thumbnail code unchanged.
+Sandbox recovery #172 passed OFF/ON/policy/StoreKit 40678793157 and merged. Larger-library scheduler remains draft.
+
 ## Latest 28 October: recovery 0.1.737 is on SideStore
 Main #171 merged 300008d (source 4df9b79); publish 40678586380 succeeded. Fresh feed, log and asset digest match:
 356071476 bytes, SHA256 78fff6e803a7d00567f50333058711b89d9b914efe8669662ddb2122150264e1.
