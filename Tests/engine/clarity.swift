@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import CoreImage
 import CoreImage.CIFilterBuiltins
 
@@ -72,9 +73,14 @@ func runClarityQualityChecks() {
             print(String(format: "CLARITY %dpx mid EV -100/0/+100 %.4f / %.4f / %.4f; fine %.4f / %.4f / %.4f",
                          width, middle[0], middle[1], middle[2], fine[0], fine[1], fine[2]))
             check(rows.allSatisfy(finite), "clarity: multiscale endpoints produced invalid pixels at \(width)")
-            check(middle[2] > middle[1] * 1.30, "clarity: +100 barely changes mid-scale contrast at \(width) (\(middle))")
-            check(middle[0] < middle[1] * 0.75 && middle[0] > middle[1] * 0.05,
+            check(middle[2] > middle[1] * 1.90, "clarity: +100 barely changes mid-scale contrast at \(width) (\(middle))")
+            check(middle[0] < middle[1] * 0.45 && middle[0] > middle[1] * 0.05,
                   "clarity: -100 does not soften structure without erasing/reversing it at \(width) (\(middle))")
+            for direction in [-1.0, 1] {
+                let near = difference(row(developed(src, direction * 10)), rows[1])
+                let middleTravel = difference(row(developed(src, direction * 50)), rows[1])
+                check(near < middleTravel * 0.15, "clarity: travel near zero is not finer than midrange at \(width)")
+            }
             check(abs(fine[2] / fine[1] - 1) < 0.12 && abs(fine[0] / fine[1] - 1) < 0.12,
                   "clarity: endpoint strengths also change fine grain too much at \(width) (\(fine))")
             if width == 1280 {
@@ -151,4 +157,43 @@ func runClarityQualityChecks() {
         context.clearCaches()
     }
     print("Clarity frequency, flat/edge and real-photo checks complete")
+}
+
+/// The phone regression was a batch, not one decode: repeated 24 MP RAW thumbnails with Lens Blur masks.
+/// Mac residency differs from iOS; enforce a settled baseline rather than claiming a phone memory limit.
+func runThumbnailBatchChecks() {
+    guard let raw = files.first(where: { $0.pathExtension.lowercased() == "arw" }) else {
+        check(false, "thumbnail batch: RAW sample unavailable"); return
+    }
+    func footprint() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { ptr in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
+    }
+    var readings: [Int] = []
+    for index in 0..<32 {
+        let rendered = autoreleasepool { () -> Bool in
+            guard let session = EditSession(url: raw) else { return false }
+            var settings = EditSettings(); settings.lensBlur.amount = 12; settings.lensBlur.activated = true
+            guard let cg = session.renderCGImage(settings, maxEdge: 640) else { return false }
+            saveJPEG(cg, "thumbnail-batch-\(index).jpg")
+            return FileManager.default.fileExists(atPath: outDir.appendingPathComponent("thumbnail-batch-\(index).jpg").path)
+        }
+        autoreleasepool {
+            LumenGPU.context.clearCaches()
+            EditSession.releaseMaskModels()
+        }
+        let memory = footprint(); readings.append(memory)
+        print("THUMBNAIL BATCH \(index + 1)/32: \(memory) MB after cleanup")
+        check(rendered, "thumbnail batch: image \(index + 1) was not persisted")
+    }
+    let baseline = readings[4..<12].max() ?? -1
+    let end = readings.suffix(8).max() ?? -1
+    check(baseline >= 0 && end >= 0 && end - baseline < 256,
+          "thumbnail batch: retained memory climbs across the batch (\(baseline) -> \(end) MB)")
 }

@@ -259,6 +259,7 @@ if args.contains("--imaging") {
     runImagingQualityChecks()
     runClarityQualityChecks()
     runAIRegressionChecks()
+    runThumbnailBatchChecks()
     finishChecks()
 }
 
@@ -619,6 +620,7 @@ var opened = 0
 runImagingQualityChecks()
 runClarityQualityChecks()
 runAIRegressionChecks()
+runThumbnailBatchChecks()
 
 for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
     let stem = file.deletingPathExtension().lastPathComponent

@@ -1,5 +1,17 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## 28 October urgent phone recovery (main #171)
+Personal 0.1.728 could be killed rebuilding thumbnails, then purge completed JPEGs again on restart. Owner's
+diagnostics reached 3371/3375 MB. Shared recovery candidate from main 4df9b79 is on `sandbox-thumbnail-recovery`:
+per-photo revision-named atomic JPEG checkpoints, old display JPEG retained until replacement, per-job pools and
+cache eviction, bounded decoded grid cache, source-size memory reserve and no overlap with editor heavy work.
+Also fix LoadedModel's retained last-load result; active/waiting callers remain safe. Clarity has a broader stronger
+band, abrupt-edge protection and squared travel near zero. No model weights/inference maths or Store code changed.
+Main #171 merged 300008d, SideStore publication pending. 126 focused GPU/stress checks pass (40677111283): 32 RAW/
+Lens Blur thumbnails stay at 1276–1277 MB settled memory. Final logic/build pass; targeted UI still running.
+Owner requested release before larger-library work; that draft stays separate. Previous #168 already merged 7efb41d
+and passed OFF/ON/policy/StoreKit 40671675913. Preserve unrelated MARKETING.md and listing changes.
+
 ## 28 October 2026: Clarity and single-engine continuation
 Shared candidate from personal PR #169, through 73c0abf, is on `sandbox-imaging-quality-v2` (PR #168).
 Clarity now uses a useful medium-detail band; all old recipes/history/presets/paste use one renderer with exact

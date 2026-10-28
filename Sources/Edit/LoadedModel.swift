@@ -9,6 +9,7 @@ final class LoadedModel<M>: @unchecked Sendable {
     private let condition = NSCondition()
     private var value: M?
     private var loading = false
+    private var waiters = 0
     private var generation: UInt64 = 0
     private var loadNumber: UInt64 = 0
     private var finished: (number: UInt64, result: M?) = (0, nil)
@@ -20,11 +21,19 @@ final class LoadedModel<M>: @unchecked Sendable {
         condition.lock()
         if loading {
             let waitingFor = loadNumber
+            waiters += 1
             while loading && loadNumber == waitingFor { condition.wait() }
             // the load this call waited for is over: use its result, released meanwhile or not
-            if finished.number == waitingFor { let r = finished.result; condition.unlock(); return r }
+            let result = finished.number == waitingFor ? finished.result : nil
+            waiters -= 1
+            if waiters == 0 { finished.result = nil }
+            condition.unlock()
+            return result
         }
         if let value { condition.unlock(); return value }
+        // Share the completed load while its existing callers wake up, including after a cache release.
+        // Starting another load here would overwrite their hand-off and briefly keep two models resident.
+        if waiters > 0 { let r = finished.result; condition.unlock(); return r }
         loading = true
         loadNumber &+= 1
         let mine = loadNumber
@@ -35,7 +44,7 @@ final class LoadedModel<M>: @unchecked Sendable {
 
         condition.lock()
         if generation == started { value = result }
-        finished = (mine, result)
+        finished = (mine, waiters > 0 ? result : nil)
         loading = false
         condition.broadcast()
         condition.unlock()
@@ -48,6 +57,7 @@ final class LoadedModel<M>: @unchecked Sendable {
         generation &+= 1
         let previous = value
         value = nil
+        if waiters == 0 { finished.result = nil }
         condition.unlock()
         // Model destruction may itself take time; never hold the state lock while destroying it.
         withExtendedLifetime(previous) {}

@@ -13,7 +13,7 @@ final class LumenUITests: XCTestCase {
         launchLibrary(extra: ["-lumenDemoHealDeletion", "1"])
         let log = (try? String(contentsOfFile: logPath, encoding: .utf8)) ?? ""
         XCTAssertFalse(log.contains("heal deletion FAIL"), log)
-        XCTAssertEqual(log.components(separatedBy: "heal deletion PASS").count - 1, 9, log)
+        XCTAssertEqual(log.components(separatedBy: "heal deletion PASS").count - 1, 11, log)
     }
 
     /// Owner, 15 Oct: after setting the blur, leaving Lens Blur and coming back, the amount could not be changed.

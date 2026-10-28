@@ -237,10 +237,12 @@ inline float3 lmDevelopTone(float3 base, float4 L1, float4 L2, float3 chroma,
         // no contrast to change: fade below a small physical range instead of boosting that numeric bias.
         float edge = lmStep(0.02, 0.08, rangeEV) * (1.0 - lmStep(1.5, 3.0, rangeEV));
         float midtone = 0.35 + 0.65 * exp(-q * q);
-        // Positive strength can amplify the band; negative strength stays below one so it remains
-        // a convex move towards the broad base, including at frequencies outside the regression fixture.
-        float amount = clar > 0.0 ? clar * 1.5 : clar * 0.98;
-        detail += amount * clamp(broad, -1.4, 1.4) * edge * midtone * detailReach;
+        // Fine travel around zero, progressively stronger ends. Positive contrast is softly bounded;
+        // negative strength remains a convex move towards the broader base, without reversing texture.
+        float shaped = clar * fabs(clar);
+        float band = clar > 0.0 ? broad / (1.0 + fabs(broad) / 0.6) : clamp(broad, -1.4, 1.4);
+        float amount = clar > 0.0 ? shaped * 3.0 : shaped * 0.95;
+        detail += amount * band * edge * midtone * detailReach;
     }
     if (sharp > 0.0) {
         float ds = lpre - lmDec(L1.r);
