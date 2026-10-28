@@ -74,8 +74,11 @@ final class HeavyWork: @unchecked Sendable {
     /// Memory Lumen may still use (MB); the app points it at os_proc_available_memory.
     nonisolated(unsafe) static var availableMB: () -> Int = { 1 << 20 }
 
-    private func admits(_ need: Int, long: Bool, margin: Int = HeavyWork.marginMB) -> Bool {
+    private func admits(_ need: Int, kind: Kind, long: Bool, margin: Int = HeavyWork.marginMB) -> Bool {
         if running.isEmpty { return true }
+        // A RAW thumbnail may allocate its decoder/models after admission. Do not overlap that startup
+        // with editor/export work just because those allocations have not appeared in availableMB yet.
+        if kind == .thumbnail || running.contains(where: { $0.kind == .thumbnail }) { return false }
         if long && running.contains(where: \.long) { return false }
         return Self.availableMB() - need >= margin
     }
@@ -94,7 +97,7 @@ final class HeavyWork: @unchecked Sendable {
             while !Self.isForeground { condition.wait(until: Date().addingTimeInterval(0.5)) }
         }
         var waited = false
-        while !admits(need, long: long, margin: Self.marginMB(for: kind)) {
+        while !admits(need, kind: kind, long: long, margin: Self.marginMB(for: kind)) {
             if optional {
                 condition.unlock()
                 Self.note?("\(kind.rawValue): skipped, \(Self.availableMB()) MB free, ~\(need) MB needed beside \(runningNames)")

@@ -462,6 +462,13 @@ do {
     HeavyWork.availableMB = { 2764 }
     check(HeavyWork.shared.run(.healModel, megapixels: 0, optional: true) { () -> Int in loaded = true; return 1 } == 1 && loaded,
           "coordinator: the Heal model loads with 2764 MB free (0.1.608 refused three heals there)")
+    HeavyWork.availableMB = { 10000 }
+    check(HeavyWork.shared.run(.preview, megapixels: 24, optional: true) {
+        HeavyWork.shared.run(.thumbnail, megapixels: 24, optional: true) { 1 } == nil
+    } == true, "thumbnails: rebuild overlaps an active editor decode before its allocations are visible")
+    check(HeavyWork.shared.run(.thumbnail, megapixels: 24, optional: true) {
+        HeavyWork.shared.run(.preview, megapixels: 24, optional: true) { 1 } == nil
+    } == true, "thumbnails: editor decode overlaps a RAW thumbnail before its allocations are visible")
 }
 
 // ---- B4 / B2 (23 Oct): long brush strokes keep their shape with far fewer points; heavy work waits for the screen
