@@ -72,29 +72,41 @@ do {
 }
 check(EditsFile.decodeSettings(json("not json")) == EditSettings(), "edits file: garbage should give defaults, not crash")
 
-// Processing generations: new edits opt in; every older sidecar/history keeps its original renderer, including
-// the tolerant loader used when a different key is missing or damaged. Rollback is warned by formatVersion.
+// Every recipe uses one engine. Migrating metadata must preserve adjustment values, masks and pixel-file references.
 do {
-    check(EditSettings().processingVersion == 2, "processing: new recipes should use the improved engine")
+    check(EditSettings().processingVersion == EditSettings.currentProcessing, "processing: new recipes use the current engine")
     var old = encoded(rich)
     old["processingVersion"] = nil
     old["formatVersion"] = 1
-    let legacy = EditsFile.decodeSettings(data(old))
-    check(legacy.processingVersion == 1 && legacy.exposure == rich.exposure, "processing: old recipe changed renderer or exposure")
+    let loaded = EditsFile.load(data(old)), migrated = loaded.settings
+    check(migrated == rich && loaded.report.engineMigrated, "processing: migrating old edits changes values or misses backup requirement")
+    check(migrated.heals == rich.heals && migrated.aiDenoise == rich.aiDenoise && migrated.lensBlur == rich.lensBlur,
+          "processing: migration must retain Heal, AI Denoise and Lens Blur references")
     old["vignetteMidpoint"] = nil
     let tolerant = EditsFile.decodeSettings(data(old))
-    check(tolerant.processingVersion == 1, "processing: tolerant migration upgraded an old recipe")
-    let roundTrip = EditsFile.decodeSettings(data(encoded(legacy)))
-    check(roundTrip.processingVersion == 1, "processing: saving a legacy recipe upgraded it")
-    var newer = rich; newer.processingVersion = 2
-    check(EditSettings.blend(legacy, newer, 0) == legacy, "processing: preset strength zero must restore complete previous recipe")
-    var unchanged = EditSettings(); unchanged.processingVersion = 1
-    check(unchanged.isDefault, "processing: legacy neutral settings should still count as neutral")
-    check(EditSettings.currentFormat > 1, "processing: older apps need a newer-format warning before saving v2 edits")
-    unchanged.processingVersion = 0
-    check(unchanged.renderingVersion == 1, "processing: unsupported old generation must fall back to legacy")
-    unchanged.processingVersion = 3
-    check(unchanged.renderingVersion == 2, "processing: future generation must not leave the preview blank")
+    check(tolerant == rich, "processing: tolerant migration must preserve old adjustments on the current engine")
+    check(tolerant.cropVersion == rich.cropVersion, "processing: tolerant migration must retain an explicit crop coordinate version")
+    old["cropVersion"] = nil
+    check(EditsFile.decodeSettings(data(old)).cropVersion == nil, "processing: a missing old crop version must remain absent")
+    check(EditsFile.decodeSettings(data(encoded(migrated))) == rich, "processing: migrated edits fail a save/load round trip")
+    for version in [-1, 0, 1, 2, 99] {
+        var obj = encoded(rich); obj["processingVersion"] = version
+        let decoded = try? JSONDecoder().decode(EditSettings.self, from: data(obj))
+        check(decoded?.processingVersion == EditSettings.currentProcessing && decoded?.exposure == rich.exposure,
+              "processing: compatibility version \(version) selects another engine or loses values")
+    }
+    var presetSettings = encoded(rich); presetSettings["processingVersion"] = 1; presetSettings["formatVersion"] = 1
+    let presetObject: [String: Any] = ["id": UUID().uuidString, "name": "Older look", "settings": presetSettings]
+    let presets = try? JSONDecoder().decode([UserPreset].self, from: data([presetObject]))
+    check(presets?.first?.settings == rich, "processing: an old user preset fails to migrate without changing its values")
+    var target = EditSettings(); target.exposure = -2; target.grading.highlights.sat = 15
+    var selection = CopySelection(); selection.set(.light, true)
+    let pasted = Clipboard(settings: migrated, selection: selection, sourceName: "Old edits").pasted(onto: target)
+    check(pasted.exposure == rich.exposure && pasted.grading == target.grading && pasted.processingVersion == EditSettings.currentProcessing,
+          "processing: partial paste must use the current engine while preserving unselected values")
+    check(EditSettings.blend(target, migrated, 0) == target && EditSettings.blend(target, migrated, 1).processingVersion == EditSettings.currentProcessing,
+          "processing: preset Strength endpoints must retain their values on one engine")
+    check(EditSettings.currentFormat > 2, "processing: earlier two-engine apps need a newer-format rollback warning")
 }
 
 // A1 (open): a mask kind this version doesn't know (a file from a newer version, read after a rollback)
@@ -116,6 +128,39 @@ do {
 let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("lumen-logic-\(UUID().uuidString)")
 try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: tmp) }
+
+// Before the first overwrite, retain the exact old bytes once. A blocked backup must also block that write.
+do {
+    var old = encoded(rich); old["processingVersion"] = 1; old["formatVersion"] = 2
+    let oldHistory: [String: Any] = ["current": old, "undo": [old], "redo": [old]]
+    let oldPresets: [[String: Any]] = [["id": UUID().uuidString, "name": "Saved", "settings": old]]
+    for (name, original) in [("old.json", data(old)), ("old.history.json", data(oldHistory)), ("presets.json", data(oldPresets))] {
+        let url = tmp.appendingPathComponent(name), backup = EditsFile.engineBackupURL(for: tmp.appendingPathComponent(name))
+        do {
+            try original.write(to: url)
+            try EditsFile.preserveBeforeEngineMigration(file: url)
+            check((try? Data(contentsOf: backup)) == original, "migration backup: \(name) lost the original bytes")
+            // A later old-format save must not replace the first recovery copy.
+            let different = data(["exposure": 2, "formatVersion": 1])
+            try different.write(to: url)
+            try EditsFile.preserveBeforeEngineMigration(file: url)
+            check((try? Data(contentsOf: backup)) == original, "migration backup: \(name) overwrote its first copy")
+        } catch { check(false, "migration backup: \(name) failed (\(error))") }
+    }
+    let url = tmp.appendingPathComponent("blocked.json"), original = data(old)
+    try? original.write(to: url)
+    try? FileManager.default.createDirectory(at: EditsFile.engineBackupURL(for: url), withIntermediateDirectories: true)
+    var refused = false
+    do {
+        try EditsFile.preserveBeforeEngineMigration(file: url)
+        try data(encoded(rich)).write(to: url, options: .atomic)
+    } catch { refused = true }
+    check(refused && (try? Data(contentsOf: url)) == original, "migration backup: failure must leave the source recipe untouched")
+    let history = EditsFile.history(data(oldHistory))
+    check(history?.current == rich && history?.undo == [rich] && history?.redo == [rich],
+          "processing: history migration must preserve all undo/redo values and normalize metadata")
+    check(!EditsFile.needsEngineMigration(data(encoded(rich))), "migration backup: current recipes should not need another backup")
+}
 do {
     var a = EditSettings(); a.exposure = 1
     let h = EditsFile.History(current: a, undo: [EditSettings()], redo: [])

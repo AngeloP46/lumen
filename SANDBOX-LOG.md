@@ -366,3 +366,14 @@ Existing local MARKETING.md and docs/appstore/LISTING.md edits are unrelated and
 Follow-up: aligned shared code/tests with main bc0c788. Clamp v2 analysis resampling at the photo edge; exact-linear
 constant regressions pass in main's 44-check GPU run 40604409841. Focused engine mode and early render artifact
 upload speed diagnosis. First sandbox OFF/ON builds passed; final compile check follows this commit. No Store changes.
+
+## 28 Oct 2026: Clarity and one renderer (from main #169)
+Shared candidate through 73c0abf: stronger bounded Clarity band with edge/flat protection; all old edits/history/
+presets/paste use current processing, exact recovery JSON retained before overwrite, edits format 3, old shader/
+white-balance/gamut dispatch removed and thumbnails refreshed. Preserve Heal references in migration backups.
+Fix denoise preview rounding and repair existing small copies from unchanged full residuals, paused decoder identity,
+rejected person-mask label reuse, and explicit crop versions in tolerant loading. No model/runtime changes.
+Detail/AI/Heal keep existing Pro gates, Light/Colour remain free. No Store code changed. Tests/store alone gains
+a bounded local-catalog readiness preflight after the prior cold first-test failure; production product loading,
+prices and purchase assertions unchanged. OFF/ON/StoreKit validation pending; merge follows personal publication.
+Unrelated MARKETING.md and docs/appstore/LISTING.md edits excluded.

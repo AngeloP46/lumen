@@ -13,6 +13,58 @@ not yet reproduced.
 **Requirements** (Angelo, 22 Oct): R1 work is safe · R2 responsive, no build-up · R3 features work together ·
 R4 failures handled · R5 output correct · R6 performance measured.
 
+## Next adjustment reviews — queued 28 October 2026
+
+Angelo resumed these with "carry on" on 28 October. Current batch: Clarity, single-engine migration and the
+deterministic defects from the AI review. These features have NOT all had a comprehensive image-quality review;
+passing existing tests is not proof their algorithms and control ranges are optimal. Preserve the layout/UI he likes.
+
+- [ ] **Clarity too weak — fixed on branch, Mac/phone validation pending:** replace the cancellation-prone overlap
+  subtraction with a bounded medium-detail band, same-guide evaluation and local-range boundary protection.
+  New rendered tests require visible endpoint strength, retained fine grain, unchanged flat fields and bounded
+  hard-edge halos at two sizes, plus -100/0/+100 RAW/JPEG sheets. Angelo's specific phone image remains untested.
+- [ ] **AI Denoise:** model/input colour and HDR handling, real noise versus retained detail, strength blending,
+  tile seams, preview/export consistency, speed and peak memory on real RAW/ProRAW and the phone.
+- [ ] **Heal:** fill quality, edge blending, colour/tone matching, texture reconstruction, repeated/large fixes,
+  HDR behaviour and exported results.
+- [ ] **Remove People:** detection/selection quality, protection of the main subject, overlapping removals and
+  fill quality at different subject sizes.
+- [ ] **Lens Blur:** depth/focus accuracy, subject boundaries and colour bleed, bokeh/highlight rendering,
+  amount/range/feather scales, refined masks, preview/export/HDR consistency and performance.
+- [ ] **Mask generation:** subject, background, sky, people, landscape, depth and colour/luminance selections;
+  fine edges, brush/gradient combinations, feathering and add/subtract/intersect quality.
+- [ ] **Vignette and Grain:** every related adjustment's math and useful range, corner/endpoint behaviour,
+  noise/grain appearance, source-size scaling and export consistency.
+- [ ] **Crop, Straighten and Perspective:** geometry, interpolation quality, edge/fill handling, crop constraints,
+  mask alignment and full-resolution exported detail.
+- [ ] **Complete the partial reviews:** adjustments within masks; preset strength and copy/paste interactions;
+  preview/detail/export consistency across the above features.
+
+For each: trace the actual implementation, compare credible photographic approaches/primary sources, reproduce
+shortcomings on representative images, explain quality/runtime/memory tradeoffs and add meaningful regression
+coverage before claiming a fix. Do not describe these features as already fully audited or replaced.
+
+Single-engine migration is implemented on `clarity-single-engine`, pending validation/publication: every older
+recipe/history/preset/paste uses current processing; old render code removed, values preserved and exact JSON
+backed up before overwrite. Same values may change appearance. SideStore 0.1.714 still retains the old path.
+
+AI Denoise/Heal/Remove People received a source review, recorded in `AI-QUALITY-REVIEW-2026-10-28.md`. Confirmed
+fixes on branch: rounded denoise preview bins, stale-preview repair from unchanged full residuals, paused-cache
+decoder identity and rejected person-mask label reuse. Real model colour/detail/HDR/fill quality remains open.
+
+Read-only follow-ups are recorded in `EFFECTS-QUALITY-REVIEW-2026-10-28.md` and
+`LENS-BLUR-QUALITY-REVIEW-2026-10-28.md`: Grain Size preview dead ranges, aspect-dependent Vignette range,
+HDR blur energy and initial refinement/manual-focus behaviour. Reproduce with their proposed fixtures before
+changing those algorithms; these are outside the current Clarity/migration release.
+
+Validation found and fixed an existing tolerant-loader defect: explicit cropVersion was discarded if another
+missing field forced tolerant loading. Preserve supplied crop versions and leave genuinely absent old versions
+absent; both cases have regression checks. First rendered pass passed 85/89 checks; the four Clarity strength
+checks correctly rejected modest endpoint response. Retuned gains; repeat validation pending.
+
+Prior full UI run 40604410069 passed. Sandbox PR #168/check 40604979559 remains pending (OFF/ON builds passed;
+StoreKit fixture products did not load in testAnnualUnlocksPro); investigate the fixture separately from editor code.
+
 ## Continuation evidence — 22 October, Codex
 
 Scope remains all approved batches 0–6, plus the agreed Copy/Paste. No SideStore publication or App Store

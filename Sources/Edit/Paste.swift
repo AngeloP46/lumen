@@ -70,14 +70,6 @@ struct Clipboard: Equatable {
     /// they are (re-adapting them would drop a tapped subject, reorder them and add an undo step for nothing).
     func pasted(onto own: EditSettings, samePhoto: Bool = false) -> EditSettings {
         var s = own
-        // A whole look carries its engine. A partial paste keeps an already edited destination's engine, so
-        // tools that were not selected do not change. An untouched destination can adopt the copied recipe.
-        let look: [EditSection] = [.light, .color, .grade, .curve, .detail]
-        if look.allSatisfy({ selection.has($0) }) || !look.contains(where: { own.hasEdits($0) }) && own.masks.isEmpty {
-            if look.contains(where: { selection.has($0) }) || !selection.masks.isEmpty {
-                s.processingVersion = settings.processingVersion
-            }
-        }
         for t in CopySelection.tools where selection.has(t) {
             s.take(t, from: settings)
             s.setOn(t, settings.isOn(t))
@@ -92,7 +84,7 @@ struct Clipboard: Equatable {
             s.masks += chosen.forAnotherPhoto
             s.setOn(.masks, settings.isOn(.masks))
         }
-        return s
+        return s.currentRecipe
     }
 }
 

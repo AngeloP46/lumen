@@ -15,12 +15,34 @@ final class StoreTests: XCTestCase {
         session.disableDialogs = true
         session.resetToDefaultState()
         session.clearTransactions()
+        try await waitForTestCatalog()
         await LumenStore.shared.refreshStatus()
     }
 
     override func tearDown() async throws {
         session.clearTransactions()
         await LumenStore.shared.refreshStatus()
+    }
+
+    /// The hosted app can ask StoreKit for products before this test installs its local session. On a cold
+    /// simulator that request can return no products while the test service is still activating. Establish
+    /// fixture readiness first; loadedStore() below still exercises the app's actual product loader and prices.
+    private func waitForTestCatalog() async throws {
+        let deadline = Date().addingTimeInterval(30)
+        var lastResult = "no response"
+        repeat {
+            do {
+                let products = try await Product.products(for: LumenStore.proIDs)
+                let ids = Set(products.map(\.id))
+                if LumenStore.proIDs.isSubset(of: ids) { return }
+                lastResult = "received product IDs: \(ids.sorted())"
+            } catch {
+                lastResult = "\(error)"
+            }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        } while Date() < deadline
+        throw NSError(domain: "LumenStoreTests.StoreKitFixture", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "The local StoreKit test catalog did not become ready within 30 seconds (\(lastResult))."])
     }
 
     private func loadedStore() async throws -> LumenStore {
