@@ -1,6 +1,18 @@
 # Lumen – project notes for Claude
 
-## Resumed 28 October — Clarity and one shared processing engine (in progress)
+## 28 October — SideStore 0.1.728 published; Clarity and one shared processing engine
+- Personal PR #169 merged a44a6bd; publish 40672946255 succeeded. Fresh source.json, log and GitHub asset agree:
+  version 0.1.728/build728, 356069402 bytes, SHA256
+  4e599416fc8ac13908ab0822a6c387fed1f1296afb83cacdda52dea36b0c26e1.
+  Phone: LocalDevVPN on -> SideStore My Apps -> pull to refresh -> Update Lumen. Never delete/reinstall.
+- All 1,315 engine quality checks and both memory sequences pass (40671575491). Six relevant persistence
+  UI cases run separately in 40673361219; full simulator run 40671255251 continues (prior full run took 48 min).
+  Source 73c0abf was frozen before those checks; a7366d8 only added documentation before the release merge.
+- Sandbox PR #168 merged 7efb41d after personal publication: 40671675913 passes both configurations, export policy,
+  build identity and all StoreKit product/purchase tests. Source 03e0aca. No production Store code/prices changed.
+- Remaining static-review findings, proposed reproductions and tradeoffs are in the AI, Lens Blur, Effects and
+  REMAINING-ADJUSTMENT review reports dated 28 October. Mask/geometry/interactions pass is partial and unrendered;
+  do not treat it or a successful suite as proof of photographic quality. Next fixes stay separate from this release.
 - Angelo said "carry on": resumed Clarity first, the approved all-recipes migration, then remaining quality review.
   Branch `clarity-single-engine` from personal main 0607d03 (SideStore 0.1.714). Previous full UI run 40604410069
   finished successfully. No changes to the layout, model weights, paywall, pricing or original photo files.
@@ -20,8 +32,8 @@
   -100/0/+100 (1280 px), .251/.350/.501 at 2560 px; fine band stays about .060. RAW/JPEG endpoint sheets inspected.
   Gain +1.5/-0.98; tiny-range fade removes half-float constant bias without weakening tests. New migration tests
   also found/fixed a pre-existing tolerant-loader cropVersion loss; explicit versus missing versions now covered.
-- Full engine/memory 40671575491, full UI 40671255251 and release build pending. Shared port is in sandbox PR #168
-  at 03e0aca; OFF/ON/StoreKit check 40671675913 pending. Test harness establishes cold local-catalog readiness;
+- Full engine quality/memory 40671575491 and release/readiness passed; UI follow-up above. Shared port is
+  merged in sandbox PR #168, all OFF/ON/StoreKit checks passed. Test harness establishes cold local-catalog readiness;
   production Store code/pricing unchanged. Unrelated local sandbox marketing/listing edits preserved.
 - Vignette/Grain and Lens Blur read-only follow-ups are in their dated review reports. Their quality findings are
   not fixes in this release; dedicated reproduction, mask/geometry/interactions review and phone checks remain.

@@ -76,5 +76,7 @@ run 40604410069 also passed. Current source 73c0abf: independent code reviews co
 all 89 focused GPU checks passed (40671254430), RAW/JPEG sheets inspected. Clarity mid-band amplitude at 1280 px
 is .250/.350/.503 EV for -100/0/+100, versus .251/.350/.501 at 2560 px; fine band stays near .060 EV. The negative
 gain remains below one; a tiny local-range fade prevents flat-field rounding bias. No test thresholds weakened.
-Full engine/memory, UI, iOS release readiness and sandbox checks pending. Phone HDR appearance, responsiveness
-and the owner's specific Clarity photo still need phone testing.
+All 1,315 broad engine quality checks and both memory sequences pass (40671575491); full UI still running. Release readiness
+passes; SideStore 0.1.728 published and verified (40672946255, main #169 a44a6bd). Sandbox #168 merged 7efb41d after
+OFF/ON/export-policy/StoreKit success (40671675913). Six persistence UI cases run separately in 40673361219; full UI
+40671255251 remains follow-up. Phone HDR appearance, responsiveness and the owner's Clarity image remain unverified.

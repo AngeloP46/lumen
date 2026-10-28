@@ -15,6 +15,12 @@ R4 failures handled · R5 output correct · R6 performance measured.
 
 ## Next adjustment reviews — queued 28 October 2026
 
+Current release: SideStore 0.1.728 verified, main #169 a44a6bd; all 1,315 engine quality checks and the focused 89
+checks and both memory sequences passed (40671575491). Shared sandbox #168 merged 7efb41d, OFF/ON/policy/StoreKit
+passed in 40671675913. Full UI follow-up: 40671255251; six targeted save/history/paste/Heal-retention cases: 40673361219.
+Partial mask/brush/export/geometry follow-ups are in `REMAINING-ADJUSTMENT-REVIEW-2026-10-28.md`; they are not fixes
+in this release. Keep original photos and values; older looks intentionally adopt the current renderer.
+
 Angelo resumed these with "carry on" on 28 October. Current batch: Clarity, single-engine migration and the
 deterministic defects from the AI review. These features have NOT all had a comprehensive image-quality review;
 passing existing tests is not proof their algorithms and control ranges are optimal. Preserve the layout/UI he likes.
