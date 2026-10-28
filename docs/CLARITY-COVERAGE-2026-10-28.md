@@ -1,5 +1,10 @@
 # Clarity coverage failure: owner's car screenshots
 
+Latest follow-up: SideStore 0.1.756 retains this Clarity correction and adds explicit AI failure handling.
+Full engine quality 40738195410 passes all 1644 checks; 132 focused failure-state checks and six related UI cases
+also pass. Both main and sandbox fixes are merged. See AI-RELIABILITY-2026-10-28.md for current release evidence.
+Long memory follow-up and phone verification remain distinct from the completed quality checks.
+
 The owner confirmed thumbnail recovery works in 0.1.737, but Clarity still barely changes his car photograph.
 The supplied screenshots are +96 and -100. Actual screenshot RGB differences in selected photo regions:
 windshield 0.00/255 mean, grille 0.10/255, background cars/people 0.01/255, bonnet 3.62/255; only 15.3% of the
