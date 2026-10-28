@@ -1,5 +1,24 @@
 # Lumen session entry point
 
+**Latest verified: SideStore0.1.774, 28 October.** Main#180 merged24c29b7 (source6d4f50d,
+application0a7e2a3); publication40783343904 succeeded. Fresh feed/log/GitHub asset agree:
+356120040bytes, SHA2569fce6d2106086b02b27239bef8f7b5378cff4612a82223a28fcaa1f8cc0874c1.
+Shared sandbox#181 merged079a63f; OFF/ON/policy/build identity/four StoreKit checks40781697900 pass.
+All465 focused renderer checks and25 short memory checks pass40782782695 on identical29 committed
+compiler/kernel inputs. Personal parallel Subject2399MB, shared2432MB, below unchanged2650MB;
+six related UI methods40781694994 and protected readiness40782199912 pass; screenshots inspected.
+Brush/Lens Blur/Grain/Vignette/Heal fixes and one-active visible-first basic/refined thumbnail revision4 are released.
+Non-caching source/mask materialization reduced the measured memory; RAW cache release alone did not.
+No layout, Store policy, model weights/inference or recipeformat3 changes; no2,000photo run.
+
+**Remaining:** full engine/24MP+ProRAW memory40783385204 and full UI40783388166 are running on released24c29b7.
+Do not call them green before reading results. Personal focused40782233771 passed pixels/Subject but its brush
+GPU-heap high-water growth check failed648→716→689MB (64MB bound); identical shared run656→709→668passed.
+Track measurement variability without raising limits or claiming a phone-memory guarantee. Further photographic
+AI/high-ISO/Heal/subject-edge quality and phone timing still need phone evidence. Read the updated completion
+checkpoint and quality checklist. All earlier pause/candidate status below is historical; owner resumed and release
+is complete. Phone: LocalDevVPN on → SideStore My Apps → refresh → Update; never delete/reinstall.
+
 **28 Oct resumed release follow-up:** owner explicitly resumed and wants the remaining fixes published efficiently.
 PR#180 remains the active completion batch; SideStore0.1.756 stays live until a verified new publication.
 Focused40758279578 completed430/433: two Lens Add assertions targeted an already100%selected fixture;

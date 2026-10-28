@@ -13,7 +13,35 @@ not yet reproduced.
 **Requirements** (Angelo, 22 Oct): R1 work is safe · R2 responsive, no build-up · R3 features work together ·
 R4 failures handled · R5 output correct · R6 performance measured.
 
-## Next adjustment reviews — queued 28 October 2026
+## Latest release and next work — 28 October, SideStore0.1.774
+
+Main#180/24c29b7 and sandbox#181/079a63f are merged; publication40783343904 and fresh feed/log/asset verified.
+Released: consistent brush feather/erase, manual focus and unchanged Refine entry, RGBHDR Lens Blur radiance,
+source-relative filtered Grain Size, shape-normalized Vignette, missing Heal asset/export protection and honest
+people-search results, visible-first one-active basic/refined thumbnail scheduling with atomic per-photo progress.
+Non-caching source/mask materialization reduces measured Subject peak from2716MB to2399–2432MB; limit2650MB
+unchanged. No UI layout, model inference, Store policy or old-renderer duplication changes.
+
+Verified: shared465 rendered/retention checks+25 short RAW/memory checks40782782695, all29 committed compiler/
+kernel blobs identical to personal candidate; six related UI methods40781694994 and screenshots, logic/readiness,
+both sandbox configurations/export policy/build identity and four StoreKit cases40781697900. Scope is recorded
+in ADJUSTMENT-COMPLETION-2026-10-28.md; phone/model visual limits remain distinct from deterministic checks.
+
+Next, in order:
+
+1. Read full engine quality/24MP memory/ProRAW40783385204 and full UI40783388166; both started on released24c29b7.
+   Earlier756 export logged virtualGPU OOM; current harness now requires a successful full-size HDR file too.
+2. Stabilize the brush GPU-heap retention metric without widening its64MB bound: personal identical-source run
+   40782233771 passed all pixels/Subject but measured648→max716→689MB; shared40782782695 measured
+   656→max709→668MB and passed. One cached component throughout, no claim of a phone memory budget.
+3. Phone confirmation of Clarity scene coverage, editing/thumbnail memory, grain/brush/Lens timing and old edits.
+   No literal2,000-photo run; bounded queue/filesystem fixtures plus modest RAW batch are sufficient for queue size.
+4. Real high-ISO RAW/ProRAW AI Denoise detail/colour/seams, Heal texture/structure/HDR, subject-edge blur and
+   overlapping edits on photographic scenes. Existing model visual assessment documents limits; no blind model swap.
+
+The earlier queue and dated status below are historical; released fixes above supersede their candidate labels.
+
+## Earlier adjustment review queue — 28 October 2026
 
 **Active completion batch:** owner instructed "dont stop till youre done". Parallel candidate fixes cover brush
 compositing, Lens Blur focus/refinement and RGB HDR radiance, filtered Grain and aspect-normalized Vignette,
