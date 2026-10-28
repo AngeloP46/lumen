@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: 'imaging runs adjustment quality checks; lens-blur runs blur/RAW checks; empty runs all'
+        description: 'ai-state runs failure/cache regressions; imaging runs adjustment quality checks; lens-blur runs blur/RAW checks; empty runs all'
         required: false
         default: ''
   push:
@@ -66,7 +66,7 @@ jobs:
             Sources/Edit/EditSettings.swift Sources/Edit/Curves.swift Sources/Edit/ColorCube.swift Sources/Library/EditsFile.swift \
             Sources/Edit/Engine.swift Sources/Edit/LoadedModel.swift Sources/Edit/CropMath.swift Sources/Edit/CropFit.swift Sources/Edit/Graph.swift Sources/Edit/Masks.swift Sources/Edit/Sky.swift Sources/Edit/Heal.swift Sources/Edit/Denoise.swift \
             Sources/Edit/Histogram.swift Sources/Edit/PhotoInformation.swift Sources/Edit/Auto.swift Sources/Edit/BilateralClarity.swift \
-            Tests/engine/main.swift Tests/engine/imaging.swift Tests/engine/clarity.swift Tests/engine/ai-regressions.swift
+            Tests/engine/main.swift Tests/engine/imaging.swift Tests/engine/clarity.swift Tests/engine/ai-regressions.swift Tests/engine/mask-regressions.swift
       - name: Run
         env:
           ENGINE_TEST_ONLY: ${{ github.event.inputs.only }}
@@ -85,6 +85,7 @@ jobs:
           EXTRA=""
           if [ "$ENGINE_TEST_ONLY" = "lens-blur" ]; then EXTRA="--lens-blur"; fi
           if [ "$ENGINE_TEST_ONLY" = "imaging" ]; then EXTRA="--imaging"; fi
+          if [ "$ENGINE_TEST_ONLY" = "ai-state" ]; then EXTRA="--ai-state"; fi
           ./out/engine-test out/k.metallib samples out/render $EXTRA
           code=$?
           echo "engine-test exit code: $code"
@@ -101,7 +102,7 @@ jobs:
           path: out/render
       - name: Memory budget
         # Separate process, so only the photo's own work is counted (see --memory in Tests/engine/main.swift).
-        if: ${{ success() && github.event.inputs.only != 'lens-blur' && github.event.inputs.only != 'imaging' }}
+        if: ${{ success() && github.event.inputs.only != 'lens-blur' && github.event.inputs.only != 'imaging' && github.event.inputs.only != 'ai-state' }}
         run: |
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           export LUMEN_DENOISE_MODEL="$PWD/Models/Denoise.mlmodelc"
@@ -110,7 +111,7 @@ jobs:
           ./out/engine-test out/k.metallib samples out/memory --memory
       - name: Memory and timing, iPhone ProRAW
         # The same steps on a 12 MP ProRAW (no AI Denoise: about 5 more minutes on the CI Mac's CPU)
-        if: ${{ success() && github.event.inputs.only != 'lens-blur' && github.event.inputs.only != 'imaging' }}
+        if: ${{ success() && github.event.inputs.only != 'lens-blur' && github.event.inputs.only != 'imaging' && github.event.inputs.only != 'ai-state' }}
         run: |
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
           export LUMEN_HEAL_EXPECT_SIDE=800

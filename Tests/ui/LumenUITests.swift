@@ -687,9 +687,13 @@ final class LumenUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(events().filter { $0.contains("detail: building") }.count, 1, "the zoomed-in copy should have been built: \(events())")
         let before = events().filter { $0.contains("reloaded hdr") }.count
         el("photo").doubleTap()      // back to fit
-        sleep(10)                    // the copy is let go of after a few seconds
-        let after = events().filter { $0.contains("reloaded hdr") }.count
-        XCTAssertGreaterThan(after, before, "letting go of the zoomed-in copy should decode the preview again (\(before) -> \(after))")
+        // Six-second release delay plus the RAW decode: the event can land just after a fixed ten-second sleep.
+        // Await the actual completion, with a finite bound, rather than racing the file logger.
+        let reloaded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.events().filter { $0.contains("reloaded hdr") }.count > before
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [reloaded], timeout: 30), .completed,
+                       "letting go of the zoomed-in copy should decode the preview again: \(events())")
         XCTAssertEqual(app.state, .runningForeground)
     }
 

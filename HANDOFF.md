@@ -1,5 +1,18 @@
 # Lumen App Store project — status & hand-off (for a new chat)
 
+## 28 October: AI failure-state follow-up (main #176)
+Candidate source f6e3465: missing denoise model/cache fails export explicitly; valid cached denoise works without
+the model. Structurally invalid legacy PNG caches are rejected with bounded metadata validation. Automatic-mask
+failures remain distinct from valid empty detections through preview/export/detail/undo; failed inversion is
+suppressed, active failed selections block export, Scene-derived retry works, optional successful Sky fallback stays.
+Small car mask probe/export-size and bounded zoom-reload test corrections included. No models, gains or Store code
+changed; existing Pro/free gates retained. Personal full engine passes 1638/1639, single transfer-fixture diagnostic
+is being checked; six related UI cases pass 40734657158. Focused failure-state check 40737695135 pending.
+No personal publication of this follow-up yet; sandbox merge must follow personal validation/publication.
+Clarity #175 is now merged 8649421 after OFF/ON/export-policy and four StoreKit tests passed in 40732458311.
+The cancelled queued throwaway IPA is not a compiler failure. Larger-library scheduler and photographic/effects/
+blur/brush reviews remain queued in the main quality checklist; do not describe every adjustment as fully validated.
+
 ## 28 October: Clarity scene coverage (main #174, SideStore 0.1.747)
 Port of main source 39b9c5d (merge e4c9f97): replace the wide hard-edge veto with bilateral medium-log analysis.
 Owner's actual car screenshot exposed the prior failure; approved crop is now a public regression fixture.

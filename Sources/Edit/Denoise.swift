@@ -165,8 +165,11 @@ enum DenoiseStore {
                   // made with another RAW decoder (an iOS update): the noise no longer fits the picture exactly
                   decoder == nil || i.decoder == nil || i.decoder == decoder,
                   FileManager.default.fileExists(atPath: directory.appendingPathComponent(i.file).path) else { return nil }
-            if ["noise", "rgba16"].contains((i.file as NSString).pathExtension),
-               !rawFileFits(i.file, width: i.width, height: i.height) { return nil }
+            if ["noise", "rgba16"].contains((i.file as NSString).pathExtension) {
+                guard rawFileFits(i.file, width: i.width, height: i.height) else { return nil }
+            } else {
+                guard legacyImageFits(i.file, width: i.width, height: i.height) else { return nil }
+            }
             return i
         }
         return valid(read(noiseInfoURL(photo))) ?? valid(read(infoURL(photo, hdr: hdr)))
@@ -193,7 +196,10 @@ enum DenoiseStore {
                 guard let data = try? Data(contentsOf: url, options: .alwaysMapped), data.count == w * h * 8,
                       let p3 = CGColorSpace(name: CGColorSpace.displayP3) else { return nil }
                 return CIImage(bitmapData: data, bytesPerRow: w * 8, size: size, format: .RGBA16, colorSpace: p3)
-            default: return CIImage(contentsOf: url)
+            default:
+                guard legacyImageFits(file, width: w, height: h), let image = CIImage(contentsOf: url),
+                      image.extent.width == CGFloat(w), image.extent.height == CGFloat(h) else { return nil }
+                return image
             }
         }
         if let maxEdge, previewFits(i), let p = i.preview, let pw = i.previewWidth, let ph = i.previewHeight,
@@ -209,13 +215,61 @@ enum DenoiseStore {
               let count = attributes[.size] as? NSNumber else { return false }
         return count.int64Value == Int64(width) * Int64(height) * 8
     }
+
+    private final class LegacyValidation: NSObject {
+        let modified: Date, size: Int64, inode: UInt64, width: Int, height: Int, valid: Bool
+        init(modified: Date, size: Int64, inode: UInt64, width: Int, height: Int, valid: Bool) {
+            self.modified = modified; self.size = size; self.inode = inode
+            self.width = width; self.height = height; self.valid = valid
+        }
+    }
+    private static let legacyValidation: NSCache<NSString, LegacyValidation> = {
+        let cache = NSCache<NSString, LegacyValidation>(); cache.countLimit = 128; return cache
+    }()
+
+    /// Older results are PNGs, not raw residual bytes. A present filename is insufficient: incomplete or wrongly
+    /// sized images must not make requested denoise appear available. Header/status checks do not allocate a
+    /// full-resolution decoded bitmap. Cache only the answer, invalidated by replacement/size/date changes.
+    private static func legacyImageFits(_ file: String, width: Int, height: Int) -> Bool {
+        let url = directory.appendingPathComponent(file)
+        guard width > 0, height > 0,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (attributes[.size] as? NSNumber)?.int64Value, size >= 45,
+              let modified = attributes[.modificationDate] as? Date,
+              let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value else { return false }
+        let key = url.path as NSString
+        if let hit = legacyValidation.object(forKey: key), hit.modified == modified, hit.size == size,
+           hit.inode == inode, hit.width == width, hit.height == height { return hit.valid }
+        let valid: Bool = {
+            // ImageIO may tolerate a missing PNG end chunk. Cache files are written complete by Lumen;
+            // verify its fixed 12-byte IEND too, without reading/decompressing the whole pixel stream.
+            guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+            defer { try? handle.close() }
+            guard (try? handle.seek(toOffset: UInt64(size - 12))) != nil,
+                  let tail = try? handle.read(upToCount: 12),
+                  tail == Data([0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]),
+                  let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+                  CGImageSourceGetType(source) as String? == "public.png", CGImageSourceGetCount(source) == 1,
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue == width,
+                  (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue == height,
+                  CGImageSourceGetStatus(source) == .statusComplete,
+                  CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+                  let image = CIImage(contentsOf: url), image.extent.width == CGFloat(width),
+                  image.extent.height == CGFloat(height) else { return false }
+            return true
+        }()
+        legacyValidation.setObject(LegacyValidation(modified: modified, size: size, inode: inode,
+                                                   width: width, height: height, valid: valid), forKey: key)
+        return valid
+    }
     private static func previewFits(_ i: Info) -> Bool {
         guard let file = i.preview, let w = i.previewWidth, let h = i.previewHeight,
               w > 0, h > 0, w <= i.width, h <= i.height else { return false }
         if ["noise", "rgba16"].contains((i.file as NSString).pathExtension) {
             return i.previewVersion == previewVersion && rawFileFits(file, width: w, height: h)
         }
-        return FileManager.default.fileExists(atPath: directory.appendingPathComponent(file).path)
+        return legacyImageFits(file, width: w, height: h)
     }
 
     /// Rebuild an old/invalid small copy using the unchanged full-resolution bytes, without running the model.

@@ -15,6 +15,14 @@ R4 failures handled · R5 output correct · R6 performance measured.
 
 ## Next adjustment reviews — queued 28 October 2026
 
+**Latest parity status:** Clarity main #174 is SideStore 0.1.747; sandbox #175 merged 8649421 after
+40732458311 passed OFF/ON, export policy and all four StoreKit cases. Owner confirms thumbnail recovery works.
+Main #176 follow-up preserves failed versus valid-empty AI selection outcomes, explicit export fidelity, safe
+inversion, Landscape retry and bounded legacy PNG validation. Candidate source 249a228, validation pending.
+See the personal main docs/QUALITY-CHECKLIST.md for the current prioritized parallel-review task list: brush
+compositing, Lens Blur focus/refinement and HDR radiance, Grain/Vignette ranges, missing Heal patches/detection
+errors, real RAW/ProRAW photographic quality and larger-library scheduler remain incomplete.
+
 Angelo resumed these with "carry on" on 28 October. Current batch: Clarity, single-engine migration and the
 deterministic defects from the AI review. These features have NOT all had a comprehensive image-quality review;
 passing existing tests is not proof their algorithms and control ranges are optimal. Preserve the layout/UI he likes.
