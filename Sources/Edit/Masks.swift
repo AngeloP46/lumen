@@ -614,7 +614,7 @@ extension EditSession {
                                       kCVPixelBufferMetalCompatibilityKey: true]
         guard CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_OneComponent8, attrs as CFDictionary, &pb) == kCVReturnSuccess,
               let buf = pb else { return nil }
-        LumenGPU.context.render(img, to: buf, bounds: CGRect(x: e.minX, y: e.minY, width: CGFloat(w), height: CGFloat(h)),
+        LumenGPU.drawContext.render(img, to: buf, bounds: CGRect(x: e.minX, y: e.minY, width: CGFloat(w), height: CGFloat(h)),
                                 colorSpace: nil)
         let out = expandRed(CIImage(cvPixelBuffer: buf, options: [.colorSpace: NSNull()]))
         return out.transformed(by: CGAffineTransform(translationX: e.minX, y: e.minY))

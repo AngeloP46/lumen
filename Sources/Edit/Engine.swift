@@ -604,11 +604,13 @@ final class EditSession: @unchecked Sendable {
 
     /// Decodes and analyses the photo. `materialize` renders the pieces into GPU buffers so slider drags are cheap.
     func makeSource(maxEdge: CGFloat?, materialize: Bool) -> ImageSource? {
-        autoreleasepool {
+        let result: ImageSource? = autoreleasepool {
             guard LumenKernels.shared != nil,
                   let base = autoreleasepool(invoking: { sourceBase(maxEdge: maxEdge, materialize: materialize) }) else { return nil }
             return analyse(base, materialize: materialize)
         }
+        if materialize { ctx.clearCaches(); LumenGPU.drawContext.clearCaches() }
+        return result
     }
 
     /// Materialization finishes while the decoder lock is held. A competing source build cannot keep a second
@@ -638,12 +640,14 @@ final class EditSession: @unchecked Sendable {
 
     /// The same with an explicit heal list (the before view and the split compare use the photo without heals).
     func makeSource(maxEdge: CGFloat?, materialize: Bool, heals list: [HealSpot], denoise: Bool = true) -> ImageSource? {
-        autoreleasepool {
+        let result: ImageSource? = autoreleasepool {
         guard LumenKernels.shared != nil else { return nil }
         guard let base = autoreleasepool(invoking: { sourceBase(maxEdge: maxEdge, materialize: materialize,
                                                                heals: list, denoise: denoise) }) else { return nil }
         return analyse(base, materialize: materialize)
         }
+        if materialize { ctx.clearCaches(); LumenGPU.drawContext.clearCaches() }
+        return result
     }
 
     /// Kept internal so engine invariants can be checked with exact linear fixtures, without encoding/resampling
@@ -811,7 +815,7 @@ final class EditSession: @unchecked Sendable {
         ]
         guard CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_64RGBAHalf, attrs as CFDictionary, &pb) == kCVReturnSuccess,
               let buf = pb else { return nil }
-        LumenGPU.context.render(img, to: buf, bounds: CGRect(x: e.minX, y: e.minY, width: CGFloat(w), height: CGFloat(h)),
+        LumenGPU.drawContext.render(img, to: buf, bounds: CGRect(x: e.minX, y: e.minY, width: CGFloat(w), height: CGFloat(h)),
                                 colorSpace: LumenGPU.workingSpace)
         return CIImage(cvPixelBuffer: buf, options: [.colorSpace: NSNull()])
     }
