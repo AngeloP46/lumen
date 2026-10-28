@@ -1,5 +1,15 @@
 # Lumen – project notes for Claude
 
+## Latest 28 October: recovery 0.1.737 is on SideStore
+Main #171 merged 300008d (source 4df9b79); publish 40678586380 succeeded. Fresh feed, log and asset digest match:
+356071476 bytes, SHA256 78fff6e803a7d00567f50333058711b89d9b914efe8669662ddb2122150264e1.
+126 focused rendering/batch checks pass (40677111283), settled 32-thumbnail Mac memory 1276–1277 MB; logic and
+release/readiness pass. Six save/history/Heal/copy/paste UI cases pass in 40677114414 (3375 MB simulated limit).
+Read docs/THUMBNAIL-RECOVERY-2026-10-28.md. Sandbox #172/check 40678793157 pending. Broad UI 40677638862 ongoing.
+Owner prioritised this recovery before any 2,000-image testing; that literal run is unnecessary. A larger-library
+priority/basic-refined scheduler draft is saved separately in .local/large-library-queue-wip.patch, not published.
+Finish its quality-upgrade/unchanged-open rules before merging it. Phone observations on 0.1.737 still needed.
+
 ## Urgent 28 October phone follow-up — startup thumbnail crash, Clarity range
 - Owner's 0.1.728 iPhone18,2 report: 24 MP thumbnail/depth jobs climbed to 3371/3375 MB and iOS killed Lumen on
   three launches. My format-3 batch refresh removed every JPEG again unless the entire queue reached its final
