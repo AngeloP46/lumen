@@ -1,5 +1,16 @@
 # SANDBOX-LOG — what was drafted and what Claude must check
 
+## 28 Oct2026: main#180 published as SideStore0.1.774; sandbox#181 merged079a63f
+
+Shared editor parity complete. OFF/ON/policy/identity/four StoreKit cases40781697900 pass on applicationdbd9359;
+later97babf0 only changes engine tests/workflow.465 focused+25 short memory checks40782782695 pass and all29
+compiler/kernel blobs match personal6d4f50d. Six related UI cases pass40781694994, screenshots inspected.
+Subject2399–2432MB below unchanged2650MB after non-caching materialization. Personal brush GPU-heap high-water
+metric remains variable (one identical run fails68MBgrowth, another passes53MB); task retained explicitly.
+Full engine/ProRAW memory40783385204 and full UI40783388166 run on personal releasedmain24c29b7.
+No Store code, prices, inference settings or weights changed. Original values/pixels and Pro/free policy retained.
+No App Store submission. Unrelated marketing/listing work excluded. See current HANDOFF and completion checkpoint.
+
 ## 28 Oct 2026: remaining adjustment completion (from main #180)
 Candidate6f09c23: brush consistency, Lens Blur focus/refinement/RGBHDR, filtered grain/vignette, Heal/detection
 failure and staged basic/refined thumbnail scheduling. Exact-mask lifetime barrier under memory validation;
