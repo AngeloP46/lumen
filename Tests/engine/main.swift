@@ -359,11 +359,20 @@ if args.contains("--memory") || args.contains("--memory-subject") {
         let initial = footprintMB()
         peak.lock.lock(); peak.mb = initial; peak.interval = initial; peak.lock.unlock()
         let t = now()
-        work()
+        // Production's editor queues drain Objective-C/Core Image temporaries after each work item. The CLI has
+        // no run loop to do that between these steps, so model the same lifetime while sampling the entire action.
+        // Persistent preview/detail/session references live outside the pool; their memory remains counted.
+        var beforeDrain = initial
+        autoreleasepool {
+            work()
+            LumenGPU.context.clearCaches()
+            beforeDrain = footprintMB()
+            peak.lock.lock(); peak.mb = max(peak.mb, beforeDrain); peak.lock.unlock()
+        }
         LumenGPU.context.clearCaches()
         let final = footprintMB()
         peak.lock.lock(); let p = max(peak.mb, final); peak.lock.unlock()
-        print("MEMORY \(name): peak \(p) MB, after \(footprintMB()) MB, \(String(format: "%.1f", now() - t)) s")
+        print("MEMORY \(name): peak \(p) MB, before drain \(beforeDrain) MB, after drain \(final) MB, \(String(format: "%.1f", now() - t)) s")
         return p
     }
     // budgets per step (MB); the whole run must stay under `total`
