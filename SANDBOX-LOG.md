@@ -1,5 +1,12 @@
 # SANDBOX-LOG — what was drafted and what Claude must check
 
+## 28 Oct 2026: preserve AI failures across preview and export (from main #176)
+Candidate f6e3465: denoise cache/model availability, bounded legacy PNG structural validation, mask failure
+snapshot/restore, safe failed inversion and explicit export failure gate; valid empty/fallback selections retained.
+Deterministic no-inference fixtures plus small-image probe/export and zoom-event test corrections. Existing Pro/free
+gates retained. No Store code changed. Personal/sandbox validation pending. Clarity #175 merged 8649421 after
+40732458311 passed both flag builds, export policy and all four StoreKit cases.
+
 ## 28 Oct 2026: correct Clarity scene coverage (from main #174)
 Port 39b9c5d: remove broad expanded edge veto; bilateral medium-scale detail, strictly immediate fringe guard,
 smooth central slider response and useful endpoints. Owner-approved car fixture and dense-edge regressions;

@@ -32,7 +32,7 @@ Prior sine/flat/single-edge tests proved useful isolated response, but did not t
 Rendered scope tests poison the Clarity range channel while exercising other light, colour/grading/HSL, detail/NR,
 Dehaze and mask-local adjustments in both SDR and HDR. Outputs must remain identical, proving no accidental reuse.
 
-## Candidate correction (validation pending)
+## Correction and validation
 
 Replace the guided base plus broad veto with a small bilateral grid of the medium-scale log-light guide.
 Spatial and intensity weights preserve real boundaries through averaging. A short immediate-edge guard handles
@@ -48,5 +48,15 @@ The owner's screenshot crop is an explicitly labelled proxy in Tests/fixtures/cl
 recover the original RAW or undo its existing edits; its unchanged windshield still reproduces the reported failure.
 New regressions require response there and on patterned surfaces surrounded by dense hard edges, in addition to
 the existing noise, endpoint, centre-travel, constant, halo, preview-size and 32-thumbnail memory checks.
-Do not publish until rendered output and the owner's car proxy have been inspected. All thumbnail recovery code
-from 0.1.737 remains unchanged. The larger-library scheduler remains a separate draft.
+All142 focused GPU/batch checks pass in40685937264 on source39b9c5d. Owner windshield mean linear change from
+neutral is .01823 at-100 and .04690 at+100. Whole/detail output was inspected: both endpoints affect the
+windshield and bonnet broadly. All10 non-Clarity SDR/HDR isolation comparisons pass. Settled memory stays1290MB
+across32 repeated24MP RAW/Lens Blur thumbnails. Logic40685273160, readiness40685946772 and3 related UI40685662083 pass.
+Independent static review found no actionable numerical/bounds/resource/scope defect; original RAW/phone verification
+remains needed. Broader engine40687563996 passes1553/1557: four failures on newly added small proxy's mask-raster
+probe/export-upscale assumptions. UI40687567667 passes94/95: reload event occurs at the fixed timeout boundary.
+These require follow-up test corrections and reruns; do not claim the whole suites passed.
+Main#174 merged e4c9f97; SideStore0.1.747 publish40687659637 verified against fresh feed/log/GitHub asset:
+356072974bytes, SHA25656e7e0df52bf36d32c1ef7903d8b56305c4bd822a60f1ef34bbdfb671c7a5d36.
+Thumbnail recovery memory logic remains unchanged; early unreadable-photo feedback restored. Owner confirms recovery
+works. The larger-library scheduler remains a separate draft. No literal2,000-image test is required or run.

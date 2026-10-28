@@ -264,6 +264,8 @@ extension EditSession {
         case decode
         /// Lens Blur is on but its focus map could not be prepared (depth model absent or failed).
         case depthUnavailable
+        /// An automatic selection required by the active edits failed or could not be prepared.
+        case automaticMaskUnavailable
         /// The image rendered but could not be encoded to the chosen format.
         case encode
         /// An HDR file was requested: never quietly substitute an SDR rendition if gain-map encoding fails.
@@ -277,6 +279,8 @@ extension EditSession {
                 return "The photo could not be read (the file may be missing)."
             case .depthUnavailable:
                 return "Lens Blur can't be exported because the depth information couldn't be prepared. Turn Lens Blur off, or reopen the photo and try again."
+            case .automaticMaskUnavailable:
+                return "An automatic mask couldn't be prepared, so this photo wasn't exported. Open Masks and try again, or switch off the affected mask adjustment."
             case .encode:
                 return "The photo could not be written. Try a different format or a smaller size."
             case .hdrEncode:
@@ -309,8 +313,8 @@ extension EditSession {
         heals = s.effective.heals
         denoiseAmount = s.effective.aiDenoise / 100
         // an export must show the AI Denoise it was asked for: make the cleaned copy now if it isn't there yet
-        if denoiseAmount > 0, !hasDenoised, Self.hasDenoiseModel {
-            guard allowClean else { return .failed(.denoiseMissing) }
+        if denoiseAmount > 0, !hasDenoised {
+            guard allowClean, Self.hasDenoiseModel else { return .failed(.denoiseMissing) }
             let ok = makeDenoised() == .done
             Self.releaseDenoiseFallback()
             // never quietly export without the AI Denoise that was asked for
@@ -322,17 +326,10 @@ extension EditSession {
         // AI masks are worked out on a 2560 px copy and scaled up, like the editor's preview (at full size the masks'
         // filters and models each re-ran the RAW engine: 21 Oct review for 48 MP; 22 Oct diagnostics showed every 24 MP
         // batch export doing it too); what is still missing is done at full size
-        let needsAI = s.effective.lensBlur.amount > 0 || s.masks.contains { m in
-            m.components.contains { [.subject, .background, .sky, .people, .depth, .landscape].contains($0.kind) } }
-        if needsAI, max(nativeSize.width, nativeSize.height) > 2700, let small = makeSource(maxEdge: 2560, materialize: true) {
-            prepareAutoMasks(s, source: small)
-            let (masks, tried) = small.snapshotMasks()
-            src.storeDepth(small.depthField)
-            src.storeScene(small.sceneField)
-            let sx = src.size.width / small.size.width, sy = src.size.height / small.size.height
-            for key in tried { src.storeMask(key, masks[key]?.transformed(by: CGAffineTransform(scaleX: sx, y: sy))) }
-        }
-        prepareAutoMasks(s, source: src)
+        let needsAI = !Self.requiredExportMaskKeys(s).isEmpty
+        let small = needsAI && max(nativeSize.width, nativeSize.height) > 2700
+            ? makeSource(maxEdge: 2560, materialize: true) : nil
+        if let failure = prepareExportMasks(s, source: src, preview: small) { return .failed(failure) }
         Self.healProbe?("export: masks ready")
         // Never quietly export an unblurred photo when a requested focus map could not be prepared.
         if s.effective.lensBlur.amount > 0 && lensBlurMask(s, source: src) == nil { return .failed(.depthUnavailable) }
@@ -388,6 +385,52 @@ extension EditSession {
             if let d = try? ctx.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:]) { return .data(d) }
             return .failed(.encode)
         }
+    }
+
+    /// Only selections that can affect the output are required. Successful empty detections remain valid;
+    /// a failed optional Scene assist must not reject a Sky mask successfully made by the fallback finder.
+    static func requiredExportMaskKeys(_ edits: EditSettings) -> Set<String> {
+        let s = edits.effective
+        var keys: Set<String> = []
+        let linked = s.lensBlur.amount > 0 ? s.lensBlur.maskID : nil
+        for mask in s.masks where mask.amount > 0 && (!mask.adjust.isNeutral || mask.id == linked) {
+            for c in mask.components where c.amount > 0 {
+                if let key = automaticMaskKey(c) { keys.insert(key) }
+            }
+        }
+        if s.lensBlur.amount > 0 && !s.masks.contains(where: { $0.id == linked }) {
+            keys.insert(aiDepth); keys.insert(subjectKey(s.lensBlur.subjectPoint))
+        }
+        return keys
+    }
+
+    /// Shared by real export and deterministic failure fixtures; seeded outcomes need no model inference.
+    /// The small-source hand-off preserves errors as well as valid empty/results, so it cannot hide failure.
+    func prepareExportMasks(_ edits: EditSettings, source: ImageSource, preview: ImageSource? = nil) -> ExportFailure? {
+        let required = Self.requiredExportMaskKeys(edits)
+        guard !required.isEmpty else { return nil }
+        var s = edits.effective
+        let linked = s.lensBlur.amount > 0 ? s.lensBlur.maskID : nil
+        s.masks = s.masks.filter { $0.amount > 0 && (!$0.adjust.isNeutral || $0.id == linked) }
+        for i in s.masks.indices { s.masks[i].components.removeAll { $0.amount <= 0 } }
+        if let preview {
+            prepareAutoMasks(s, source: preview)
+            source.restoreMasks(preview.snapshotMasks(), scaleX: source.size.width / preview.size.width,
+                                scaleY: source.size.height / preview.size.height)
+            source.storeDepth(preview.depthField); source.storeScene(preview.sceneField)
+        }
+        prepareAutoMasks(s, source: source)
+        let state = source.snapshotMasks()
+        // Depth is a required measurement, unlike a detector legitimately finding no subject/people/sky.
+        let missingDepth = required.contains(Self.aiDepth) && state.masks[Self.aiDepth] == nil
+        if s.lensBlur.amount > 0, required.contains(Self.aiDepth),
+           missingDepth || !state.tried.contains(Self.aiDepth) || state.failures.contains(Self.aiDepth) {
+            return .depthUnavailable
+        }
+        if missingDepth || required.contains(where: { !state.tried.contains($0) || state.failures.contains($0) }) {
+            return .automaticMaskUnavailable
+        }
+        return nil
     }
 
     /// The original file's EXIF / TIFF / GPS / IPTC details, for an exported file. Orientation is dropped (the pixels
