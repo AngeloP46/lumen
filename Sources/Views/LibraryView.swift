@@ -31,6 +31,7 @@ private enum LibrarySort: String, CaseIterable, Identifiable {
 
 struct LibraryView: View {
     @EnvironmentObject var store: LibraryStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var showFileImporter = false
     @State private var showPhotoPicker = false
@@ -82,6 +83,14 @@ struct LibraryView: View {
     private var selectedItems: [LibraryItem] { visible.filter { selection.contains($0.id) } }
 
     var body: some View {
+        libraryContent
+            .onAppear { store.refreshPausedCleans(); store.setThumbnailWorkEnabled(path.isEmpty && scenePhase == .active) }
+            .onDisappear { store.setThumbnailWorkEnabled(false) }
+            .onChange(of: path) { _, value in store.setThumbnailWorkEnabled(value.isEmpty && scenePhase == .active) }
+            .onChange(of: scenePhase) { _, value in store.setThumbnailWorkEnabled(path.isEmpty && value == .active) }
+    }
+
+    private var libraryContent: some View {
         NavigationStack(path: $path) {
             Group {
                 if store.items.isEmpty {
@@ -146,7 +155,6 @@ struct LibraryView: View {
             .safeAreaInset(edge: .bottom) { if selecting { selectionBar } }
             .overlay { progressOverlay }
             .overlay(alignment: .bottom) { denoiseBanner }
-            .onAppear { store.refreshPausedCleans() }
             .sheet(item: $copyFrom) { item in
                 CopyEditsSheet(settings: store.editorSettings(for: item), sourceName: item.displayName, sourceID: item.id) { clip in
                     store.clipboard = clip
@@ -528,5 +536,6 @@ struct ThumbnailView: View {
                 }
             }
             .clipped()
+            .onAppear { store.thumbnailBecameVisible(item) }
     }
 }

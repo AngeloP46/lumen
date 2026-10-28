@@ -15,6 +15,16 @@ R4 failures handled · R5 output correct · R6 performance measured.
 
 ## Next adjustment reviews — queued 28 October 2026
 
+**Active completion batch:** owner instructed "dont stop till youre done". Parallel candidate fixes cover brush
+compositing, Lens Blur focus/refinement and RGB HDR radiance, filtered Grain and aspect-normalized Vignette,
+missing Heal assets/typed people-search failure, and durable single-active visible-first basic/refined thumbnails.
+Source-analysis/subject pools address the final memory follow-up failure:40738195410 subject2658MB versus2650MB
+budget, virtualGPU exportOOM; no limits were raised. Memory sampling now preserves the full step peak through
+diagnostic callbacks. New synthetic production-path, geometry4x-reference and UI failure fixtures await Mac checks.
+The new renderer thumbnail revision4 is separate from recipeformat3; old JPEGs remain visible until atomic success.
+No legacy rendering engine is retained. Actual model-generated visual limits are documented in
+AI-VISUAL-REVIEW-2026-10-28.md rather than treated as fixed through model swaps. Candidate not published yet.
+
 **Latest release: SideStore 0.1.756, main #176 (737e4fe), source f6e3465, published and feed/hash verified.**
 The AI failure-state batch below is now released in both versions (sandbox #177 a54fa93): 132 focused checks,
 six related UI cases, logic/readiness and OFF/ON/policy/four StoreKit cases pass. Independent reviews completed.

@@ -1,5 +1,36 @@
 # Lumen session entry point
 
+**28 Oct resumed release follow-up:** owner explicitly resumed and wants the remaining fixes published efficiently.
+PR#180 remains the active completion batch; SideStore0.1.756 stays live until a verified new publication.
+Focused40758279578 completed430/433: two Lens Add assertions targeted an already100%selected fixture;
+the other failure was repeated100-run brush memory growth. UI screenshots40749873518 show the general
+missing-model notice hiding the injected people-search result. Correct those causes and verify the actual messages.
+Subjectmemory2703/2650MB still needs measured improvement; do not raise budgets. See the completion report for
+candidate RAWdecoder-cache release and bounded scalar brush checkpoints. No2,000photo run or model changes.
+The older pause checkpoint below is historical; user has now asked to continue.
+
+**28 Oct usage checkpoint — owner requested a quick conclusion and continuation after usage resets.**
+Personal SideStore0.1.756 remains verified live. Do not merge/publish completion PR#180 yet.
+Source6f09c23d8d8f356c9cd6a4d372ad3bb3746a5e2a on `adjustment-quality-completion` compiles (40749848570).
+Logic passes320a724 (40749723296); newer changes since that are view extraction/tests only.
+TargetedSubjectmemory40749869459 still fails2703/2650MB; pools+coefficient barrier are NOT a measured solution.
+TargetedUI40749873518: five methods pass; newpeople failure/empty method has two failed text assertions910/919.
+Do not assume testaccessibility vsactualmessaging until inspectingits artifact. Newfocused adjustments run40758279578
+was started on6f09c23; re-check its live/terminal state rather than restarting blindly. Allnewpixel regressions,
+grain/brush timings and geometryreferences still need execution/outputinspection. FullUI and finalmemory/ProRAW
+also remain; no2,000photo run. Sandbox draft `sandbox-adjustment-completion` is prepared but unvalidated, preserves
+unrelated MARKETING.md and docs/appstore/LISTING.md. Read docs/COMPLETION-CHECKPOINT-2026-10-28.md first next time.
+
+**Active completion batch, 28 Oct:** `adjustment-quality-completion` from currentmain c2472cb. Owner said
+"dont stop till youre done" and authorized parallel agents. Candidate: brush compositing consistency and bounded
+rasters; Lens Blur manual focus/refinement/HDR radiance; filtered Grain Size and aspect-normalized Vignette;
+missing Heal patch and failed people detection; one-active visible-first basic/refined thumbnail scheduling.
+Memory run40738195410 quality passes1644 but subject memory2658MB exceeds2650; export also logs virtualGPU OOM.
+Explicit source-analysis/subject autorelease pools and per-work-item editor queues are being validated; budgets
+are unchanged. Memory sampler now keeps the whole-step peak despite diagnostic substep callbacks.
+New production-path tests plus small library scheduling fixtures; no literal2,000-photo run. Validation pending;
+SideStore0.1.756 remains the latest verified release. Do not claim candidate fixes or phone memory validated.
+
 **Latest: SideStore 0.1.756 is published and feed/log/GitHub asset verified.** Main #176 merged 737e4fe,
 source f6e3465, publish 40738521966. IPA 356082659 bytes, SHA256
 b13e5cc8200f6b9a1d8493a2d92147de0fbbf8154c5b73089734e695f8cf7365.

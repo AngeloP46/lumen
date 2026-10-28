@@ -211,6 +211,64 @@ func runMaskRegressionChecks() {
         let missingDepth = seeded(); missingDepth.noteFailure(EditSession.aiDepth)
         check(session.prepareExportMasks(blur, source: missingDepth) == .depthUnavailable,
               "mask regression: Lens Blur loses its specific depth failure/without-blur option")
+
+        // The memory barrier materializes signed guided-filter coefficients. Compare the production path with
+        // the former lazy graph on both covariance signs, keeping its exact window, epsilon and final quantizer.
+        if let kernels = LumenKernels.shared, let pack = kernels.gfPack, let coef = kernels.gfCoef, let apply = kernels.gfApply {
+            let width = 640, height = 64
+            let frame = CGRect(x: 0, y: 0, width: width, height: height)
+            func field(_ inverse: Bool, guide: Bool) -> CIImage {
+                var values = [Float](repeating: 1, count: width * height * 4)
+                for y in 0..<height { for x in 0..<width {
+                    let ramp = Float(x) / Float(width - 1)
+                    let value = 0.05 + ramp * 0.65 + (x >= width / 2 ? Float(0.2) : 0)
+                    let scalar = inverse ? 1 - value : value
+                    let i = (y * width + x) * 4
+                    values[i] = scalar; values[i + 1] = scalar; values[i + 2] = scalar
+                } }
+                return CIImage(bitmapData: values.withUnsafeBytes { Data($0) }, bytesPerRow: width * 16,
+                               size: frame.size, format: .RGBAf, colorSpace: guide ? LumenGPU.workingSpace : nil)
+            }
+            func red(_ image: CIImage) -> [Float] {
+                var values = [Float](repeating: 0, count: width * height * 4)
+                values.withUnsafeMutableBytes { p in
+                    LumenGPU.context.render(image, toBitmap: p.baseAddress!, rowBytes: width * 16,
+                                            bounds: frame, format: .RGBAf, colorSpace: nil)
+                }
+                return stride(from: 0, to: values.count, by: 4).map { values[$0] }
+            }
+            let guide = field(false, guide: true)
+            let testSource = ImageSource(base: guide, l1: EditSession.constant(0, frame), l2: EditSession.constant(0, frame),
+                chroma: guide, air: SIMD3(repeating: 0.5), darkNorm: 0.2,
+                stats: PixelGrid(width: 1, height: 1, data: [0.2, 0.2, 0.2, 1]))
+            for inverse in [false, true] { for depth in [false, true] {
+                let mask = field(inverse, guide: false)
+                let radius = max(4, testSource.longEdge * (depth ? 0.014 : 0.008))
+                func box(_ image: CIImage) -> CIImage {
+                    image.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: radius]).cropped(to: frame)
+                }
+                guard let packed = pack.apply(extent: frame, arguments: [guide, mask, CIVector(x: 0, y: 0, z: 0, w: 0)]),
+                      let packedIP = pack.apply(extent: frame, arguments: [guide, mask, CIVector(x: 1, y: 0, z: 0, w: 0)]),
+                      let coefficients = coef.apply(extent: frame, arguments: [box(packed), box(packedIP),
+                                                                                            CIVector(x: depth ? 0.004 : 0.0015, y: 0, z: 0, w: 0)]),
+                      let reference = apply.apply(extent: frame, arguments: [box(coefficients), guide,
+                          depth ? CIVector(x: 0, y: 1, z: 0, w: 0) : CIVector(x: 0.12, y: 1 / 0.76, z: 0, w: 0)]),
+                      let expected = EditSession.materializedMask(reference),
+                      let actual = session.refined(mask, source: testSource, depth: depth) else {
+                    check(false, "mask regression: coefficient barrier fixture could not render"); continue
+                }
+                let signed = red(coefficients)
+                check(inverse ? (signed.min() ?? 0) < -0.01 : (signed.max() ?? 0) > 0.01,
+                      "mask regression: coefficient fixture lacks the intended covariance sign")
+                let before = red(expected), after = red(actual)
+                var worst: Float = 0, squared: Float = 0
+                for (a, b) in zip(before, after) { let d = abs(a - b); worst = max(worst, d); squared += d * d }
+                let rms = sqrt(squared / Float(before.count))
+                print("MASK coefficient barrier inverse \(inverse), depth \(depth): worst \(worst), RMS \(rms)")
+                check(after.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 } && worst < 0.01 && rms < 0.01,
+                      "mask regression: coefficient barrier changes signed guided refinement (worst \(worst), RMS \(rms))")
+            } }
+        } else { check(false, "mask regression: guided coefficient kernels unavailable") }
     } catch {
         check(false, "mask regression fixture failed: \(error)")
     }

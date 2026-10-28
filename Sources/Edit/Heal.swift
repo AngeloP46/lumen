@@ -608,14 +608,47 @@ struct FoundPerson: Identifiable, @unchecked Sendable {
     let main: Bool
 }
 
+enum PeopleSearchFailure: Equatable {
+    case decode, detection, memory, healMissing
+    var message: String {
+        switch self {
+        case .decode: return "The photo couldn't be read to find people. Reopen it and try again."
+        case .detection: return "People couldn't be found because the search failed. Try again."
+        case .memory: return "There isn't enough free memory to find people right now. Close other apps and try again."
+        case .healMissing: return "A saved Heal fix couldn't be read. Restore the fix or switch Heal off before finding people."
+        }
+    }
+}
+
+enum PeopleSearchOutcome {
+    case found([FoundPerson])
+    case failed(PeopleSearchFailure)
+}
+
+/// The detector's successful empty result is distinct from failure. Internal injection keeps failure tests
+/// independent of Vision/model availability; production uses the same downstream union and component splitting.
+enum PeopleDetectionOutcome {
+    case found([CIImage])
+    case failed
+}
+
 extension EditSession {
     /// Remove people: everyone in the photo (with the heals already made), biggest first. Apple's on-device person
     /// segmentation (the People mask's), split here into separate people. Slow: call off the main thread.
-    func findPeople(earlier: [HealSpot]) -> [FoundPerson] {
+    func findPeople(earlier: [HealSpot], detect: ((CGImage) -> PeopleDetectionOutcome)? = nil) -> PeopleSearchOutcome {
+        let patches = HealStore.retain(Set(earlier.map(\.id)))
+        defer { patches.close() }
+        guard HealStore.unavailable(earlier, owner: originalURL).isEmpty else { return .failed(.healMissing) }
         // 3072 (was 2048): the quarters and body boxes below look at parts of it, so small people keep some detail
-        guard let img = decode(maxEdge: 3072, heals: earlier) else { return [] }
+        guard let img = decode(maxEdge: 3072, heals: earlier) else { return .failed(.decode) }
         let e = img.extent
-        guard let cg = ctx.createCGImage(img, from: e, format: .RGBA8, colorSpace: LumenGPU.displaySpace) else { return [] }
+        guard let cg = ctx.createCGImage(img, from: e, format: .RGBA8, colorSpace: LumenGPU.displaySpace) else { return .failed(.decode) }
+        if let detect {
+            switch detect(cg) {
+            case .found(let masks): return people(from: masks, extent: e)
+            case .failed: return .failed(.detection)
+            }
+        }
         // two of Apple's finders, put together: the segmentation (the People mask's) and the per-person one, which
         // on the CI street photo also caught a man cut off by the frame whose top half the segmentation missed
         let request = VNGeneratePersonSegmentationRequest()
@@ -625,7 +658,14 @@ extension EditSession {
         let bodies = VNDetectHumanRectanglesRequest()
         bodies.upperBodyOnly = false
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-        try? handler.perform([request, instances, bodies])
+        do { try handler.perform([request, instances, bodies]) }
+        catch {
+            // One unsupported/failed request must not discard another detector's useful answer. Retry only
+            // requests that did not complete; normal successful searches still use one batched perform call.
+            for pending in [request, instances, bodies] as [VNRequest] where pending.results == nil {
+                try? handler.perform([pending])
+            }
+        }
         // each mask covers the whole photo (whatever its own shape): stretched over it, read back at up to 768 px
         let ext = CGRect(x: 0, y: 0, width: e.width, height: e.height)
         var found: [CIImage] = []
@@ -664,7 +704,18 @@ extension EditSession {
                 found.append(m.composited(over: Self.constant(0, ext)).cropped(to: ext))
             }
         }
-        guard var mask = found.first else { return [] }
+        if found.isEmpty {
+            // An instance observation explicitly containing no people is valid. Missing observations/errors
+            // from every mask-producing pass are not evidence that nobody is in the photograph.
+            if let observation = instances.results?.first, observation.allInstances.isEmpty { return .found([]) }
+            return .failed(.detection)
+        }
+        return people(from: found, extent: ext)
+    }
+
+    private func people(from found: [CIImage], extent e: CGRect) -> PeopleSearchOutcome {
+        guard var mask = found.first else { return .found([]) }
+        let ext = CGRect(x: 0, y: 0, width: e.width, height: e.height)
         for m in found.dropFirst() {
             mask = m.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: mask]).cropped(to: ext)
         }
@@ -676,7 +727,7 @@ extension EditSession {
         var px = [UInt8](repeating: 0, count: w * h)
         LumenGPU.context.render(small, toBitmap: &px, rowBytes: w, bounds: CGRect(x: 0, y: 0, width: w, height: h),
                                 format: .L8, colorSpace: nil)   // top row first
-        return Self.splitPeople(px, width: w, height: h)
+        return .found(Self.splitPeople(px, width: w, height: h))
     }
 
     /// Splits a person mask (8-bit, top row first) into separate people. Pieces less than ~1 % of the photo apart
