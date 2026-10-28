@@ -1263,7 +1263,11 @@ final class LibraryStore: ObservableObject {
             // Every source/CGImage/JPEG and RAW autorelease is gone before the next photo starts. A serial
             // queue alone did not guarantee that, and a whole-library refresh accumulated decoded RAW buffers.
             let written: Bool? = autoreleasepool { () -> Bool? in
-                guard FileManager.default.fileExists(atPath: src.path), let session = EditSession(url: src) else { return false }
+                guard FileManager.default.fileExists(atPath: src.path) else { return false }
+                guard let session = EditSession(url: src) else {
+                    Task { @MainActor [weak self] in self?.unreadable.insert(id) }
+                    return false
+                }
                 let mp = Double(session.nativeSize.width * session.nativeSize.height) / 1_000_000
                 return HeavyWork.shared.run(.thumbnail, megapixels: mp, optional: true) {
                     let began = Date()

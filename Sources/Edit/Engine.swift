@@ -49,8 +49,8 @@ struct LumenKernels {
     var lensWeigh: CIColorKernel?, lensCompose: CIColorKernel?
     /// Edge refinement for AI masks (optional: without it masks keep their soft edges).
     var gfPack: CIColorKernel?, gfCoef: CIColorKernel?, gfApply: CIColorKernel?
-    /// Self-guided log-luminance analysis for the shared adjustment engine.
-    var analysisPack: CIColorKernel?, analysisCoef: CIColorKernel?, analysisApply: CIColorKernel?
+    /// Reconstruct the broad base from a medium guide and its small bilateral detail field.
+    var clarityBase: CIColorKernel?
     /// Sky seen through trees (optional: without them the sky mask is the scene model's alone).
     var skyWeigh: CIColorKernel?, leafWeigh: CIColorKernel?, skyGaps: CIColorKernel?
     /// Full-resolution texture for big heals (optional: without it big heals keep the model's softer fill).
@@ -80,7 +80,7 @@ struct LumenKernels {
                             clip: k("lumenClip"), rangeMask: k("lumenRangeMask"), lensRamp: k("lumenLensRamp"), lensRefinedRamp: k("lumenLensRefinedRamp"),
                             lensWeigh: k("lumenLensWeigh"), lensCompose: k("lumenLensCompose"),
                             gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
-                             analysisPack: k("lumenAnalysisPack"), analysisCoef: k("lumenAnalysisCoef"), analysisApply: k("lumenAnalysisApply"),
+                            clarityBase: k("lumenClarityBase"),
                             skyWeigh: k("lumenSkyWeigh"), leafWeigh: k("lumenLeafWeigh"), skyGaps: k("lumenSkyGaps"),
                             healDetail: k("lumenHealDetail"), healEnergy: k("lumenHealEnergy"),
                             noiseRemove: k("lumenNoiseRemove"))
@@ -92,7 +92,7 @@ private final class BundleToken {}
 /// A decoded image at a working size plus the analysis layers the develop kernel needs.
 /// Layer encoding: e = (log2(Y / 0.18) + 8) / 16.
 ///  - l1: R = log-luminance blurred finely (sharpening), G = medium (texture), B = wide (clarity)
-///  - l2: R = encoded local log-light range (clarity edge protection), G = dark channel (dehaze)
+///  - l2: R = strictly local edge range (never expanded across the scene), G = dark channel (dehaze)
 ///  - chroma: RGB blurred (colour noise)
 final class ImageSource: @unchecked Sendable {
     let base: CIImage
@@ -557,8 +557,7 @@ final class EditSession: @unchecked Sendable {
     /// Kept internal so engine invariants can be checked with exact linear fixtures, without encoding/resampling
     /// a test image first (those operations can introduce their own boundary pixels).
     func analyse(_ base: CIImage, materialize: Bool) -> ImageSource? {
-        guard let k = LumenKernels.shared, let pack = k.analysisPack, let coef = k.analysisCoef,
-              let apply = k.analysisApply else { return nil }
+        guard let k = LumenKernels.shared, let reconstruct = k.clarityBase else { return nil }
         let ext = base.extent
         let E = max(ext.width, ext.height)
 
@@ -607,24 +606,25 @@ final class EditSession: @unchecked Sendable {
         let logF = k.logLum.apply(extent: ext, arguments: [base])!
         let sharpF = Self.blur(logF, max(0.5, 0.00045 * E), ext)
         let texF = Self.blur(logF, max(1.2, 0.0016 * E), ext)
-        // Fit the broad base on a small log-light copy, then evaluate it on the same medium guide
-        // used by Texture. This creates a real mid-scale band without amplifying fine noise or
-        // cancelling the signal by subtracting another residual after an edge-aware filter.
-        func box(_ img: CIImage) -> CIImage {
-            img.clampedToExtent().applyingFilter("CIBoxBlur", parameters: [kCIInputRadiusKey: max(1, sigmaClar)])
-                .cropped(to: sext)
+        // A bilateral grid preserves boundaries through its averaging weights, not by switching off whole
+        // neighborhoods. Analyze the already-smoothed medium guide so fine grain is outside this band.
+        let guide = Self.normalized(texF.clampedToExtent().applyingFilter("CILanczosScaleTransform",
+            parameters: [kCIInputScaleKey: f, kCIInputAspectRatioKey: 1.0]).cropped(to: sext))
+        let gw = Int(guide.extent.width.rounded()), gh = Int(guide.extent.height.rounded())
+        var pixels = [Float](repeating: 0, count: gw * gh * 4)
+        pixels.withUnsafeMutableBytes { p in
+            ctx.render(guide.clampedToExtent(), toBitmap: p.baseAddress!, rowBytes: gw * 16,
+                       bounds: CGRect(x: 0, y: 0, width: gw, height: gh), format: .RGBAf, colorSpace: nil)
         }
-        let epsilon: CGFloat = 1.0 / 64  // (2 stops / 16)^2: give medium structure a useful endpoint range
-        guard let moments = pack.apply(extent: sext, arguments: [logS]),
-              let ab = coef.apply(extent: sext, arguments: [box(moments), CIVector(x: epsilon, y: 0, z: 0, w: 0)])
-        else { return nil }
-        let coefficients = upscaled(box(ab))
-        guard let clarity = apply.apply(extent: ext, arguments: [texF, coefficients]) else { return nil }
-        // A hard boundary can leave small guided residuals across two averaging radii. Protect that
-        // entire footprint, while leaving ordinary textured surfaces (under 1.5 stops) fully active.
-        // Detect abrupt boundaries locally, then extend protection across the broad filter footprint.
-        // A smooth curved surface spanning several stops must not be suppressed just because its total range is large.
-        let rangeRadius: CGFloat = 1.5
+        let values = (0..<(gw * gh)).map { pixels[$0 * 4] * 16 - 8 }
+        let residual = BilateralClarity.residual(values, width: gw, height: gh, spatialSigma: Float(sigmaClar))
+        for i in residual.indices { pixels[i * 4] = residual[i]; pixels[i * 4 + 1] = 0; pixels[i * 4 + 2] = 0; pixels[i * 4 + 3] = 1 }
+        let field = CIImage(bitmapData: pixels.withUnsafeBytes { Data($0) }, bytesPerRow: gw * 16,
+                            size: CGSize(width: gw, height: gh), format: .RGBAf, colorSpace: nil)
+        guard let clarity = reconstruct.apply(extent: ext, arguments: [texF, upscaled(field)]) else { return nil }
+        // Only the immediate true-edge pixels need resampling-fringe protection. NEVER dilate this range
+        // across the broad filter radius: that was the 0.1.737 car-photo coverage failure.
+        let rangeRadius: CGFloat = 3
         let logMax = logS.clampedToExtent().applyingFilter("CIMorphologyMaximum",
             parameters: [kCIInputRadiusKey: rangeRadius]).cropped(to: sext)
         let logMin = logS.clampedToExtent().applyingFilter("CIMorphologyMinimum",
@@ -632,12 +632,10 @@ final class EditSession: @unchecked Sendable {
         // max >= min, so symmetric difference is exactly the range without relying on blend operand order.
         let localRange = logMax.applyingFilter("CIDifferenceBlendMode", parameters: [kCIInputBackgroundImageKey: logMin])
             .cropped(to: sext)
-        let contrastRange = localRange.clampedToExtent().applyingFilter("CIMorphologyMaximum",
-            parameters: [kCIInputRadiusKey: max(2, sigmaClar * 2)]).cropped(to: sext)
         var l1 = k.pack3.apply(extent: ext, arguments: [sharpF, texF, clarity])!
         if materialize, let m = Self.materialized(l1) { l1 = m }
 
-        let l2 = k.pack3.apply(extent: ext, arguments: [upscaled(contrastRange), upscaled(darkS), Self.constant(0, ext)])!
+        let l2 = k.pack3.apply(extent: ext, arguments: [upscaled(localRange), upscaled(darkS), Self.constant(0, ext)])!
 
         return ImageSource(base: base, l1: l1, l2: l2, chroma: upscaled(chromaS),
                            air: air, darkNorm: darkNorm, stats: grid)
