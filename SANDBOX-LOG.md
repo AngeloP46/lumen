@@ -1,5 +1,11 @@
 # SANDBOX-LOG — what was drafted and what Claude must check
 
+## 28 Oct 2026: release validation complete (from main #176)
+SideStore0.1.756 verified, sandbox #177 merged a54fa93 after40737807973 passes both flag builds, export policy
+and four StoreKit tests. Main full quality passes1644 checks;132 focused regressions and six related UI cases pass.
+Long memory40738195410 and phone follow-up remain. Existing Pro/free behavior retained. No Store code changed.
+Sourcef6e3465, personal merge737e4fe. See AI reliability report/current main checklist for remaining review work.
+
 ## 28 Oct 2026: preserve AI failures across preview and export (from main #176)
 Candidate f6e3465: denoise cache/model availability, bounded legacy PNG structural validation, mask failure
 snapshot/restore, safe failed inversion and explicit export failure gate; valid empty/fallback selections retained.

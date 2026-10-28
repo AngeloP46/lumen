@@ -15,6 +15,11 @@ R4 failures handled · R5 output correct · R6 performance measured.
 
 ## Next adjustment reviews — queued 28 October 2026
 
+**Latest verified release: SideStore0.1.756 / sandbox #177 a54fa93.** Both builds, export policy and all four
+StoreKit tests pass40737807973. Full engine quality passes1644 checks40738195410;132 focused checks and six
+related UI cases pass. Long memory and phone follow-up remain; see AI-RELIABILITY-2026-10-28.md.
+The queued photographic, brush, blur, effects, Heal/detection and larger-library work is not finished.
+
 **Latest parity status:** Clarity main #174 is SideStore 0.1.747; sandbox #175 merged 8649421 after
 40732458311 passed OFF/ON, export policy and all four StoreKit cases. Owner confirms thumbnail recovery works.
 Main #176 follow-up preserves failed versus valid-empty AI selection outcomes, explicit export fidelity, safe
