@@ -1,5 +1,29 @@
 # Lumen session entry point
 
+**Latest verified: SideStore0.1.782,29Oct.** Main#184 mergedfe0a94c (sourced9c4064);
+publish40791387290 succeeds. Freshfeed/log/asset agree356122572bytes,
+SHA2564f7f7307d51c6d938640687fadb4472a5ca92a991f9676a4f108912b5a9432e4.
+Shared sandbox#185 mergedbe2d802 after both builds/policy/identity/four StoreKit40788980740 pass.
+All500 focused checks40789795464 pass: actual12checkpoints use2IOSurface backings,100run rebuild452ms,
+16measured replacements564→max584→576MB under unchanged64MBgrowth.245 imaging/Clarity/cache/batch checks
+pass40788880285;32RAWthumbnailcleanup1230–1240MB. Full774UI96/96passes40783388166;three currentUIspotchecks
+40790759752 pass. Owner explicitly prioritized this publication before more long checking.
+
+**Still unresolved:** native24MP HDR export under heavy preceding Heal memory pressure is variable on the Mac
+virtualGPU.60aa24MPmemory/export29checks40788978399 and12MPProRAW25checks40789265261 pass. Butd9native
+run40789798207 aborts134 with virtualGPUOOM/MPSmedian pipeline assertion during encoding, BEFORE the new
+dimension/gain-map inspection. Its crash helper mistakenly ran the full suite underlldb without the narrow flag;
+that passes2014checks but does NOT make the original aborted run pass or establish nativeHDR output integrity.
+Fix the diagnostic helper's argument preservation, then finish bounded full-size export/inspection. Do not lower
+resolution, omitHDR, raisebudgets or claim finished based on green retries. Fullnewengine40790966338 is live;
+readitsstate ratherthanrestart. No new review/feature expansion; original photographic/phone-only limits explicit.
+
+**30-day sharing IPA:** owner requested it AFTER verified SideStorepublication. Existingtester-build workflow
+40792070982 runs onfe0a94c withdays30; retrieve Lumen-tester-ipa, verifyexpiry/modelpresence and save under
+LumenIPA/tester-2026-10-29/Lumen.ipa for manualGoogleDriveupload. It expires30days from BUILD, not install.
+PersonalSideStore app never gets that expiry. See current completioncheckpoint and reviewsummary.
+Earlier status entries below are historical.
+
 **Current follow-up:** released774 full engine quality40783385204 passes all1977 checks; its24MP/ProRAW memory
 and full UI40783388166 remain live. Branch`brush-checkpoint-pooling` tests per-build half-float checkpoint buffer
 reuse to reduce resource churn behind the variable brush heap metric. Final cachedR8 stays independent; fallback
@@ -140,3 +164,11 @@ App Store draft work and its latest handover live in the sibling `Lumen-Sandbox`
 Read `Lumen-Sandbox\HANDOFF.md`'s latest update before reviewing that work. Preserve the
 existing personal SideStore app; do not publish or merge App Store changes to main without
 Angelo's instruction. Windows cannot compile this iPhone app; builds run on GitHub Actions.
+
+Tester delivery verified29October: workflow40792070982 succeeded onfe0a94c (samecode as SideStore0.1.782).
+Localfile C:\Users\pc user\Projects\app development\LumenIPA\tester-2026-10-29\Lumen.ipa,
+version0.1.3/build3 (separate tester workflowcounter), expiry2026-11-28T00:00:00Z,356048440bytes,
+SHA2563d7499ab90eb674c4c64a233af8eb4502c73dd432dc93d65a9361bdf1bdebcae. ZIPCRC passes andall4AI models
+have nonemptycoremldata.bin. build-details.json/README.txt arebeside it. Ownerreceivedthelink for manualGoogleDrive
+upload; no externalupload/send performed. Old26October tester IPA preserved. SideStorepublication precededtesterbuild.
+Fullcurrentenginequality40790966338 passes2014assertions; itslongmemoryphase wasstillrunninglastcheck.
