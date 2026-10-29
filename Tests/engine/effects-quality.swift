@@ -5,12 +5,13 @@ import CoreImage
 func runEffectsQualityChecks() {
     guard let kernel = LumenKernels.shared?.finish else { check(false, "effects: finishing kernel unavailable"); return }
     func render(_ width: Int, _ height: Int, size: Double = 0, rough: Double = 0,
-                vignette: Double = 0, midpoint: Double = 50, roundness: Double = 100) -> CIImage {
+                vignette: Double = 0, midpoint: Double = 50, roundness: Double = 100,
+                feather: Double = 50) -> CIImage {
         let extent = CGRect(x: 0, y: 0, width: width, height: height)
         let base = EditSession.constant(0.25, extent)
         let cell = (0.5 + size / 100 * 2.5) * Double(max(width, height)) / 2000
         return kernel.apply(extent: extent, arguments: [base,
-            CIVector(x: vignette, y: midpoint / 100, z: 0.5, w: roundness / 100),
+            CIVector(x: vignette, y: midpoint / 100, z: feather / 100, w: roundness / 100),
             CIVector(x: Double(width), y: Double(height), z: vignette == 0 ? 0.6 : 0, w: cell),
             CIVector(x: rough / 100, y: 1, z: 7, w: 0)])!
     }
@@ -63,6 +64,27 @@ func runEffectsQualityChecks() {
             check(abs(corner - reference) > 0.001,
                   "effects: Vignette Midpoint dead at \(w)x\(h), \(midpoint), \(amount)")
         } }
+    }
+    // Feather must change the transition, while Roundness changes shape without losing corner calibration.
+    for amount in [-1.0, 1] {
+        func value(_ x: Int, _ y: Int, roundness: Double, feather: Double) -> Float {
+            pixels(render(900, 300, vignette: amount, midpoint: 40, roundness: roundness, feather: feather),
+                   bounds: CGRect(x: x, y: y, width: 1, height: 1))[0]
+        }
+        let hard = value(765, 150, roundness: 100, feather: 0)
+        let soft = value(765, 150, roundness: 100, feather: 100)
+        check(amount < 0 ? hard < soft - 0.01 : hard > soft + 0.01,
+              "effects: Vignette Feather has no correctly directed transition response (\(amount), \(hard) -> \(soft))")
+        // The short-axis side is inside the circular shape and outside the frame-following ellipse.
+        let ellipseSide = value(450, 15, roundness: 0, feather: 50)
+        let circleSide = value(450, 15, roundness: 100, feather: 50)
+        check(amount < 0 ? ellipseSide < circleSide - 0.01 : ellipseSide > circleSide + 0.01,
+              "effects: Vignette Roundness endpoints do not change shape (\(amount), \(ellipseSide), \(circleSide))")
+        let ellipseCorner = value(898, 298, roundness: 0, feather: 50)
+        let circleCorner = value(898, 298, roundness: 100, feather: 50)
+        check(abs(ellipseCorner - circleCorner) < 0.003,
+              "effects: Vignette Roundness changes calibrated corner strength (\(ellipseCorner), \(circleCorner))")
+        print("EFFECTS Vignette \(amount): Feather transition \(hard)/\(soft), Roundness side \(ellipseSide)/\(circleSide), corners \(ellipseCorner)/\(circleCorner)")
     }
     for size in [0.0, 50, 100] {
         let image = render(640, 160, size: size, rough: 50)

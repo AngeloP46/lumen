@@ -1,5 +1,12 @@
 # AI image quality review — 28 October 2026
 
+Current status: all concrete cache/preview/detection reliability fixes below are released through0.1.774 and
+shared sandbox#181. Missing Heal assets and failed people-search messaging are also fixed, with actual message
+screenshots and six UI tests40781694994 verified. Full released engine quality40783385204 passes1977 checks;
+its full24MP HDR export fails under virtualGPU allocation pressure and is being addressed separately in#184.
+The photographic model tradeoffs/limitations below still apply. Read AI-VISUAL-REVIEW-2026-10-28.md and the
+current completion checkpoint instead of older "queued"/"pending" wording in this historical review.
+
 ## Follow-up from current SideStore 0.1.747
 
 Parallel source review found two additional reliability defects. Requested AI Denoise could silently disappear

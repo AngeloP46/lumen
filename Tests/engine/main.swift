@@ -329,7 +329,7 @@ if args.contains("--imaging") {
 // the phone opens it (HDR), the 100 % view's full-size copy, a subject mask, a big heal and a full-size export.
 // iOS closes Lumen at about 3.4 GB (owner's JetsamEvent, 18 Oct: killed at 3388 MB). The Mac counts GPU memory a
 // little differently, so the budget leaves room; the point is to catch a change that suddenly needs much more.
-if args.contains("--memory") || args.contains("--memory-subject") {
+if args.contains("--memory") || args.contains("--memory-subject") || args.contains("--memory-export") {
     func footprintMB() -> Int {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
@@ -431,10 +431,23 @@ if args.contains("--memory") || args.contains("--memory-subject") {
         if let spot { s.heals = [spot] }
     }
     peaks["export"] = stepPeak("export") {
-        check(session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true) != nil,
-              "memory test: the full-size HDR export failed")
+        guard let data = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true),
+              let encoded = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(encoded, 0, nil) as? [CFString: Any] else {
+            check(false, "memory test: the full-size HDR export failed or could not be reopened"); return
+        }
+        let width = properties[kCGImagePropertyPixelWidth] as? Int ?? 0
+        let height = properties[kCGImagePropertyPixelHeight] as? Int ?? 0
+        check(width == Int(session.nativeSize.width) && height == Int(session.nativeSize.height),
+              "memory test: full-size export dimensions changed (\(width)x\(height))")
+        if #available(macOS 15.0, iOS 18.0, *) {
+            let gain = CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeHDRGainMap)
+                ?? CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeISOGainMap)
+            check(gain != nil, "memory test: requested HDR export has no HDR/ISO gain map")
+        }
+        print("MEMORY export verified \(width)x\(height), \(data.count) bytes, HDR gain map inspected")
     }
-    if ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil, EditSession.hasDenoiseModel,
+    if !args.contains("--memory-export"), ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil, EditSession.hasDenoiseModel,
        ProcessInfo.processInfo.environment["LUMEN_MEMORY_SKIP_DENOISE"] == nil {
         DenoiseStore.directory = outDir.appendingPathComponent("denoise-memory")
         var ok = false
