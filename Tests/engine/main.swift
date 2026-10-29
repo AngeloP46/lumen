@@ -337,7 +337,7 @@ if args.contains("--hdr-probe") || (args.contains("--memory") && inDir.lastPathC
               let source = session.makeSource(maxEdge: 1200, materialize: true) else {
             print("PROBE cannot open \(file.lastPathComponent)"); continue
         }
-        for exposure in [4.18] {
+        for exposure in [2.0, 4.18] {
             var s = EditSettings(); s.hdr = true; s.exposure = exposure
             let sdrImg = session.develop(s, source: source, geometry: true)
             let hdrImg = session.develop(s, source: source, geometry: true, hdrWeight: 1)
@@ -352,6 +352,7 @@ if args.contains("--hdr-probe") || (args.contains("--memory") && inDir.lastPathC
             }
             let n = hdr.count / 4
             print("PROBE \(file.lastPathComponent) exposure \(exposure): \(n) px; HDR at white r/g/b \(counts); a channel pinned at white below the others \(pinned.count); base max \(baseMax); hdrStops \(s.hdrStops)")
+            if var hh = Histogram.compute(LumenGPU.context.createCGImage(sdrImg, from: r, format: .RGBA8, colorSpace: LumenGPU.displaySpace)!) { Histogram.addHDR(&hh, hdrImg, stops: s.hdrStops, screenStops: 1); print("PROBE   lumen histogram: \(hh.hdrSpike ?? "no spike")") }
             for i in pinned.prefix(4) {
                 print("PROBE   base \(base.isEmpty ? "n/a" : f3(base, i))  sdr \(f3(sdr, i))  hdr \(f3(hdr, i))")
             }

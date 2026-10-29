@@ -368,10 +368,7 @@ inline float4 lmHdrGains(float3 tone, float vib, float sat, float4 gh) {
     g = select(g, float3(1.0), sdr <= float3(1e-6));
     // A monochrome look must not get colour back from per-channel gains after its LUT.
     if (gh.y > 0.5) g = float3(lmLum(hdr) / max(lmLum(sdr), 1e-6));
-    // Gains may go below 1 (to -2 stops): where SDR clipped a bright tinted pixel to pure white, the HDR colour keeps its
-    // tint and its weakest channel is below 1. Clamping that gain to 1 pinned the channel at SDR white (owner, 29 Oct:
-    // a peak at the white line in red for a blue-white sky, in blue for a warm white).
-    return float4(clamp(g, float3(1.0 / H), float3(H)), 1.0);
+    return float4(clamp(g, float3(1.0), float3(H)), 1.0);
 }
 
 float4 lumenGain(sample_t img, sample_t l1, sample_t l2, sample_t ch,
@@ -580,7 +577,7 @@ float4 lumenHDRBlurGain(sample_t hdr, sample_t sdr, float4 p) {
 
 float4 lumenApplyRGBGain(sample_t sdr, sample_t gain, float4 p) {
     if (sdr.a <= 0.0) return float4(0.0);
-    return float4(sdr.rgb * exp2(p.x * log2(max(gain.rgb, float3(1e-3)))), 1.0);
+    return float4(sdr.rgb * exp2(p.x * log2(max(gain.rgb, float3(1.0)))), 1.0);
 }
 
 // Lens Blur, lens-like: only pixels that are themselves blurred (the background) feed the blur, carried as

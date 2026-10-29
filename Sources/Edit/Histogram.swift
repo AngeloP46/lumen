@@ -17,6 +17,9 @@ struct HistogramData {
     var hdrStops: Float = 0
     /// Stops above white the screen can show right now (the rest of the HDR zone is dimmed).
     var screenStops: Float = 0
+    /// Diagnostics only: set when one HDR channel spikes at the SDR-white line (owner, 29 Oct; not reproduced on the
+    /// CI Mac). The editor writes it to Send diagnostics with the edit settings.
+    var hdrSpike: String?
     /// How far above white the brightest part of the photo goes (99.9th percentile), in stops.
     var hdrPeakStops: Float = 0
 }
@@ -92,6 +95,22 @@ enum Histogram {
             let m = max(rv, gv, bv)
             brightest.append(m)
             if m > 1.02 { over += 1 }
+        }
+        // A channel piling up in the bin at SDR white, against the bins two and three either side.
+        let line = min(max(Int(sdrFraction * Float(bins)), 4), bins - 5)
+        var spiked: [Int] = []
+        for (c, a) in [cr, cg, cb].enumerated() {
+            let around = (a[line - 3] + a[line - 2] + a[line + 2] + a[line + 3]) / 4
+            if a[line] > max(3 * around, Float(w * ht) * 0.003) { spiked.append(c) }
+        }
+        if let c = spiked.first {
+            func row(_ a: [Float]) -> String { (line - 4...line + 4).map { String(Int(a[$0])) }.joined(separator: " ") }
+            var samples: [String] = []
+            for i in stride(from: 0, to: buf.count, by: 4) where bin(buf[i + c]) == line && samples.count < 6 {
+                samples.append(String(format: "(%.4f %.4f %.4f)", buf[i], buf[i + 1], buf[i + 2]))
+            }
+            h.hdrSpike = "HDR histogram spike in \(spiked.map { ["r", "g", "b"][$0] }.joined()) at SDR white, \(w)x\(ht) px, "
+                + "bins \(line - 4)...\(line + 4): r \(row(cr)) | g \(row(cg)) | b \(row(cb)); pixels there \(samples.joined(separator: " "))"
         }
         var peak: Float = 1
         for arr in [cr, cg, cb] { for i in 1..<(bins - 1) { peak = max(peak, arr[i]) } }
