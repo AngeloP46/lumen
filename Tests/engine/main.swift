@@ -322,6 +322,7 @@ if args.contains("--adjustments") {
 if args.contains("--hdr-probe") || (args.contains("--memory") && inDir.lastPathComponent == "proraw") {   // scratch: rides the memory-proraw mode
     let files = ((try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? [])
         .sorted { $0.path < $1.path }
+        + [URL(fileURLWithPath: "Tests/engine/polo.DNG")].filter { FileManager.default.fileExists(atPath: $0.path) }
     func px(_ img: CIImage, _ r: CGRect) -> [Float] {
         var buf = [Float](repeating: 0, count: Int(r.width) * Int(r.height) * 4)
         buf.withUnsafeMutableBytes { p in
@@ -346,11 +347,11 @@ if args.contains("--hdr-probe") || (args.contains("--memory") && inDir.lastPathC
             var counts = [0, 0, 0], pinned = [Int](), baseMax: [Float] = [0, 0, 0]
             for i in stride(from: 0, to: hdr.count, by: 4) {
                 for c in 0..<3 where abs(hdr[i + c] - 1) < 0.01 { counts[c] += 1 }
-                if abs(hdr[i] - 1) < 0.01 && hdr[i + 1] < 0.99 { pinned.append(i) }
+                if (0..<3).contains(where: { c in abs(hdr[i + c] - 1) < 0.005 && hdr[i + c] < max(hdr[i], hdr[i + 1], hdr[i + 2]) - 0.02 }) { pinned.append(i) }
                 if !base.isEmpty { for c in 0..<3 { baseMax[c] = max(baseMax[c], base[i + c]) } }
             }
             let n = hdr.count / 4
-            print("PROBE \(file.lastPathComponent) exposure \(exposure): \(n) px; HDR at white r/g/b \(counts); red pinned with green below white \(pinned.count); base max \(baseMax); hdrStops \(s.hdrStops)")
+            print("PROBE \(file.lastPathComponent) exposure \(exposure): \(n) px; HDR at white r/g/b \(counts); a channel pinned at white below the others \(pinned.count); base max \(baseMax); hdrStops \(s.hdrStops)")
             for i in pinned.prefix(8) {
                 print("PROBE   base \(base.isEmpty ? "n/a" : f3(base, i))  sdr \(f3(sdr, i))  hdr \(f3(hdr, i))")
             }
