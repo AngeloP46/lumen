@@ -506,7 +506,8 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
                 }
                 if let lo = toneMap("GainMapMin"), let hi = toneMap("GainMapMax"), let cap = toneMap("HDRCapacityMax") {
                     print("MEMORY export \(attempt) gain map range \(lo)...\(hi) stops, headroom \(cap)")
-                    check(lo >= -0.01 && hi <= cap + 0.01 && hi >= lo,
+                    // Gains may dip to -2 stops where SDR clipped a tinted white (kernel lmHdrGains); a broken map never brightens.
+                    check(lo >= -2.01 && hi > 0 && hi <= cap + 0.01 && hi >= lo,
                           "memory test: export \(attempt) gain map range \(lo)...\(hi) is outside 0...\(cap)")
                 } else {
                     check(false, "memory test: export \(attempt) has no readable HDR tone-map settings")
@@ -1533,6 +1534,10 @@ func runHDRChecks() {
     }
     saturatedRamp("warm", channel: 0, rgb: (255, 120, 40))
     saturatedRamp("blue", channel: 2, rgb: (40, 110, 255))
+    // Tinted whites pushed until SDR clips them to pure white: the HDR keeps the tint, so its weakest channel (red for a
+    // blue-white sky, blue for a warm white) must not be held at SDR white by a gain clamped to 1.
+    saturatedRamp("cool-white", channel: 0, rgb: (205, 220, 255))
+    saturatedRamp("warm-white", channel: 2, rgb: (255, 230, 200))
     print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")
     if failures > 0 { exit(1) }
 }
