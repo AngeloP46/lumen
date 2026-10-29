@@ -506,7 +506,8 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
                 }
                 if let lo = toneMap("GainMapMin"), let hi = toneMap("GainMapMax"), let cap = toneMap("HDRCapacityMax") {
                     print("MEMORY export \(attempt) gain map range \(lo)...\(hi) stops, headroom \(cap)")
-                    check(lo >= -0.01 && hi <= cap + 0.01 && hi >= lo,
+                    // Gains may dip to -2 stops where SDR clipped a tinted white (kernel lmHdrGains); a broken map never brightens.
+                    check(lo >= -2.01 && hi > 0 && hi <= cap + 0.01 && hi >= lo,
                           "memory test: export \(attempt) gain map range \(lo)...\(hi) is outside 0...\(cap)")
                 } else {
                     check(false, "memory test: export \(attempt) has no readable HDR tone-map settings")
@@ -1486,6 +1487,35 @@ func runHDRChecks() {
                   String(format: "8b: SDR rendition leaves the HDR zone empty (zone %.3f, peak +%.2f)", zone2, plain.hdrPeakStops))
         } else { check(false, "8: histogram could not be computed") }
     } else { check(false, "8: cannot open \(arw.lastPathComponent)") }
+    // Low/zero channels after a look must retain the gain-map bounds when restoring HDR luminance.
+    if let apply = LumenKernels.shared?.applyRGBGain {
+        let rect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        func sample(_ rgb: [Float]) -> CIImage {
+            let rgba = rgb + [1]
+            let data = rgba.withUnsafeBytes { Data($0) }
+            return CIImage(bitmapData: data, bytesPerRow: 16, size: rect.size, format: .RGBAf,
+                           colorSpace: LumenGPU.workingSpace)
+        }
+        for red in [Float(0), 0.0001, 0.1] {
+            let base: [Float] = [red, 1, 1]
+            for weight in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                if let result = apply.apply(extent: rect, arguments: [sample(base), sample([4, 0.25, 0.25]),
+                                                                       CIVector(x: weight, y: 4, z: 0, w: 0)]) {
+                    var rgba = [Float](repeating: 0, count: 4)
+                    rgba.withUnsafeMutableBytes { p in
+                        LumenGPU.context.render(result, toBitmap: p.baseAddress!, rowBytes: 16, bounds: rect,
+                                                format: .RGBAf, colorSpace: LumenGPU.workingSpace)
+                    }
+                    let y = rgba[0] * 0.22897 + rgba[1] * 0.69174 + rgba[2] * 0.07929
+                    let baseY = red * 0.22897 + 0.69174 + 0.07929
+                    check(y.isFinite && y >= baseY - 0.001,
+                          "8c: low-channel HDR luminance stays above SDR (red \(red), weight \(weight))")
+                    check((0..<3).allSatisfy { rgba[$0].isFinite && rgba[$0] >= base[$0] * 0.25 - 0.00001 && rgba[$0] <= base[$0] * 4 + 0.00001 },
+                          "8d: HDR gain bounds preserve low/zero channels (red \(red), weight \(weight))")
+                } else { check(false, "8c: cannot apply HDR gain kernel") }
+            }
+        }
+    } else { check(false, "8c: missing HDR gain kernel") }
     // 9. Saturated highlights get HDR headroom per channel. Owner's histograms, 29 Oct: with Exposure pushed, red piled up
     // at exactly SDR white in the HDR rendition (warm lights, skin, red fur), because the gain came from luminance alone
     // and was applied to colours already fitted into SDR with red at 1. Blue skies and fences did the same with blue
@@ -1529,10 +1559,40 @@ func runHDRChecks() {
             check(atWhite > w * h / 10, "9a \(tag): ramp reaches SDR white (\(atWhite) pixels)")
             check(pinned * 10 < max(atWhite, 1), "9b \(tag): HDR channel not pinned at SDR white (\(pinned) of \(atWhite))")
             check(top > 1.3 && top <= Float(exp2(s.hdrStops)) + 0.05, "9c \(tag): highlights use the HDR headroom (top \(top))")
+            let basePixels = pixels(session.develop(s, source: source, geometry: true))
+            let fullPixels = pixels(session.develop(s, source: source, geometry: true, hdrWeight: 1))
+            for weight in [0.25, 0.5, 0.75, 1.0] {
+                let weighted = pixels(session.develop(s, source: source, geometry: true, hdrWeight: weight))
+                var violations = 0
+                for i in 0..<(basePixels.w * basePixels.h) {
+                    let y = lum(weighted, i)
+                    if !y.isFinite || y < lum(basePixels, i) - 0.001 || y > lum(fullPixels, i) + 0.001 { violations += 1 }
+                }
+                check(violations == 0, "9f \(tag): weight \(weight) stays between SDR and full HDR luminance (\(violations) violations)")
+            }
+            // Enabling Lens Blur with everything on the focus plane must preserve the same HDR colours.
+            // Its separate ratio kernel previously re-clamped the weakest channel to SDR white.
+            source.storeDepth(DepthField(width: 2, height: 2, values: [0.5, 0.5, 0.5, 0.5],
+                                         histogram: [Float](repeating: 0, count: 64)))
+            s.lensBlur.amount = 50
+            s.lensBlur.focusDistance = 1
+            for (label, quality) in [("settled/export", EditSession.LensQuality.full), ("interactive", .preview)] {
+                let focused = reds(session.develop(s, source: source, geometry: true, hdrWeight: 1, lens: quality))
+                let delta = zip(hdr, focused).map { abs($0 - $1) }.max() ?? .infinity
+                check(focused.count == hdr.count && delta < 0.002,
+                      "9d \(tag): \(label) Lens Blur focus plane preserves HDR colour (diff \(delta))")
+                let focusPinned = zip(sdr, focused).filter { $0.0 > 0.99 && abs($0.1 - 1) < 0.005 }.count
+                check(focusPinned * 10 < max(atWhite, 1),
+                      "9e \(tag): \(label) Lens Blur must not restore white spike (\(focusPinned) of \(atWhite))")
+            }
         } else { check(false, "9 \(tag): cannot open the ramp") }
     }
     saturatedRamp("warm", channel: 0, rgb: (255, 120, 40))
     saturatedRamp("blue", channel: 2, rgb: (40, 110, 255))
+    // Tinted whites pushed until SDR clips them to pure white: the HDR keeps the tint, so its weakest channel (red for a
+    // blue-white sky, blue for a warm white) must not be held at SDR white by a gain clamped to 1.
+    saturatedRamp("cool-white", channel: 0, rgb: (205, 220, 255))
+    saturatedRamp("warm-white", channel: 2, rgb: (255, 230, 200))
     print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")
     if failures > 0 { exit(1) }
 }

@@ -36,7 +36,7 @@ extension EditSession {
         args += [g0, g1, g2, g3, g4, g6]
         var img = kernel.apply(extent: ext, arguments: args) ?? source.base
 
-        // HDR: the same develop maths with white at 2^hdrStops; only the per-channel highlight gains (>= 1) are kept and
+        // HDR: the same develop maths with white at 2^hdrStops; the per-channel highlight gains are kept and
         // applied again after the look LUT (`lmHdrGains`).
         var gainImg: CIImage?
         if s.hdr, hdrWeight > 0, let gk = (kernel === k.mainLocal ? k.gainLocal : k.gain), k.applyRGBGain != nil {
@@ -52,7 +52,7 @@ extension EditSession {
             let unblurred = img
             img = applyLensBlur(img, settings: s, source: source, scale: scale)
             if s.lensBlur.amount > 0, let gi = gainImg, let apply = k.applyRGBGain, let ratio = k.hdrBlurGain,
-               let radiance = apply.apply(extent: ext, arguments: [unblurred, gi, v(1, 0, 0, 0)]) {
+               let radiance = apply.apply(extent: ext, arguments: [unblurred, gi, v(1, exp2(s.hdrStops), 0, 0)]) {
                 // Average the light, not its correlated SDR and gain fields separately. RGB ratios retain
                 // differently coloured point lights. The existing output look is still applied to SDR first.
                 let blurredHDR = applyLensBlur(radiance, settings: s, source: source, scale: scale)
@@ -84,7 +84,7 @@ extension EditSession {
             }
         }
         if let gi = gainImg, let ag = k.applyRGBGain {
-            img = ag.apply(extent: img.extent, arguments: [img, gi, v(min(max(hdrWeight, 0), 1), 0, 0, 0)]) ?? img
+            img = ag.apply(extent: img.extent, arguments: [img, gi, v(min(max(hdrWeight, 0), 1), exp2(s.hdrStops), 0, 0)]) ?? img
         }
         return img
     }

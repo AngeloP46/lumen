@@ -191,23 +191,31 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   shared fixes to both versions; **no merges that publish to SideStore and no App Store submission without his
   instruction** (main PRs are left ready, not merged).
 
-## OPEN: HDR histogram spike at the SDR-white line (29 Oct 2026, evening) - read before touching HDR
-- Owner on SideStore 0.1.798: with HDR on and Exposure pushed (+2...+5), many photos show one channel (mostly BLUE now,
-  red earlier) spiking at the first vertical line (SDR white) of the editor histogram. Example: owner's iPhone ProRAW
-  `polo.DNG` (blue VW Polo, cloudy sky), committed with consent on scratch branch `hdr-red-probe` at
-  `Tests/engine/polo.DNG` (21 MB; delete that branch when done).
-- Probe (branch `hdr-red-probe`, `--hdr-probe`, rides `only=memory-proraw` because the gh token cannot edit workflows):
-  same file, `EditSession(url:, expandHDR: true)`, maxEdge 1200, `develop(..., hdrWeight: 1)` rendered RGBAf in the
-  working space. At +2 and +4.18 the HDR channel counts in fine bands 0.98|0.99|0.995|1.005|1.01|1.02 are SMOOTH (no pile
-  at 1.0); the SDR rendition has 29-53 % of pixels at white (normal clipping). So the HDR data the Mac makes has no
-  spike, yet the phone's histogram draws one: the difference is in what the phone feeds `Histogram.addHDR`
-  (EditorViewModel ~line 847 `hdrImg` from `source`; ~1075 addHDR) or in addHDR's own downscale/binning on the phone.
-- Next: reproduce the phone path exactly (the editor's preview `source`, its size/format, whether `expandHDR` is used
-  when HDR is switched on after opening, and addHDR's 256 px downscale and `bins`), e.g. compute `Histogram.addHDR` in
-  the probe and print the bins around `sdrFraction`; or add a diagnostics line on the phone (Send diagnostics) with the
-  HDR bins around the line. Fix only from that evidence.
-- Ruled out by evidence: the luminance-gain cause (fixed in #190 for saturated ramps) is not this spike; allowing HDR
-  gains below 1 (branch `hdr-gain-below-one`, not merged) did not change the Polo counts - do not merge it.
+## HDR histogram spike at the SDR-white line: fixed by gains below 1 (29 Oct 2026, evening)
+- Codex takeover: Claude already pushed `92f5dbe`, flooring the applied HDR pixel's luminance at SDR after
+  the two failures in run40939931808 (HDR3a shortfall0.0739; HDR5 36,417 partial-weight violations).
+  Polo probe40941723970 uses the identical kernel blob df925aadf4d63dc5ac8ed036e50a80dc3282715d:
+  +4.18 has no histogram spike, red-at-white3863 (original44706); +2 also no spike. Build/readiness and
+  logic pass; full engine40941655219 and UI40941655003 still require terminal results.
+- Independent review found Lens Blur's `lumenHDRBlurGain` still clamped ratios at1, recreating the problem
+  in sharp pixels whenever blur is enabled (histogram skips blur). Follow-up preserves reciprocal-H...H
+  ratios there too; four tinted ramps compare actual full/interactive develop paths with focus at1 against
+  blur off, and check the spike stays absent. Static review passed; rendered regression validation pending.
+- Run40941655219 then finished: original HDR3a and5 now pass, but the blue ramp reaches4.23368 above
+  the4.0 headroom ceiling. Scaling the entire pixel to restore luminance causes this overshoot. Follow-up
+  restores luminance with a bounded blend toward SDR multiplied by H; the gain application receives H
+  explicitly. Review caught that blending toward neutral white could exceed gain-map ratios in weak channels.
+  Direct kernel tests now cover zero/tiny channels; existing headroom limits stay unchanged, and ramps check
+  quarter/half/three-quarter/full weights. Final rendered validation remains pending.
+- Owner on 0.1.798: with HDR on and Exposure pushed, one channel spiked at the first histogram line (SDR white).
+  Reproduced on the CI Mac with the owner's iPhone ProRAW (`Tests/engine/polo.DNG` on scratch branch `hdr-red-probe`,
+  committed with consent; delete the branch when done) and Lumen's own `Histogram.addHDR` at Exposure +4.18: red bin at
+  the line 1844 vs ~390 around it, 44,706 px with HDR red at 1.0. Cause: where SDR clips a bright tinted pixel to white,
+  the HDR colour keeps its tint and its weakest channel is below 1; `lmHdrGains` clamped gains to >= 1, pinning that
+  channel at SDR white. Gains now range 1/H...H (`lumenApplyRGBGain` floors at 1e-3): same photo, no spike, 3,868 px.
+  The spike only appears at high Exposure (+4); at +2 there is none, so check at the owner's real setting.
+- Probe mechanics: `--hdr-probe` rides `only=memory-proraw` (the gh token cannot edit workflows). Send diagnostics now
+  logs any remaining spike with bins, pixel values and the edit settings (PR #193).
 
 ## HDR keeps saturated highlights (29 Oct 2026)
 - Owner's histograms (Exposure +4.5, HDR on): red piled up at exactly SDR white in every photo. Cause: the HDR rendition
