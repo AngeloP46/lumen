@@ -51,3 +51,11 @@ Owner uploads toGoogleDrive manually; don'tupload/sendtoothers. Preserve prior t
 Rootworkspace isbrush-export-release-notes fromorigin/mainfe0a94c, no appsourceedits. A reviewsummary isuntracked
 untilnotescommit. Sandbox workspace sandbox-brush-export has onlyunrelated MARKETING.md/LISTING.md localchanges;
 neverstage them. Finalnotesgo throughdocsPRafter publication; no newpublish neededfordocs.
+
+Tester delivery verified29October: workflow40792070982 succeeded onfe0a94c (samecode as SideStore0.1.782).
+Localfile C:\Users\pc user\Projects\app development\LumenIPA\tester-2026-10-29\Lumen.ipa,
+version0.1.3/build3 (separate tester workflowcounter), expiry2026-11-28T00:00:00Z,356048440bytes,
+SHA2563d7499ab90eb674c4c64a233af8eb4502c73dd432dc93d65a9361bdf1bdebcae. ZIPCRC passes andall4AI models
+have nonemptycoremldata.bin. build-details.json/README.txt arebeside it. Ownerreceivedthelink for manualGoogleDrive
+upload; no externalupload/send performed. Old26October tester IPA preserved. SideStorepublication precededtesterbuild.
+Fullcurrentenginequality40790966338 passes2014assertions; itslongmemoryphase wasstillrunninglastcheck.

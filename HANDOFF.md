@@ -443,3 +443,5 @@ resolution/HDRfallback orbudgetincrease. Crashhelpermistakenly rerunsfullsuitewi
 queuedtoo. NoStore/model/pricing/UIchanges. Seecompletioncheckpoint andplainlanguagereviewsummary.
 Ownerrequestedexisting30day sharingIPA afterverifiedSideStorepublication; tester40792070982 onfe0a94c,
 days30, intendedmanualGoogleDriveupload. No upload/sendperformed. Preserveunrelatedmarketing/listingchanges.
+
+29Oct tester delivery:40792070982 succeeded, LumenIPA/tester-2026-10-29/Lumen.ipa verifiedCRC/models; expiry28Nov2026UTC,version0.1.3/build3, samecode asSideStore782.356048440bytes,SHA2563d7499ab90eb674c4c64a233af8eb4502c73dd432dc93d65a9361bdf1bdebcae. OwnerwilluploadmanuallytoDrive; previousIPA kept. Currentfullquality2014passes40790966338, memoryphasepending.
