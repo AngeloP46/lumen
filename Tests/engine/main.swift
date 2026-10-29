@@ -316,6 +316,49 @@ if args.contains("--adjustments") {
     runGeometryQualityChecks()
     finishChecks()
 }
+// ---- HDR red probe (`--hdr-probe`): the owner's ProRAW on 0.1.798 still showed red piled up at SDR white with
+// Exposure +4.18 and HDR on. For each photo in the input folder, find HDR pixels whose red sits at SDR white and print
+// what each stage holds for them: the decoded RAW, the SDR rendition and the HDR rendition.
+if args.contains("--hdr-probe") || (args.contains("--memory") && inDir.lastPathComponent == "proraw") {   // scratch: rides the memory-proraw mode
+    let files = ((try? FileManager.default.contentsOfDirectory(at: inDir, includingPropertiesForKeys: nil)) ?? [])
+        .sorted { $0.path < $1.path }
+    func px(_ img: CIImage, _ r: CGRect) -> [Float] {
+        var buf = [Float](repeating: 0, count: Int(r.width) * Int(r.height) * 4)
+        buf.withUnsafeMutableBytes { p in
+            LumenGPU.context.render(img, toBitmap: p.baseAddress!, rowBytes: Int(r.width) * 16, bounds: r, format: .RGBAf,
+                                    colorSpace: LumenGPU.workingSpace)
+        }
+        return buf
+    }
+    func f3(_ a: [Float], _ i: Int) -> String { String(format: "(%.3f %.3f %.3f)", a[i], a[i + 1], a[i + 2]) }
+    for file in files {
+        guard let session = EditSession(url: file, expandHDR: true),
+              let source = session.makeSource(maxEdge: 1200, materialize: true) else {
+            print("PROBE cannot open \(file.lastPathComponent)"); continue
+        }
+        for exposure in [0.0, 2.0, 4.18] {
+            var s = EditSettings(); s.hdr = true; s.exposure = exposure
+            let sdrImg = session.develop(s, source: source, geometry: true)
+            let hdrImg = session.develop(s, source: source, geometry: true, hdrWeight: 1)
+            let r = sdrImg.extent.integral
+            let sdr = px(sdrImg, r), hdr = px(hdrImg, r)
+            let base = source.base.extent.integral == r ? px(source.base, r) : []
+            var counts = [0, 0, 0], pinned = [Int](), baseMax: [Float] = [0, 0, 0]
+            for i in stride(from: 0, to: hdr.count, by: 4) {
+                for c in 0..<3 where abs(hdr[i + c] - 1) < 0.01 { counts[c] += 1 }
+                if abs(hdr[i] - 1) < 0.01 && hdr[i + 1] < 0.99 { pinned.append(i) }
+                if !base.isEmpty { for c in 0..<3 { baseMax[c] = max(baseMax[c], base[i + c]) } }
+            }
+            let n = hdr.count / 4
+            print("PROBE \(file.lastPathComponent) exposure \(exposure): \(n) px; HDR at white r/g/b \(counts); red pinned with green below white \(pinned.count); base max \(baseMax); hdrStops \(s.hdrStops)")
+            for i in pinned.prefix(8) {
+                print("PROBE   base \(base.isEmpty ? "n/a" : f3(base, i))  sdr \(f3(sdr, i))  hdr \(f3(hdr, i))")
+            }
+        }
+    }
+    exit(0)
+}
+
 if args.contains("--imaging") {
     runImagingQualityChecks()
     runClarityQualityChecks()
