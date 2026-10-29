@@ -1,47 +1,53 @@
-# Completion checkpoint — SideStore0.1.774 released, 28 October2026
+# Completion checkpoint — SideStore0.1.782 published; tester file requested
 
-The owner resumed and prioritized getting the fixes into SideStore. Publication is complete; broader validation
-continues. Never describe every feature, full suite, AI photographic quality or phone memory as completely proved.
+Owner's latest direction: publish SideStore first, then supply the existing30-day tester IPA for manual GoogleDrive
+sharing. Publication is done. Do not expand the review; finish the file delivery and the exact remaining HDR case.
 
-## Released state
+## Authoritative release
 
-- Main#180 merged24c29b7d2e188d5f28be474207bd8a7f96257291; reviewed source6d4f50d, application0a7e2a3.
-- SideStore0.1.774 publication40783343904 succeeds. Fresh feed, publish log and GitHub asset agree:
-  356120040bytes; SHA2569fce6d2106086b02b27239bef8f7b5378cff4612a82223a28fcaa1f8cc0874c1.
-- Sandbox#181 merged079a63f683dd05ff697814b3fc3d562d3a7f3c3d, source97babf0. Shared editor parity complete.
-  Unrelated local MARKETING.md and docs/appstore/LISTING.md remain uncommitted and must stay excluded.
-- Phone: LocalDevVPN on, SideStore My Apps, refresh, Update Lumen. Preserve installation/library/originals.
+- Personal#184 mergedfe0a94c6b5f6553cd1b8d68a50e0c99102d34614, sourced9c4064f4bb19b4a76ec8bbba01fbf3f8620810d.
+- SideStore0.1.782 publish40791387290 success. Freshfeed/log/asset match356122572bytes,
+  SHA2564f7f7307d51c6d938640687fadb4472a5ca92a991f9676a4f108912b5a9432e4.
+- Shared sandbox#185 mergedbe2d8026f94ac37a3869efb68c5c94f0b77e26af, source82d808c. Bothconfigurations,
+  policy/identity/four StoreKit40788980740 pass (sameapplication, laterprobe onlyactive whena test hook exists).
+- Originalphotos/values/UI/Store/modelsettings kept. All saved recipes/history/paste useonecurrentrenderer;
+  format3 exactJSONbackups preserved. No2,000photo run; noNetlify/AppStore submission.
 
-## Actual evidence
+## Verified evidence
 
-- Shared focused40782782695 passes465 renderer/retention checks plus25 RAW/Subject memory checks. All28 Swift
-  compiler inputs plus Kernels.metal have identical committed blobs in personal6d4f50d and sandbox97babf0.
-- Personal40782233771 also passes all pixel assertions and Subject memory2399MB; shared2432MB. Previous2716MB;
-  unchanged limit2650MB. Non-caching materialization with post-pool GPU cache clearing produced the reduction.
-  RAW-decoder cache release alone and action autorelease pools did not demonstrate that benefit.
-- Six related UI methods40781694994 pass; failed-search and valid-empty messages now visibly differ, screenshots
-  inspected. Pixel-equivalent RAW decoder recreation and signed guided coefficients pass. Protected readiness
-  40782199912 passes. Sandbox OFF/ON/export policy/build identity/four StoreKit tests40781697900 pass atdbd9359;
-  later97babf0 only changes engine tests/workflow, not the application or compile-check inputs.
-- Brush metric remains variable: personal648→max716→689MB fails maxgrowth64MB, identical shared656→709→668MB
-  passes. Exactly one cached component throughout. Fixed8warmup+16measured real100-run rebuilds, all24 logged.
-  Do not widen limits or claim every suite green; investigate process/driver heap measurement separately.
-- New Lens Add failures were saturated fixtures (coverage already1), corrected to partial selection with unchanged
-  response thresholds and a direct target assertion. Production Lens mapping did not change for this correction.
-- Grain size0/100, geometry and HDR Lens fixture renders inspected. These are deterministic synthetic evidence,
-  not a substitute for original-phone photographic quality. Model weights/inference settings remain unchanged.
+- Full774enginequality1977 checks40783385204; fullUI96/96 40783388166, screenshots inspected.
+- Current500focused40789795464 passes.12half-floatcheckpoints useexactly2IOSurfacebackings in25longbuilds;
+ 100runbuild452msMac, cachedreuse10ms, measuredfootprints564→max584→576MB, unchanged64MBgrowth bound.
+-245imaging/Clarity/cache/thumbnail checks40788880285 pass. ActiveSharpenMasking retainsstrongedges and removes
+ weakflatnoise;VignetteFeather/Roundness,2perspective4xref cases pass; actualrenders inspected.32RAWthumbjobs
+ settle1230–1240MB. ThreecurrentUI export/mask/brightness checks40790759752 pass.
+- Noncaching source/readback/export changespass24MPopen/detail/Subject/Heal/HDRexport29checks40788978399,
+ peak5325MB, and12MPProRAW25checks40789265261, peak4245MB. Those narrowpasses are not fullrobustnessproof.
 
-## Pick up next
+## Exact remaining failure (do not hide this behind green counts)
 
-1. Read full engine quality/24MP+ProRAW memory40783385204 and full UI40783388166, both on released24c29b7.
-   Do not dispatch duplicates while running. The earlier756 export logged virtualGPU OOM; new memory export now
-   asserts file success rather than silently counting a nil result. Investigate any actual failure before claiming done.
-2. Stabilize the brush retention benchmark with evidence of allocator/driver settling and actual live bitmap ownership.
-   Keep64MB retention bound; do not fit a threshold to one runner or confuse cold/reusable heaps with accumulated history.
-3. Phone Clarity/brush/Lens/grain feel, memory and automatic-thumbnail refinement confirmation. No2,000-image run.
-4. Real noisy RAW/ProRAW colour/detail/seams, Heal structured texture/HDR and subject-edge blur; source reviews and
-   synthetic fixtures cannot certify these. Read AI-VISUAL-REVIEW-2026-10-28.md before proposing model changes.
+Native24MP run40789798207 aborts134 duringHDRencoding aftera largeHeal: source4496MB, virtualGPUOOM and
+MPSmedian_3x3_r_float pipeline assertion at23:50:20. The new dimensions/gain-map inspection was NEVER REACHED.
+Then the workflow crashhelper incorrectlylaunches the fullengine suite without the original --memory-export flag
+underlldb; that passes2014checks, then bt failsbecauseprocessalreadyexited. This explains the unexpectedlylong
+run and doesNOT make the originalnativeexportvalid. Do not call it an ImageIOinspectionhang.
 
-Details: ADJUSTMENT-COMPLETION-2026-10-28.md and QUALITY-CHECKLIST.md. Keep main protected, use PR/readiness,
-verify fresh feed/log/IPA after releases, port shared fixes preserving Store hooks. Never stage .local or sandbox
-marketing/listing changes with editor work. No Netlify or App Store submission authorized by this release.
+1. Preserve crashdiagnostic args/mode so a narrowcrash can't silentlyrun15minunrelatedfullsuite again.
+2. Fullnewengine/memory40790966338 was runninglastcheck; inspect terminalstate/artifacts before anyrestart.
+3. Finish trueboundednativeHDRencode and reopenatfullsize withrealHDR/ISOgainmap. Samebudgets/dimensions/HDR;
+ noSDR/resolutionfallback. DriverGPUOOM canbevariablebutisactualremainingevidence, notaphonecrashdiagnosis.
+4. PhoneClarity/brush/Lens appearance and timing/memory needownerconfirmation; asyncquestionpending. Model
+ denoise/inpaintingphotographiclimitsareinAI-VISUAL-REVIEW andthe summary; no blindmodelswaps planned.
+
+## Tester delivery
+
+Existing .github/workflows/tester-build.yml and Sources/TesterExpiry.swift implement the intended expiring build.
+Workflow40792070982 dispatched AFTER verifiedSideStorepublication onfe0a94c,days30, run_number3.
+Download artifactLumen-tester-ipa toLumenIPA/tester-2026-10-29/Lumen.ipa. Inspect embeddedInfo.plist for
+LumenTesterExpires, com.example.lumen, actualversion/build and all4modelcoremldata.bin files; hash locally.
+Expiryis30daysfromBUILD(calendarUTCdate), NOT30daysfromeachperson'sinstall. PersonalSideStore has no expiry.
+Owner uploads toGoogleDrive manually; don'tupload/sendtoothers. Preserve prior tester-2026-10-26 file.
+
+Rootworkspace isbrush-export-release-notes fromorigin/mainfe0a94c, no appsourceedits. A reviewsummary isuntracked
+untilnotescommit. Sandbox workspace sandbox-brush-export has onlyunrelated MARKETING.md/LISTING.md localchanges;
+neverstage them. Finalnotesgo throughdocsPRafter publication; no newpublish neededfordocs.

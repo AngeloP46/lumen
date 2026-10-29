@@ -433,3 +433,13 @@ fix/review work. Website prices are proposed demand-testing options, not final a
   report.
 - The plan is in the REAL repo's `docs/` — if it gets updated, update it there (it's committed),
   not just in the sandbox.
+
+Latest29October: personal SideStore0.1.782 verified(main184/fe0a94c,publish40791387290), sharedsandbox185
+mergedbe2d802. Bothbuilds/policy/identity/fourStoreKit40788980740pass.500focused40789795464passes(actualtwo
+IOSurfacebackings,stablebrushmemory);245imaging/batch,96fullUI+3currentspotUI pass. Fullcurrentquality2014
+passes40790966338; itsmemoryphase stillruns.24MP/ProRAW memory/export runs pass once, but native24MP after
+largeHeal stillabortsunder virtualGPUOOM in40789798207 BEFORE newgainmapinspection. Notfullyresolved; no
+resolution/HDRfallback orbudgetincrease. Crashhelpermistakenly rerunsfullsuitewithoutnarrowargs; keepthatfix
+queuedtoo. NoStore/model/pricing/UIchanges. Seecompletioncheckpoint andplainlanguagereviewsummary.
+Ownerrequestedexisting30day sharingIPA afterverifiedSideStorepublication; tester40792070982 onfe0a94c,
+days30, intendedmanualGoogleDriveupload. No upload/sendperformed. Preserveunrelatedmarketing/listingchanges.
