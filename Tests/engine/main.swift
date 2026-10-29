@@ -1487,6 +1487,35 @@ func runHDRChecks() {
                   String(format: "8b: SDR rendition leaves the HDR zone empty (zone %.3f, peak +%.2f)", zone2, plain.hdrPeakStops))
         } else { check(false, "8: histogram could not be computed") }
     } else { check(false, "8: cannot open \(arw.lastPathComponent)") }
+    // Low/zero channels after a look must retain the gain-map bounds when restoring HDR luminance.
+    if let apply = LumenKernels.shared?.applyRGBGain {
+        let rect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        func sample(_ rgb: [Float]) -> CIImage {
+            let rgba = rgb + [1]
+            let data = rgba.withUnsafeBytes { Data($0) }
+            return CIImage(bitmapData: data, bytesPerRow: 16, size: rect.size, format: .RGBAf,
+                           colorSpace: LumenGPU.workingSpace)
+        }
+        for red in [Float(0), 0.0001, 0.1] {
+            let base: [Float] = [red, 1, 1]
+            for weight in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                if let result = apply.apply(extent: rect, arguments: [sample(base), sample([4, 0.25, 0.25]),
+                                                                       CIVector(x: weight, y: 4, z: 0, w: 0)]) {
+                    var rgba = [Float](repeating: 0, count: 4)
+                    rgba.withUnsafeMutableBytes { p in
+                        LumenGPU.context.render(result, toBitmap: p.baseAddress!, rowBytes: 16, bounds: rect,
+                                                format: .RGBAf, colorSpace: LumenGPU.workingSpace)
+                    }
+                    let y = rgba[0] * 0.22897 + rgba[1] * 0.69174 + rgba[2] * 0.07929
+                    let baseY = red * 0.22897 + 0.69174 + 0.07929
+                    check(y.isFinite && y >= baseY - 0.001,
+                          "8c: low-channel HDR luminance stays above SDR (red \(red), weight \(weight))")
+                    check((0..<3).allSatisfy { rgba[$0].isFinite && rgba[$0] >= base[$0] * 0.25 - 0.00001 && rgba[$0] <= base[$0] * 4 + 0.00001 },
+                          "8d: HDR gain bounds preserve low/zero channels (red \(red), weight \(weight))")
+                } else { check(false, "8c: cannot apply HDR gain kernel") }
+            }
+        }
+    } else { check(false, "8c: missing HDR gain kernel") }
     // 9. Saturated highlights get HDR headroom per channel. Owner's histograms, 29 Oct: with Exposure pushed, red piled up
     // at exactly SDR white in the HDR rendition (warm lights, skin, red fur), because the gain came from luminance alone
     // and was applied to colours already fitted into SDR with red at 1. Blue skies and fences did the same with blue
