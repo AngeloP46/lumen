@@ -191,6 +191,24 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   shared fixes to both versions; **no merges that publish to SideStore and no App Store submission without his
   instruction** (main PRs are left ready, not merged).
 
+## OPEN: HDR histogram spike at the SDR-white line (29 Oct 2026, evening) - read before touching HDR
+- Owner on SideStore 0.1.798: with HDR on and Exposure pushed (+2...+5), many photos show one channel (mostly BLUE now,
+  red earlier) spiking at the first vertical line (SDR white) of the editor histogram. Example: owner's iPhone ProRAW
+  `polo.DNG` (blue VW Polo, cloudy sky), committed with consent on scratch branch `hdr-red-probe` at
+  `Tests/engine/polo.DNG` (21 MB; delete that branch when done).
+- Probe (branch `hdr-red-probe`, `--hdr-probe`, rides `only=memory-proraw` because the gh token cannot edit workflows):
+  same file, `EditSession(url:, expandHDR: true)`, maxEdge 1200, `develop(..., hdrWeight: 1)` rendered RGBAf in the
+  working space. At +2 and +4.18 the HDR channel counts in fine bands 0.98|0.99|0.995|1.005|1.01|1.02 are SMOOTH (no pile
+  at 1.0); the SDR rendition has 29-53 % of pixels at white (normal clipping). So the HDR data the Mac makes has no
+  spike, yet the phone's histogram draws one: the difference is in what the phone feeds `Histogram.addHDR`
+  (EditorViewModel ~line 847 `hdrImg` from `source`; ~1075 addHDR) or in addHDR's own downscale/binning on the phone.
+- Next: reproduce the phone path exactly (the editor's preview `source`, its size/format, whether `expandHDR` is used
+  when HDR is switched on after opening, and addHDR's 256 px downscale and `bins`), e.g. compute `Histogram.addHDR` in
+  the probe and print the bins around `sdrFraction`; or add a diagnostics line on the phone (Send diagnostics) with the
+  HDR bins around the line. Fix only from that evidence.
+- Ruled out by evidence: the luminance-gain cause (fixed in #190 for saturated ramps) is not this spike; allowing HDR
+  gains below 1 (branch `hdr-gain-below-one`, not merged) did not change the Polo counts - do not merge it.
+
 ## HDR keeps saturated highlights (29 Oct 2026)
 - Owner's histograms (Exposure +4.5, HDR on): red piled up at exactly SDR white in every photo. Cause: the HDR rendition
   was SDR x one luminance gain; `lmGamut` fits a too-bright warm colour into SDR with red at exactly 1, and being dark in
