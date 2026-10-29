@@ -191,6 +191,16 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   shared fixes to both versions; **no merges that publish to SideStore and no App Store submission without his
   instruction** (main PRs are left ready, not merged).
 
+## HDR exports match the editor's brightness (29 Oct 2026, night)
+- Owner: a plain JPEG/HEIC edited with HDR on and Exposure pushed looked bright and balanced in the editor but the exported
+  photo came out blown out (confirmed on the phone). Cause: since the per-channel gains (0.1.798) the editor's HDR
+  rendition has a gain per colour channel, but the file's gain map is ONE channel (`NativeFormat` 'L008'), so the encoder
+  picked one gain from the per-channel pair and lifted the weaker channels (matterhorn +2, whole photo: editor red 0.45,
+  file as HDR 1.48; before 0.1.798 they matched within 1 %). Fix: export hands the encoder `lumenExportGain` = SDR colour
+  x the single gain that gives the editor's luminance (clamped 1...H), so the file reopens at the editor's brightness; the
+  editor and its histogram keep per-channel gains. Chroma of clipped highlights in the file is the SDR's (a one-channel
+  gain map cannot hold more). Engine HDR check 10 (JPEG round trip at +2/+3: luminance whole and sky within 5 %).
+
 ## Heal patches are always made from the HDR decode (29 Oct 2026, night)
 - Owner: removed people with Remove people on a sunlit HEIC with HDR off, then turned HDR on: the healed pavement was
   dim and flat beside the bright photo. A patch keeps the brightness of the decode it was made from (`HealSpot.scale` x an
