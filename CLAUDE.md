@@ -191,6 +191,16 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   shared fixes to both versions; **no merges that publish to SideStore and no App Store submission without his
   instruction** (main PRs are left ready, not merged).
 
+## HDR keeps saturated highlights (29 Oct 2026)
+- Owner's histograms (Exposure +4.5, HDR on): red piled up at exactly SDR white in every photo. Cause: the HDR rendition
+  was SDR x one luminance gain; `lmGamut` fits a too-bright warm colour into SDR with red at exactly 1, and being dark in
+  luminance (red weighs 0.23) it got gain 1, so warm lights, skin and fur never used the HDR headroom. Now
+  `lmHdrGains` (Kernels.metal) runs the colour step twice, white at 1 and at H = 2^hdrStops (`lmDevelopColorIn`), and
+  returns per-channel gains HDR/SDR clamped to 1...H (luminance ratio for black and white); Graph applies them with
+  `applyRGBGain` everywhere (also Lens Blur's radiance). SDR is bit-identical; neutral in-gamut pixels get the old gain.
+  Lightroom/ACR work the same way (HDR and SDR rendered separately, per-channel gain map). Engine HDR check 9 (warm ramp
+  at Exposure +2.5) fails on the old kernels; check 3b now only covers pixels with no channel near white.
+
 ## Exports render checked before encoding (29 Oct 2026, PR #188)
 - Found in memory-export run 40794138432: after a large Heal the CI Mac's GPU ran out of memory in the first of three
   24 MP HDR exports; Core Image's `jpegRepresentation` still wrote the file, its photo was fine but its HDR gain map was
