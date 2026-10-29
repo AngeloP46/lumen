@@ -474,3 +474,17 @@ are left **ready, not merged**: merging publishes to SideStore, and that waits f
 | iPhone SE: testLandscapeEveryToolFitsInTheSideColumn | 22 Oct | real 2 pt overlap of Crop's side panel at 667 pt width (Angelo: low priority) | won't fix now |
 | testHealDeletionPrivacy (4 of 9), testFailedSavesRecover… (2 of 7), testNextPhotoDoesNotWaitForAIMasks, testCopyOnlyTheChosenTools | overnight full suite 23 Oct, repeatable | **not flakes**: A10 delete regression; check raced the demo setup; test swiped where swiping is off; test tapped the row not the switch | fixed on `quality-fixes`, verification below |
 | iPhone SE: testPhotoRestsOnThePanelAndGrowsUpwardsWhenZoomed | 22 Oct | the test assumes spare height above a landscape photo; the SE has none | test to adapt |
+
+## 29 October publication and final follow-up
+
+SideStore0.1.782 is verifiedlive (main184/fe0a94c,sourced9c4064,publish40791387290,356122572bytes,
+SHA2564f7f7307d51c6d938640687fadb4472a5ca92a991f9676a4f108912b5a9432e4). Sandbox185/be2d802 merged.
+Current500checks40789795464 pass with2actualIOSurfacebackingsper12checkpoints and564→max584→576MB retained
+footprints, unchanged64MBbound.245imaging/32RAWbatch checks and96fullUI+3spotUI pass. Everyadjustmentfamily
+hasbeenreviewed; plainlanguageinventory/tradeoffs areinADJUSTMENT-REVIEW-SUMMARY.md.
+
+Stillunresolved:native24MP HDRencodeunderheavypriorHealGPUpressure.29checkexport40788978399 andProRAW25checks
+40789265261 pass, but40789798207 aborts134 with virtualGPUOOM/MPSmedianassertion beforeoutputverification.
+Itscrashhelperreranfullsuitewithoutoriginalnarrowargs; debugger2014pass doesn'teraseoriginalfailure. Current
+fullengine40790966338 pending. Preservequality/resolution/HDR/budgets; noextra reviewround planned. Userrequested
+publicationfirst, thenexisting30daytester IPAforGoogleDrive(manualupload), workflow40792070982 onpublishedcode.

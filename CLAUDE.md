@@ -1,5 +1,18 @@
 # Lumen – project notes for Claude
 
+## Latest: SideStore0.1.782,29October
+
+Main#184/fe0a94c, sourced9c4064; publish40791387290 verifiedfreshfeed/log/asset:
+356122572bytes,SHA2564f7f7307d51c6d938640687fadb4472a5ca92a991f9676a4f108912b5a9432e4.
+Sandbox#185/be2d802 merged after OFF/ON/policy/four StoreKit40788980740 pass.500 focused checks pass,
+actualRHcheckpointbackings2, stablebrushmemory,245 imaging/batchchecks and96fullUI+3spotUI pass.
+Noncachingexport/analysis reducesstandingmemory; native24MPexportpassesonepressuresequence butanother
+40789798207 aborts134 duringHDRencode with virtualGPUOOM/MPSmedianassertion. Not fullyresolved; inspect
+currentfullengine40790966338. ReadAGENTS/completioncheckpoint for exact evidence and remainingwork.
+Ownerprioritizedpublication, thenrequested30daytester IPAforGoogleDrive: existingworkflow40792070982
+onfe0a94c,days30, artifactLumen-tester-ipa; verifyexpiry/allmodels, deliverLumenIPA/tester-2026-10-29/Lumen.ipa.
+No personalSideStoreexpiry, no Store/model/layout/resolution changes or2,000photo run. Oldentriesbelowhistorical.
+
 ## Latest release: SideStore0.1.774, 28 October
 
 Main#180 merged24c29b7 (source6d4f50d, application0a7e2a3), publish40783343904 verified:
