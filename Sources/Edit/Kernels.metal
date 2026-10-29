@@ -580,7 +580,11 @@ float4 lumenHDRBlurGain(sample_t hdr, sample_t sdr, float4 p) {
 
 float4 lumenApplyRGBGain(sample_t sdr, sample_t gain, float4 p) {
     if (sdr.a <= 0.0) return float4(0.0);
-    return float4(sdr.rgb * exp2(p.x * log2(max(gain.rgb, float3(1e-3)))), 1.0);
+    float3 out = sdr.rgb * exp2(p.x * log2(max(gain.rgb, float3(1e-3))));
+    // A gain below 1 (a tinted white's weakest channel) must not make the pixel darker than SDR, at any weight.
+    float ls = lmLum(sdr.rgb), lo = lmLum(out);
+    if (lo < ls && lo > 1e-6) out *= ls / lo;
+    return float4(out, 1.0);
 }
 
 // Lens Blur, lens-like: only pixels that are themselves blurred (the background) feed the blur, carried as
