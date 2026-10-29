@@ -1390,20 +1390,22 @@ func runHDRChecks() {
         // 2. hdr = true with weight 0 equals hdr = false.
         let onW0 = pixels(session.develop(on, source: source, geometry: true, hdrWeight: 0))
         check(maxDiff(base, onW0) == 0, "\(tag) 2: hdr on, weight 0 identical (diff \(maxDiff(base, onW0)))")
-        // 3. weight 1: never darker; unchanged where SDR luminance is below 0.8.
+        // 3. weight 1: never darker; unchanged where SDR luminance is below 0.8 and no channel is near white (a vivid
+        // colour fitted into SDR has a channel at white and now keeps its colour in the HDR headroom: check 9).
         let w1 = pixels(session.develop(on, source: source, geometry: true, hdrWeight: 1))
         var darker: Float = 0, midDiff: Float = 0, maxL: Float = 0, brighter = 0
         if w1.f.count == base.f.count {
             for i in 0..<(base.w * base.h) {
                 let ls = lum(base, i), lh = lum(w1, i)
                 darker = max(darker, ls - lh)
-                if ls < 0.8 { for c in 0..<3 { midDiff = max(midDiff, abs(w1.f[i * 4 + c] - base.f[i * 4 + c])) } }
+                let topChannel = max(base.f[i * 4], base.f[i * 4 + 1], base.f[i * 4 + 2])
+                if ls < 0.8 && topChannel < 0.8 { for c in 0..<3 { midDiff = max(midDiff, abs(w1.f[i * 4 + c] - base.f[i * 4 + c])) } }
                 if lh > ls + 0.01 { brighter += 1 }
                 maxL = max(maxL, lh)
             }
         } else { darker = .infinity; midDiff = .infinity }
         check(darker <= 1e-4, "\(tag) 3a: HDR >= SDR (worst shortfall \(darker))")
-        check(midDiff <= 1e-3, "\(tag) 3b: SDR luminance < 0.8 unchanged (worst diff \(midDiff))")
+        check(midDiff <= 1e-3, "\(tag) 3b: SDR luminance < 0.8, no channel near white, unchanged (worst diff \(midDiff))")
         print("HDR info: \(tag) max HDR luminance \(maxL), pixels brighter than SDR: \(brighter)")
         // 4. Range of the brightest pixel (RAW with exposure +1).
         if rangeChecks {
@@ -1484,6 +1486,53 @@ func runHDRChecks() {
                   String(format: "8b: SDR rendition leaves the HDR zone empty (zone %.3f, peak +%.2f)", zone2, plain.hdrPeakStops))
         } else { check(false, "8: histogram could not be computed") }
     } else { check(false, "8: cannot open \(arw.lastPathComponent)") }
+    // 9. Saturated highlights get HDR headroom per channel. Owner's histograms, 29 Oct: with Exposure pushed, red piled up
+    // at exactly SDR white in the HDR rendition (warm lights, skin, red fur), because the gain came from luminance alone
+    // and was applied to colours already fitted into SDR with red at 1. Blue skies and fences did the same with blue
+    // (its luminance weight is 0.08). Warm and blue ramps pushed past white reproduce both.
+    func saturatedRamp(_ tag: String, channel: Int, rgb: (Double, Double, Double)) {
+        let w = 512, h = 32
+        var bytes = [UInt8](repeating: 255, count: w * h * 4)
+        for y in 0..<h { for x in 0..<w {
+            let t = Double(x) / Double(w - 1), i = (y * w + x) * 4
+            bytes[i] = UInt8(rgb.0 * t); bytes[i + 1] = UInt8(rgb.1 * t); bytes[i + 2] = UInt8(rgb.2 * t)
+        } }
+        let url = outDir.appendingPathComponent("hdr-\(tag)-ramp.png")
+        if let provider = CGDataProvider(data: Data(bytes) as CFData),
+           let ramp = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                              provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+           let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) {
+            CGImageDestinationAddImage(dest, ramp, nil)
+            CGImageDestinationFinalize(dest)
+        }
+        if let session = EditSession(url: url), let source = session.makeSource(maxEdge: nil, materialize: true) {
+            var s = EditSettings(); s.exposure = 2.5; s.hdr = true
+            // The ramp's main channel in the linear working space (Display P3), where SDR white is exactly 1.
+            func reds(_ img: CIImage) -> [Float] {
+                let r = img.extent.integral
+                let rw = Int(r.width), rh = Int(r.height)
+                var buf = [Float](repeating: 0, count: rw * rh * 4)
+                buf.withUnsafeMutableBytes { p in
+                    LumenGPU.context.render(img, toBitmap: p.baseAddress!, rowBytes: rw * 16, bounds: r, format: .RGBAf,
+                                            colorSpace: LumenGPU.workingSpace)
+                }
+                return stride(from: channel, to: buf.count, by: 4).map { buf[$0] }
+            }
+            let sdr = reds(session.develop(s, source: source, geometry: true))
+            let hdr = reds(session.develop(s, source: source, geometry: true, hdrWeight: 1))
+            let atWhite = sdr.filter { $0 > 0.99 }.count
+            let pinned = zip(sdr, hdr).filter { $0.0 > 0.99 && abs($0.1 - 1) < 0.005 }.count
+            let top = hdr.max() ?? 0
+            print("HDR info: \(tag) ramp, \(atWhite) pixels with SDR channel at white, \(pinned) still pinned there in HDR, top HDR \(top)")
+            check(atWhite > w * h / 10, "9a \(tag): ramp reaches SDR white (\(atWhite) pixels)")
+            check(pinned * 10 < max(atWhite, 1), "9b \(tag): HDR channel not pinned at SDR white (\(pinned) of \(atWhite))")
+            check(top > 1.3 && top <= Float(exp2(s.hdrStops)) + 0.05, "9c \(tag): highlights use the HDR headroom (top \(top))")
+        } else { check(false, "9 \(tag): cannot open the ramp") }
+    }
+    saturatedRamp("warm", channel: 0, rgb: (255, 120, 40))
+    saturatedRamp("blue", channel: 2, rgb: (40, 110, 255))
     print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")
     if failures > 0 { exit(1) }
 }

@@ -36,29 +36,27 @@ extension EditSession {
         args += [g0, g1, g2, g3, g4, g6]
         var img = kernel.apply(extent: ext, arguments: args) ?? source.base
 
-        // HDR: the same develop maths, but only the highlight gain (>= 1) is kept; applied again after the look LUT.
+        // HDR: the same develop maths with white at 2^hdrStops; only the per-channel highlight gains (>= 1) are kept and
+        // applied again after the look LUT (`lmHdrGains`).
         var gainImg: CIImage?
-        if s.hdr, hdrWeight > 0, let gk = (kernel === k.mainLocal ? k.gainLocal : k.gain), k.applyGain != nil {
-            let gh = v(exp2(s.hdrStops), 0, 0, 0)
+        if s.hdr, hdrWeight > 0, let gk = (kernel === k.mainLocal ? k.gainLocal : k.gain), k.applyRGBGain != nil {
+            let gh = v(exp2(s.hdrStops), s.blackAndWhite ? 1 : 0, 0, 0)
             gainImg = gk.apply(extent: ext, arguments: args + [gh])
         }
         // A missing HDR blur kernel shows an SDR preview; it must not reuse an unblurred or independently
         // blurred gain field. Export reports the unavailable HDR path explicitly below.
         if lens != .off, s.lensBlur.amount > 0, k.hdrBlurGain == nil || k.applyRGBGain == nil { gainImg = nil }
 
-        var channelGain = false
         if lens != .off {
             let scale = lens == .preview ? 0.5 : 1
             let unblurred = img
             img = applyLensBlur(img, settings: s, source: source, scale: scale)
-            if s.lensBlur.amount > 0, let gi = gainImg, let apply = k.applyGain,
-               let ratio = k.hdrBlurGain, k.applyRGBGain != nil,
+            if s.lensBlur.amount > 0, let gi = gainImg, let apply = k.applyRGBGain, let ratio = k.hdrBlurGain,
                let radiance = apply.apply(extent: ext, arguments: [unblurred, gi, v(1, 0, 0, 0)]) {
                 // Average the light, not its correlated SDR and gain fields separately. RGB ratios retain
                 // differently coloured point lights. The existing output look is still applied to SDR first.
                 let blurredHDR = applyLensBlur(radiance, settings: s, source: source, scale: scale)
                 gainImg = ratio.apply(extent: ext, arguments: [blurredHDR, img, v(exp2(s.hdrStops), s.blackAndWhite ? 1 : 0, 0, 0)])
-                channelGain = gainImg != nil
             }
         }
 
@@ -85,7 +83,7 @@ extension EditSession {
                 img = k.toLinear.apply(extent: fe, arguments: [out]) ?? out
             }
         }
-        if let gi = gainImg, let ag = channelGain ? k.applyRGBGain : k.applyGain {
+        if let gi = gainImg, let ag = k.applyRGBGain {
             img = ag.apply(extent: img.extent, arguments: [img, gi, v(min(max(hdrWeight, 0), 1), 0, 0, 0)]) ?? img
         }
         return img
@@ -383,7 +381,7 @@ extension EditSession {
         let q: [CIImageRepresentationOption: Any] = [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
         // HDR: the SDR rendition is the base image; the gain-map options need iOS 18 / macOS 15.
         let wantHDR = includeHDR && s.hdr && format != .tiff
-        if wantHDR && (LumenKernels.shared?.applyGain == nil || LumenKernels.shared?.gain == nil || LumenKernels.shared?.gainLocal == nil) {
+        if wantHDR && (LumenKernels.shared?.applyRGBGain == nil || LumenKernels.shared?.gain == nil || LumenKernels.shared?.gainLocal == nil) {
             return .failed(.hdrEncode)
         }
         if wantHDR && s.effective.lensBlur.amount > 0 &&

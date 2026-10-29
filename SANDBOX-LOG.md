@@ -442,3 +442,6 @@ days30, intendedmanualGoogleDriveupload. No upload/sendperformed. Preserveunrela
 
 ## 2026-10-29 Checked export render (from main #188, SideStore 0.1.793)
 Exports render the SDR and HDR renditions with a checked GPU task (CIRenderDestination + waitUntilCompleted) before encoding; on a GPU failure caches are freed and the render retried once, else the export fails. With HDR on both renditions are half-float in the working space so the gain map matches the old output (0...+0.64 stops on the test ARW). Fixes a GPU out-of-memory export whose HDR gain map came out solid white (photo ~2.5x dimmer on HDR screens) while checks passed. Crash diagnostics keep their own command and flags; memory-export makes three HDR exports after a large Heal and checks gain maps. Free for all (export path). No Store code changed.
+
+## 2026-10-29 HDR keeps saturated highlights (from main #190, SideStore 0.1.798)
+HDR gains are per channel: the colour step runs with white at 1 and at H = 2^hdrStops and their ratio is the gain (luminance ratio for black and white), applied with applyRGBGain. Fixes red (warm lights, skin, fur) and blue (sky, blue paint) piling up at SDR white in the HDR histogram with no HDR headroom. SDR unchanged. Engine HDR check 9 (warm and blue ramps). Free for all (HDR is in the shared engine). No Store code changed.
