@@ -439,3 +439,6 @@ resolution/HDRfallback orbudgetincrease. Crashhelpermistakenly rerunsfullsuitewi
 queuedtoo. NoStore/model/pricing/UIchanges. Seecompletioncheckpoint andplainlanguagereviewsummary.
 Ownerrequestedexisting30day sharingIPA afterverifiedSideStorepublication; tester40792070982 onfe0a94c,
 days30, intendedmanualGoogleDriveupload. No upload/sendperformed. Preserveunrelatedmarketing/listingchanges.
+
+## 2026-10-29 Checked export render (from main #188, SideStore 0.1.793)
+Exports render the SDR and HDR renditions with a checked GPU task (CIRenderDestination + waitUntilCompleted) before encoding; on a GPU failure caches are freed and the render retried once, else the export fails. With HDR on both renditions are half-float in the working space so the gain map matches the old output (0...+0.64 stops on the test ARW). Fixes a GPU out-of-memory export whose HDR gain map came out solid white (photo ~2.5x dimmer on HDR screens) while checks passed. Crash diagnostics keep their own command and flags; memory-export makes three HDR exports after a large Heal and checks gain maps. Free for all (export path). No Store code changed.

@@ -59,6 +59,7 @@ jobs:
           bash .github/ci/denoise-convert/build-denoise.sh Models
       - name: Build kernels and test tool
         run: |
+          python3 Tests/engine/test-run-command.py
           mkdir -p out
           xcrun -sdk macosx metal -fcikernel -c Sources/Edit/Kernels.metal -o out/k.air
           xcrun -sdk macosx metallib -cikernel out/k.air -o out/k.metallib
@@ -74,6 +75,7 @@ jobs:
         # and the backtrace never changes the result: exit 1 = a check failed, other non-zero = it crashed.
         run: |
           set +e
+          run_engine() { python3 Tests/engine/run-command.py ./out/engine-test "$@"; }
           export LUMEN_DEPTH_MODEL="$PWD/Models/DepthAnythingV2SmallF16.mlmodelc"
           export LUMEN_SEG_MODEL="$PWD/Models/DETRResnet50SemanticSegmentationF16.mlmodelc"
           export LUMEN_HEAL_MODEL="$PWD/Models/LaMa.mlmodelc"
@@ -91,29 +93,24 @@ jobs:
           if [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then EXTRA="--adjustments"; fi
           if [ "$ENGINE_TEST_ONLY" = "memory-proraw" ]; then
             export LUMEN_MEMORY_SKIP_DENOISE=1
-            ./out/engine-test out/k.metallib proraw out/memory-proraw --memory
+            run_engine out/k.metallib proraw out/memory-proraw --memory
             exit $?
           fi
           if [ "$ENGINE_TEST_ONLY" = "memory-export" ]; then EXTRA="--memory-export"; fi
           if [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then
             # Include the active Sharpen Masking probe and the existing imaging/Clarity/thumbnail regressions.
-            ./out/engine-test out/k.metallib samples out/imaging --imaging
+            run_engine out/k.metallib samples out/imaging --imaging
             imaging_code=$?
           else imaging_code=0; fi
-          ./out/engine-test out/k.metallib samples out/render $EXTRA
+          run_engine out/k.metallib samples out/render $EXTRA
           code=$?
           if [ "$imaging_code" -ne 0 ]; then code=$imaging_code; fi
           if [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then
-            ./out/engine-test out/k.metallib samples out/memory-subject --memory-subject
+            run_engine out/k.metallib samples out/memory-subject --memory-subject
             memory_code=$?
             if [ "$memory_code" -ne 0 ]; then code=$memory_code; fi
           fi
           echo "engine-test exit code: $code"
-          if [ "$code" -gt 1 ]; then
-            echo "::group::lldb backtrace (the test crashed)"
-            lldb -b -o run -o "bt 25" -- ./out/engine-test out/k.metallib samples out/render
-            echo "::endgroup::"
-          fi
           exit "$code"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 pinned
         if: always()
