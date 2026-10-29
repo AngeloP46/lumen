@@ -9,18 +9,18 @@ All500 focused checks40789795464 pass: actual12checkpoints use2IOSurface backing
 pass40788880285;32RAWthumbnailcleanup1230–1240MB. Full774UI96/96passes40783388166;three currentUIspotchecks
 40790759752 pass. Owner explicitly prioritized this publication before more long checking.
 
-**Still unresolved:** native24MP HDR export under heavy preceding Heal memory pressure is variable on the Mac
-virtualGPU.60aa24MPmemory/export29checks40788978399 and12MPProRAW25checks40789265261 pass. Butd9native
-run40789798207 aborts134 with virtualGPUOOM/MPSmedian pipeline assertion during encoding, BEFORE the new
-dimension/gain-map inspection. Its crash helper mistakenly ran the full suite underlldb without the narrow flag;
-that passes2014checks but does NOT make the original aborted run pass or establish nativeHDR output integrity.
-Fix the diagnostic helper's argument preservation, then finish bounded full-size export/inspection. Do not lower
-resolution, omitHDR, raisebudgets or claim finished based on green retries. Fullnewengine40790966338 is live;
-readitsstate ratherthanrestart. No new review/feature expansion; original photographic/phone-only limits explicit.
+**Current verification:** full current engine40790966338 is now complete:2014 quality assertions,35 24MP memory
+checks including AI Denoise,26 ProRAW checks pass. Real native HDR outputs reopen6000x4000 and3024x4032 with
+HDR/ISO gain maps; export peaks5176/4463MB, denoise4973MB. This is distinct from the earlier failed40789798207:
+that run aborted134 with virtualGPU OOM/MPSmedian assertion during encoding, before output inspection.
+It remains intermittent evidence, not a diagnosed phone crash. No claim that a green retry alone fixes it.
+Branch `native-export-resource-handoff` fixes exact-argument,90-second bounded crash diagnostics and adds three
+consecutive native HDR exports after Heal in the narrow memory case. App/model code is unchanged; validate this
+bounded case before any new cache-lifetime policy. Do not lower resolution, omit HDR or raise memory budgets.
 
 **30-day sharing IPA:** owner requested it AFTER verified SideStorepublication. Existingtester-build workflow
-40792070982 runs onfe0a94c withdays30; retrieve Lumen-tester-ipa, verifyexpiry/modelpresence and save under
-LumenIPA/tester-2026-10-29/Lumen.ipa for manualGoogleDriveupload. It expires30days from BUILD, not install.
+40792070982 succeeded onfe0a94c withdays30. Verified file delivered at
+LumenIPA/tester-2026-10-29/Lumen.ipa for manualGoogleDriveupload; ZIP/modelpresence/expiry/hash all checked. It expires30days from BUILD, not install.
 PersonalSideStore app never gets that expiry. See current completioncheckpoint and reviewsummary.
 Earlier status entries below are historical.
 

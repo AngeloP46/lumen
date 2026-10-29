@@ -430,22 +430,28 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
         check(spot != nil, "memory test: the heal failed")
         if let spot { s.heals = [spot] }
     }
-    peaks["export"] = stepPeak("export") {
-        guard let data = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true),
-              let encoded = CGImageSourceCreateWithData(data as CFData, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(encoded, 0, nil) as? [CFString: Any] else {
-            check(false, "memory test: the full-size HDR export failed or could not be reopened"); return
+    // The narrow export case checks reuse in one process after the same large Heal. Keep the ordinary full
+    // suite's single export and AI Denoise timing; do not multiply the expensive model inference.
+    let exportCount = args.contains("--memory-export") ? 3 : 1
+    for attempt in 1...exportCount {
+        let exportPeak = stepPeak("export \(attempt)/\(exportCount)") {
+            guard let data = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true),
+                  let encoded = CGImageSourceCreateWithData(data as CFData, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(encoded, 0, nil) as? [CFString: Any] else {
+                check(false, "memory test: the full-size HDR export failed or could not be reopened"); return
+            }
+            let width = properties[kCGImagePropertyPixelWidth] as? Int ?? 0
+            let height = properties[kCGImagePropertyPixelHeight] as? Int ?? 0
+            check(width == Int(session.nativeSize.width) && height == Int(session.nativeSize.height),
+                  "memory test: full-size export dimensions changed (\(width)x\(height))")
+            if #available(macOS 15.0, iOS 18.0, *) {
+                let gain = CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeHDRGainMap)
+                    ?? CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeISOGainMap)
+                check(gain != nil, "memory test: requested HDR export has no HDR/ISO gain map")
+            }
+            print("MEMORY export verified \(width)x\(height), \(data.count) bytes, HDR gain map inspected")
         }
-        let width = properties[kCGImagePropertyPixelWidth] as? Int ?? 0
-        let height = properties[kCGImagePropertyPixelHeight] as? Int ?? 0
-        check(width == Int(session.nativeSize.width) && height == Int(session.nativeSize.height),
-              "memory test: full-size export dimensions changed (\(width)x\(height))")
-        if #available(macOS 15.0, iOS 18.0, *) {
-            let gain = CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeHDRGainMap)
-                ?? CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeISOGainMap)
-            check(gain != nil, "memory test: requested HDR export has no HDR/ISO gain map")
-        }
-        print("MEMORY export verified \(width)x\(height), \(data.count) bytes, HDR gain map inspected")
+        peaks["export"] = max(peaks["export"] ?? 0, exportPeak)
     }
     if !args.contains("--memory-export"), ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil, EditSession.hasDenoiseModel,
        ProcessInfo.processInfo.environment["LUMEN_MEMORY_SKIP_DENOISE"] == nil {
