@@ -337,7 +337,7 @@ if args.contains("--hdr-probe") || (args.contains("--memory") && inDir.lastPathC
               let source = session.makeSource(maxEdge: 1200, materialize: true) else {
             print("PROBE cannot open \(file.lastPathComponent)"); continue
         }
-        for exposure in [2.0] {
+        for exposure in [4.18] {
             var s = EditSettings(); s.hdr = true; s.exposure = exposure
             let sdrImg = session.develop(s, source: source, geometry: true)
             let hdrImg = session.develop(s, source: source, geometry: true, hdrWeight: 1)
