@@ -192,6 +192,15 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   instruction** (main PRs are left ready, not merged).
 
 ## HDR histogram spike at the SDR-white line: fixed by gains below 1 (29 Oct 2026, evening)
+- Codex takeover: Claude already pushed `92f5dbe`, flooring the applied HDR pixel's luminance at SDR after
+  the two failures in run40939931808 (HDR3a shortfall0.0739; HDR5 36,417 partial-weight violations).
+  Polo probe40941723970 uses the identical kernel blob df925aadf4d63dc5ac8ed036e50a80dc3282715d:
+  +4.18 has no histogram spike, red-at-white3863 (original44706); +2 also no spike. Build/readiness and
+  logic pass; full engine40941655219 and UI40941655003 still require terminal results.
+- Independent review found Lens Blur's `lumenHDRBlurGain` still clamped ratios at1, recreating the problem
+  in sharp pixels whenever blur is enabled (histogram skips blur). Follow-up preserves reciprocal-H...H
+  ratios there too; four tinted ramps compare actual full/interactive develop paths with focus at1 against
+  blur off, and check the spike stays absent. Static review passed; rendered regression validation pending.
 - Owner on 0.1.798: with HDR on and Exposure pushed, one channel spiked at the first histogram line (SDR white).
   Reproduced on the CI Mac with the owner's iPhone ProRAW (`Tests/engine/polo.DNG` on scratch branch `hdr-red-probe`,
   committed with consent; delete the branch when done) and Lumen's own `Histogram.addHDR` at Exposure +4.18: red bin at

@@ -1530,6 +1530,21 @@ func runHDRChecks() {
             check(atWhite > w * h / 10, "9a \(tag): ramp reaches SDR white (\(atWhite) pixels)")
             check(pinned * 10 < max(atWhite, 1), "9b \(tag): HDR channel not pinned at SDR white (\(pinned) of \(atWhite))")
             check(top > 1.3 && top <= Float(exp2(s.hdrStops)) + 0.05, "9c \(tag): highlights use the HDR headroom (top \(top))")
+            // Enabling Lens Blur with everything on the focus plane must preserve the same HDR colours.
+            // Its separate ratio kernel previously re-clamped the weakest channel to SDR white.
+            source.storeDepth(DepthField(width: 2, height: 2, values: [0.5, 0.5, 0.5, 0.5],
+                                         histogram: [Float](repeating: 0, count: 64)))
+            s.lensBlur.amount = 50
+            s.lensBlur.focusDistance = 1
+            for (label, quality) in [("settled/export", EditSession.LensQuality.full), ("interactive", .preview)] {
+                let focused = reds(session.develop(s, source: source, geometry: true, hdrWeight: 1, lens: quality))
+                let delta = zip(hdr, focused).map { abs($0 - $1) }.max() ?? .infinity
+                check(focused.count == hdr.count && delta < 0.002,
+                      "9d \(tag): \(label) Lens Blur focus plane preserves HDR colour (diff \(delta))")
+                let focusPinned = zip(sdr, focused).filter { $0.0 > 0.99 && abs($0.1 - 1) < 0.005 }.count
+                check(focusPinned * 10 < max(atWhite, 1),
+                      "9e \(tag): \(label) Lens Blur must not restore white spike (\(focusPinned) of \(atWhite))")
+            }
         } else { check(false, "9 \(tag): cannot open the ramp") }
     }
     saturatedRamp("warm", channel: 0, rgb: (255, 120, 40))

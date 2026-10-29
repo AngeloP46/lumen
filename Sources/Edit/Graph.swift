@@ -36,7 +36,7 @@ extension EditSession {
         args += [g0, g1, g2, g3, g4, g6]
         var img = kernel.apply(extent: ext, arguments: args) ?? source.base
 
-        // HDR: the same develop maths with white at 2^hdrStops; only the per-channel highlight gains (>= 1) are kept and
+        // HDR: the same develop maths with white at 2^hdrStops; the per-channel highlight gains are kept and
         // applied again after the look LUT (`lmHdrGains`).
         var gainImg: CIImage?
         if s.hdr, hdrWeight > 0, let gk = (kernel === k.mainLocal ? k.gainLocal : k.gain), k.applyRGBGain != nil {
