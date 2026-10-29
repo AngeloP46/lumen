@@ -191,6 +191,15 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   shared fixes to both versions; **no merges that publish to SideStore and no App Store submission without his
   instruction** (main PRs are left ready, not merged).
 
+## Exports render checked before encoding (29 Oct 2026, PR #188)
+- Found in memory-export run 40794138432: after a large Heal the CI Mac's GPU ran out of memory in the first of three
+  24 MP HDR exports; Core Image's `jpegRepresentation` still wrote the file, its photo was fine but its HDR gain map was
+  solid white (whole photo over-bright on an HDR screen), and every check passed. `renderDataOutcome` now renders the
+  SDR and HDR renditions itself (`EditSession.renderedChecked`: CIRenderDestination + `waitUntilCompleted`, which
+  reports GPU failures), frees caches and retries once, else fails the export (`.hdrEncode` / `.encode`); the encoder
+  only packs finished bitmaps (+96 MB SDR, +192 MB HDR at 24 MP). Engine tests: "checked render keeps orientation", and
+  memory-export checks each gain map isn't solid white and that the three exports' gain maps match.
+
 ## Two builds: every change goes to both (Angelo, 15 October)
 - **main** = Angelo's personal app on SideStore: everything free, no paywall, no watermark, no StoreKit.
 - **sandbox** branch (PC folder `Lumen-Sandbox`) = the same app developed as a real **App Store product**: paid Pro features, paywall, trial, watermark on free exports, StoreKit, privacy policy. Read its `SANDBOX-BRIEF.md`, `HANDOFF.md` and `SANDBOX-LOG.md` before touching it.

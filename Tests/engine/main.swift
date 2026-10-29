@@ -325,6 +325,35 @@ if args.contains("--imaging") {
     finishChecks()
 }
 
+// ---- Checked render keeps orientation: exports render through `EditSession.renderedChecked` before encoding; its
+// bitmap must come out the right way up and the same colour as `createCGImage` (both renditions, SDR and HDR).
+do {
+    let size = CGSize(width: 64, height: 48)
+    // bright at the top, dark at the bottom (Core Image's y axis points up)
+    let ramp = CIFilter(name: "CILinearGradient", parameters: [
+        "inputPoint0": CIVector(x: 0, y: size.height), "inputColor0": CIColor(red: 0.9, green: 0.8, blue: 0.7),
+        "inputPoint1": CIVector(x: 0, y: 0), "inputColor1": CIColor(red: 0.05, green: 0.1, blue: 0.2)])!
+        .outputImage!.cropped(to: CGRect(origin: .zero, size: size))
+    func topAndBottom(_ img: CIImage) -> (Int, Int)? {
+        guard let cg = LumenGPU.context.createCGImage(img, from: CGRect(origin: .zero, size: size), format: .RGBA8,
+                                                      colorSpace: LumenGPU.displaySpace),
+              let bytes = cg.dataProvider?.data as Data? else { return nil }
+        let row = cg.bytesPerRow
+        return (Int(bytes[row * 2 + 4 * 32]), Int(bytes[row * (cg.height - 3) + 4 * 32]))
+    }
+    for (hdr, label) in [(false, "SDR"), (true, "HDR")] {
+        let checked = EditSession.renderedChecked(ramp, context: LumenGPU.drawContext, format: hdr ? .RGBAh : .RGBA8,
+                                                  bytesPerPixel: hdr ? 8 : 4,
+                                                  colorSpace: hdr ? LumenGPU.workingSpace : LumenGPU.displaySpace)
+        if let checked, let want = topAndBottom(ramp), let got = topAndBottom(checked) {
+            check(got.0 > got.1 && abs(got.0 - want.0) <= 2 && abs(got.1 - want.1) <= 2,
+                  "checked render (\(label)) flipped or changed the image: top/bottom \(got), expected \(want)")
+        } else {
+            check(false, "checked render (\(label)) failed on a small test image")
+        }
+    }
+}
+
 // ---- Memory budget (`--memory`, its own process so nothing else is counted): the 24 MP Sony ARW opened the way
 // the phone opens it (HDR), the 100 % view's full-size copy, a subject mask, a big heal and a full-size export.
 // iOS closes Lumen at about 3.4 GB (owner's JetsamEvent, 18 Oct: killed at 3388 MB). The Mac counts GPU memory a
@@ -433,6 +462,7 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
     // The narrow export case checks reuse in one process after the same large Heal. Keep the ordinary full
     // suite's single export and AI Denoise timing; do not multiply the expensive model inference.
     let exportCount = args.contains("--memory-export") ? 3 : 1
+    var gainMeans: [Double] = []
     for attempt in 1...exportCount {
         let exportPeak = stepPeak("export \(attempt)/\(exportCount)") {
             guard let data = session.renderData(s, format: .jpeg, quality: 0.9, maxEdge: nil, includeHDR: true),
@@ -448,6 +478,23 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
                 let gain = CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeHDRGainMap)
                     ?? CGImageSourceCopyAuxiliaryDataInfoAtIndex(encoded, 0, kCGImageAuxiliaryDataTypeISOGainMap)
                 check(gain != nil, "memory test: requested HDR export has no HDR/ISO gain map")
+                // 29 Oct run 40794138432: after a GPU out-of-memory error the first export's gain map was solid white
+                // (every pixel at full boost) and nothing failed. A real gain map for this photo is mostly dark.
+                if let info = gain as? [CFString: Any], let bytes = info[kCGImageAuxiliaryDataInfoData] as? Data, !bytes.isEmpty {
+                    let step = max(1, bytes.count / 200_000)
+                    var sum = 0.0, n = 0.0
+                    bytes.withUnsafeBytes { raw in
+                        let p = raw.bindMemory(to: UInt8.self)
+                        var i = 0
+                        while i < p.count { sum += Double(p[i]); n += 1; i += step }
+                    }
+                    let mean = sum / max(n, 1)
+                    gainMeans.append(mean)
+                    print("MEMORY export \(attempt) gain map mean \(String(format: "%.1f", mean)) of 255")
+                    check(mean < 200, "memory test: export \(attempt) HDR gain map is nearly solid white (mean \(mean))")
+                } else {
+                    check(false, "memory test: export \(attempt) HDR gain map data could not be read")
+                }
             }
             print("MEMORY export verified \(width)x\(height), \(data.count) bytes, HDR gain map inspected")
             if args.contains("--memory-export") {
@@ -456,6 +503,12 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
             }
         }
         peaks["export"] = max(peaks["export"] ?? 0, exportPeak)
+    }
+    // The same photo and edits exported again must give the same HDR result.
+    if let first = gainMeans.first {
+        for (i, m) in gainMeans.enumerated().dropFirst() {
+            check(abs(m - first) < 1, "memory test: export \(i + 1) HDR gain map differs from export 1 (\(m) vs \(first))")
+        }
     }
     if !args.contains("--memory-export"), ProcessInfo.processInfo.environment["LUMEN_DENOISE_MODEL"] != nil, EditSession.hasDenoiseModel,
        ProcessInfo.processInfo.environment["LUMEN_MEMORY_SKIP_DENOISE"] == nil {

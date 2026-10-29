@@ -409,6 +409,30 @@ extension EditSession {
         // can retain its RAW/Heal/filter intermediates beside the encoder; use the same colour/precision options
         // with intermediate caching disabled. Resolution, HDR data and failure handling remain unchanged.
         let outputContext = LumenGPU.drawContext
+        // Render both renditions here and wait for the GPU before encoding. The one-call encoders swallow a failed GPU
+        // render and still write a file: on 29 Oct (memory-export run 40794138432) the CI Mac's GPU ran out of memory in
+        // the first of three exports after a large Heal and that file's HDR gain map came out solid white, while the
+        // check passed. A render task reports the failure, so caches are freed and the render tried once more; if it
+        // fails again the export fails instead of writing a wrong photo.
+        func rendered(_ i: CIImage, hdr: Bool) -> CIImage? {
+            let format: CIFormat = hdr ? .RGBAh : .RGBA8
+            let space = hdr ? LumenGPU.workingSpace : LumenGPU.displaySpace
+            if let r = Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: hdr ? 8 : 4, colorSpace: space) {
+                return r.settingProperties(meta)
+            }
+            Self.healProbe?("export: GPU render failed, freeing caches and trying again")
+            outputContext.clearCaches()
+            LumenGPU.context.clearCaches()
+            return Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: hdr ? 8 : 4, colorSpace: space)?
+                .settingProperties(meta)
+        }
+        guard let readyImg = rendered(img, hdr: false) else { return .failed(wantHDR ? .hdrEncode : .encode) }
+        img = readyImg
+        if let h = hdrImg {
+            guard let readyHDR = rendered(h, hdr: true) else { return .failed(.hdrEncode) }
+            hdrImg = readyHDR
+        }
+        Self.healProbe?("export: rendered")
         switch format {
         case .jpeg:
             if let hdrImg {
@@ -439,6 +463,32 @@ extension EditSession {
             if let d = try? outputContext.tiffRepresentation(of: img, format: .RGBA16, colorSpace: LumenGPU.displaySpace, options: [:]) { return .data(d) }
             return .failed(.encode)
         }
+    }
+
+    /// Renders `img` into its own bitmap and waits for the GPU; nil when the render reports an error (for example the
+    /// GPU running out of memory), which `createCGImage` and the image encoders never report. The bitmap's first row
+    /// is the image's top row, as with `createCGImage` (engine test "checked render keeps orientation").
+    static func renderedChecked(_ img: CIImage, context: CIContext, format: CIFormat, bytesPerPixel: Int,
+                                colorSpace: CGColorSpace) -> CIImage? {
+        let e = img.extent.integral
+        let w = Int(e.width), h = Int(e.height)
+        guard w > 0, h > 0, e.width.isFinite, e.height.isFinite else { return nil }
+        let rowBytes = w * bytesPerPixel
+        var data = Data(count: rowBytes * h)
+        let ok: Bool = data.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return false }
+            let destination = CIRenderDestination(bitmapData: base, width: w, height: h, bytesPerRow: rowBytes, format: format)
+            destination.colorSpace = colorSpace
+            do {
+                let task = try context.startTask(toRender: img, from: e, to: destination, at: .zero)
+                _ = try task.waitUntilCompleted()
+                return true
+            } catch {
+                return false
+            }
+        }
+        guard ok else { return nil }
+        return CIImage(bitmapData: data, bytesPerRow: rowBytes, size: e.size, format: format, colorSpace: colorSpace)
     }
 
     /// Only selections that can affect the output are required. Successful empty detections remain valid;
