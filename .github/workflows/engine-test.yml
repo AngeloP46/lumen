@@ -89,8 +89,20 @@ jobs:
           if [ "$ENGINE_TEST_ONLY" = "memory-subject" ]; then EXTRA="--memory-subject"; fi
           if [ "$ENGINE_TEST_ONLY" = "adjustments" ]; then EXTRA="--adjustments"; fi
           if [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then EXTRA="--adjustments"; fi
+          if [ "$ENGINE_TEST_ONLY" = "memory-proraw" ]; then
+            export LUMEN_MEMORY_SKIP_DENOISE=1
+            ./out/engine-test out/k.metallib proraw out/memory-proraw --memory
+            exit $?
+          fi
+          if [ "$ENGINE_TEST_ONLY" = "memory-export" ]; then EXTRA="--memory-export"; fi
+          if [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then
+            # Include the active Sharpen Masking probe and the existing imaging/Clarity/thumbnail regressions.
+            ./out/engine-test out/k.metallib samples out/imaging --imaging
+            imaging_code=$?
+          else imaging_code=0; fi
           ./out/engine-test out/k.metallib samples out/render $EXTRA
           code=$?
+          if [ "$imaging_code" -ne 0 ]; then code=$imaging_code; fi
           if [ "$ENGINE_TEST_ONLY" = "adjustments-memory" ]; then
             ./out/engine-test out/k.metallib samples out/memory-subject --memory-subject
             memory_code=$?

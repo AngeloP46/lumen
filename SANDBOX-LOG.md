@@ -427,3 +427,5 @@ prices and purchase assertions unchanged. OFF/ON/StoreKit validation pending; me
 Unrelated MARKETING.md and docs/appstore/LISTING.md edits excluded.
 
 28 Oct release follow-up (from main #180, source8777ed5): release materialized RAW decoder caches with identical-options recreation; non-caching single-channel half-float brush checkpoints and final R8 raster; show explicit Heal results before generic availability notice. Sixteen rebuild memory/pixel tests and corrected saturated Lens Add fixture. No Store code, Pro/free policy, weights or inference settings changed. Personal validation and exact-branch OFF/ON/StoreKit required before merge.
+
+28 Oct (from main#184): candidate per-build RH checkpoint pooling with grouped ownership/GPU completion; non-caching source analysis/export encoding to address measured24MP full HDR virtualGPU OOM. Adds actual buffer-reuse/identity and Sharpen Masking/Vignette/Perspective probes; independent memory-export/ProRAW dispatch. No Store code, Pro/free policy, model settings or resolution changed. Validation pending;774 remains published.

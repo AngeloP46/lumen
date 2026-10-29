@@ -247,6 +247,38 @@ func runImagingQualityChecks() {
         check(difference(plain, render(masked, src)) < 0.0001, "imaging: Masking alone changes colours when sharpening is off")
         check(difference(plain, render(tiny, src)) < 0.001, "imaging: a tiny first edit causes a gamut-mapping jump")
     }
+    // Active Masking suppresses sharpened flat-field noise while retaining a useful strong-edge response.
+    // Use production analysis, not hand-painted residual channels that would duplicate the shader's formula.
+    do {
+        let width = 2048, height = 32
+        let base = image(width, height) { x, y in
+            let hash = (x &* 73 &+ y &* 151) % 101
+            let noise = (Float(hash) / 100 - 0.5) * 0.008
+            return SIMD3(repeating: (x < width / 2 ? Float(0.12) : 0.6) + noise)
+        }
+        if let src = renderSession.analyse(base, materialize: true) {
+            let neutral = render(EditSettings(), src)
+            var edits = EditSettings(); edits.sharpness = 100
+            let unmasked = render(edits, src)
+            edits.sharpenMasking = 100
+            let masked = render(edits, src)
+            var flatUnmasked: Float = 0, flatMasked: Float = 0, edgeUnmasked: Float = 0, edgeMasked: Float = 0
+            var flatCount = 0, edgeCount = 0
+            for y in 4..<(height - 4) { for x in 8..<(width - 8) {
+                let i = y * width + x
+                let a = distance(unmasked[i], neutral[i]), b = distance(masked[i], neutral[i])
+                if abs(x - width / 2) > 16 { flatUnmasked += a; flatMasked += b; flatCount += 1 }
+                if abs(x - width / 2) <= 3 { edgeUnmasked += a; edgeMasked += b; edgeCount += 1 }
+            } }
+            flatUnmasked /= Float(flatCount); flatMasked /= Float(flatCount)
+            edgeUnmasked /= Float(edgeCount); edgeMasked /= Float(edgeCount)
+            print("IMAGING active Sharpen Masking0/100: flat added change \(flatUnmasked)/\(flatMasked), edge \(edgeUnmasked)/\(edgeMasked)")
+            check(finite(unmasked) && finite(masked) && flatUnmasked > 0.0001 && flatMasked < flatUnmasked * 0.1,
+                  "imaging: active Masking does not suppress sharpened flat noise (\(flatUnmasked), \(flatMasked))")
+            check(edgeUnmasked > 0.001 && edgeMasked > edgeUnmasked * 0.15,
+                  "imaging: active Masking also disables useful strong-edge sharpening (\(edgeUnmasked), \(edgeMasked))")
+        } else { check(false, "imaging: active sharpening fixture analysis failed") }
+    }
     // Grading luminance is a photographic tone adjustment too: extreme overlapping zones must not fold a grey ramp.
     do {
         let ramp = source(image(512) { x, _ in SIMD3(repeating: Float(x) / 511 * 0.8) })

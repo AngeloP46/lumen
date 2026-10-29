@@ -53,4 +53,27 @@ func runGeometryQualityChecks() {
             saveJPEG(cg, "geometry-fine-\(angle).jpg")
         }
     } } }
+    // Exercise CIPerspectiveTransform on the same analytic structure, rather than checking only a quad's bounds.
+    // Central crops stay inside the known warped photo, so transparent margins cannot mask detail errors.
+    for (index, vertical, horizontal, turn) in [(0, 35.0, -20.0, 0), (1, -45.0, 35.0, 1)] {
+        var edits = EditSettings(); edits.tVertical = vertical; edits.tHorizontal = horizontal
+        edits.tFill = false; edits.quarterTurns = turn; edits.flipH = index == 1
+        edits.straighten = index == 1 ? 4 : 0
+        edits.cropL = 0.2; edits.cropT = 0.2; edits.cropR = 0.8; edits.cropB = 0.8
+        check(Homography.corners(edits) != nil, "geometry: perspective reference fixture did not activate the warp")
+        let a = session.geometry(low, edits), b = session.geometry(high, edits)
+        let aspectDelta = abs(a.extent.width / a.extent.height - b.extent.width / b.extent.height)
+        let pa = sample(a), pb = sample(b)
+        let error = zip(pa, pb).map { abs($0 - $1) }.reduce(0, +) / Float(pa.count)
+        var unwarped = edits; unwarped.tVertical = 0; unwarped.tHorizontal = 0
+        let original = sample(session.geometry(low, unwarped))
+        let changed = zip(pa, original).map { abs($0 - $1) }.reduce(0, +) / Float(pa.count)
+        print("GEOMETRY perspective 4x reference \(index), V\(vertical)/H\(horizontal)/turn\(turn): mean error \(error), warp response \(changed), aspect delta \(aspectDelta)")
+        check(aspectDelta < 0.02 && pa.allSatisfy(\.isFinite) && error < 0.025,
+              "geometry: perspective fine detail differs from 4x reference (\(index), error \(error), aspect \(aspectDelta))")
+        check(changed > 0.015, "geometry: perspective fixture bypassed the actual image warp (\(changed))")
+        if let cg = LumenGPU.context.createCGImage(a, from: a.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace) {
+            saveJPEG(cg, "geometry-perspective-fine-\(index).jpg")
+        }
+    }
 }
