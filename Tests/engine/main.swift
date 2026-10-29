@@ -1488,15 +1488,16 @@ func runHDRChecks() {
     } else { check(false, "8: cannot open \(arw.lastPathComponent)") }
     // 9. Saturated highlights get HDR headroom per channel. Owner's histograms, 29 Oct: with Exposure pushed, red piled up
     // at exactly SDR white in the HDR rendition (warm lights, skin, red fur), because the gain came from luminance alone
-    // and was applied to colours already fitted into SDR with red at 1. A warm ramp pushed past white reproduces it.
-    do {
+    // and was applied to colours already fitted into SDR with red at 1. Blue skies and fences did the same with blue
+    // (its luminance weight is 0.08). Warm and blue ramps pushed past white reproduce both.
+    func saturatedRamp(_ tag: String, channel: Int, rgb: (Double, Double, Double)) {
         let w = 512, h = 32
         var bytes = [UInt8](repeating: 255, count: w * h * 4)
         for y in 0..<h { for x in 0..<w {
             let t = Double(x) / Double(w - 1), i = (y * w + x) * 4
-            bytes[i] = UInt8(255 * t); bytes[i + 1] = UInt8(120 * t); bytes[i + 2] = UInt8(40 * t)
+            bytes[i] = UInt8(rgb.0 * t); bytes[i + 1] = UInt8(rgb.1 * t); bytes[i + 2] = UInt8(rgb.2 * t)
         } }
-        let url = outDir.appendingPathComponent("hdr-warm-ramp.png")
+        let url = outDir.appendingPathComponent("hdr-\(tag)-ramp.png")
         if let provider = CGDataProvider(data: Data(bytes) as CFData),
            let ramp = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
                               space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -1508,7 +1509,7 @@ func runHDRChecks() {
         }
         if let session = EditSession(url: url), let source = session.makeSource(maxEdge: nil, materialize: true) {
             var s = EditSettings(); s.exposure = 2.5; s.hdr = true
-            // Red in the linear working space (Display P3), where SDR white is exactly 1.
+            // The ramp's main channel in the linear working space (Display P3), where SDR white is exactly 1.
             func reds(_ img: CIImage) -> [Float] {
                 let r = img.extent.integral
                 let rw = Int(r.width), rh = Int(r.height)
@@ -1517,19 +1518,21 @@ func runHDRChecks() {
                     LumenGPU.context.render(img, toBitmap: p.baseAddress!, rowBytes: rw * 16, bounds: r, format: .RGBAf,
                                             colorSpace: LumenGPU.workingSpace)
                 }
-                return stride(from: 0, to: buf.count, by: 4).map { buf[$0] }
+                return stride(from: channel, to: buf.count, by: 4).map { buf[$0] }
             }
             let sdr = reds(session.develop(s, source: source, geometry: true))
             let hdr = reds(session.develop(s, source: source, geometry: true, hdrWeight: 1))
             let atWhite = sdr.filter { $0 > 0.99 }.count
             let pinned = zip(sdr, hdr).filter { $0.0 > 0.99 && abs($0.1 - 1) < 0.005 }.count
             let top = hdr.max() ?? 0
-            print("HDR info: warm ramp, \(atWhite) pixels with SDR red at white, \(pinned) still pinned there in HDR, top HDR red \(top)")
-            check(atWhite > w * h / 10, "9a: warm ramp reaches SDR white in red (\(atWhite) pixels)")
-            check(pinned * 10 < max(atWhite, 1), "9b: HDR red not pinned at SDR white (\(pinned) of \(atWhite))")
-            check(top > 1.3 && top <= Float(exp2(s.hdrStops)) + 0.05, "9c: warm highlights use the HDR headroom (top red \(top))")
-        } else { check(false, "9: cannot open the warm ramp") }
+            print("HDR info: \(tag) ramp, \(atWhite) pixels with SDR channel at white, \(pinned) still pinned there in HDR, top HDR \(top)")
+            check(atWhite > w * h / 10, "9a \(tag): ramp reaches SDR white (\(atWhite) pixels)")
+            check(pinned * 10 < max(atWhite, 1), "9b \(tag): HDR channel not pinned at SDR white (\(pinned) of \(atWhite))")
+            check(top > 1.3 && top <= Float(exp2(s.hdrStops)) + 0.05, "9c \(tag): highlights use the HDR headroom (top \(top))")
+        } else { check(false, "9 \(tag): cannot open the ramp") }
     }
+    saturatedRamp("warm", channel: 0, rgb: (255, 120, 40))
+    saturatedRamp("blue", channel: 2, rgb: (40, 110, 255))
     print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")
     if failures > 0 { exit(1) }
 }
