@@ -458,6 +458,38 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
         peaks["heal"] = stepPeak("heal") { spot = session.makeHeal(strokes: [stroke], earlier: []) }
         check(spot != nil, "memory test: the heal failed")
         if let spot { s.heals = [spot] }
+        // A heal made with HDR off must come out as bright as one made with HDR on (owner, 29 Oct 2026): the patch keeps
+        // the brightness of the decode it was made from, so an SDR-decoded patch sat dim beside the HDR photo once HDR was
+        // switched on. The fixture is a HEIC with an HDR gain map (the owner's photo type), exported at Exposure +2 so
+        // its highlights are well above white; the same strokes are healed at its brightest spot from both decodes.
+        if !args.contains("--memory-export"), #available(macOS 15.0, iOS 18.0, *) {
+            var fx = EditSettings(); fx.hdr = true; fx.exposure = 2
+            let fixture = outDir.appendingPathComponent("heal-hdr-fixture.heic")
+            if let data = session.renderData(fx, format: .heic, quality: 0.9, maxEdge: 1600, includeHDR: true),
+               (try? data.write(to: fixture)) != nil,
+               let hdrSession = EditSession(url: fixture, expandHDR: true), let sdrSession = EditSession(url: fixture, expandHDR: false),
+               let probe = hdrSession.decode(maxEdge: 600) {
+                let r = probe.extent.integral
+                var px = [Float](repeating: 0, count: Int(r.width * r.height) * 4)
+                px.withUnsafeMutableBytes { LumenGPU.context.render(probe, toBitmap: $0.baseAddress!, rowBytes: Int(r.width) * 16, bounds: r,
+                                                                  format: .RGBAf, colorSpace: LumenGPU.workingSpace) }
+                var best = 0, bestV: Float = 0
+                for i in 0..<(px.count / 4) {
+                    let v = 0.2126 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.0722 * px[i * 4 + 2]
+                    let x = i % Int(r.width), y = i / Int(r.width)
+                    if v > bestV, x > Int(r.width) / 8, x < Int(r.width) * 7 / 8, y > Int(r.height) / 8, y < Int(r.height) * 7 / 8 { bestV = v; best = i }
+                }
+                let bx = Double(best % Int(r.width)) / r.width, by = 1 - Double(best / Int(r.width)) / r.height   // y down
+                let bright = BrushStroke(points: [Pt(x: bx, y: by), Pt(x: min(bx + 0.02, 0.95), y: by)], size: 0.05, erase: false, feather: nil)
+                if let hdrSpot = hdrSession.makeHeal(strokes: [bright], earlier: []),
+                   let sdrSpot = sdrSession.makeHeal(strokes: [bright], earlier: []) {
+                    print("MEMORY heal at the brightest spot (\(String(format: "%.2f", bestV)) in the HDR decode): scale HDR \(hdrSpot.scale), HDR off \(sdrSpot.scale)")
+                    check(bestV > 1.5 && hdrSpot.scale > 1.05, "memory test: the fixture has no highlights above white (\(bestV), scale \(hdrSpot.scale)), the check proves nothing")
+                    check(abs(sdrSpot.scale - hdrSpot.scale) <= 0.05 * hdrSpot.scale,
+                          "memory test: a heal made with HDR off is dimmer than one made with HDR on (scale \(sdrSpot.scale) vs \(hdrSpot.scale))")
+                } else { check(false, "memory test: the brightest-spot heals failed") }
+            } else { check(false, "memory test: could not make the HDR HEIC fixture for the heal brightness check") }
+        }
     }
     // The narrow export case checks reuse in one process after the same large Heal. Keep the ordinary full
     // suite's single export and AI Denoise timing; do not multiply the expensive model inference.

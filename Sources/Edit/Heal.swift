@@ -220,6 +220,7 @@ extension EditSession {
                           hole drawHole: (CGRect, CGFloat, CGFloat, CGFloat) -> CGImage?) -> HealSpot? {
         Self.healFailure = .notAvailable
         guard let model = Self.healModel else { return nil }
+        defer { releaseHealTwin() }
         let W = nativeSize.width, H = nativeSize.height
 
         // 1. a square around the area with plenty of context (the model copies from what it can see)
@@ -237,7 +238,7 @@ extension EditSession {
         // photo pixels either way.
         let picture: (CGFloat) -> (CIImage, CGRect)? = { [self] f in
             let L = max(W, H)
-            guard let full = decode(maxEdge: f < 0.95 ? (L * f).rounded(.up) : nil, heals: earlier) else { return nil }
+            guard let full = decodeForHeal(maxEdge: f < 0.95 ? (L * f).rounded(.up) : nil, heals: earlier) else { return nil }
             let d = full.extent, fx = d.width / W, fy = d.height / H
             // the region above was measured on `nativeSize`; it must be the picture as decoded
             guard abs(fx - fy) < 0.01, fx > 0, abs(d.width / fx - W) < 2 / fx + 2 else { return nil }

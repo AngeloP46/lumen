@@ -449,3 +449,6 @@ HDR gains are per channel: the colour step runs with white at 1 and at H = 2^hdr
 ## 2026-10-29 HDR white-line spike (from main PR #194, candidate 134ddf1)
 Shared candidate allows reciprocal-headroom gains below one, including Lens Blur reconstruction. Restores SDR luminance within per-channel gain and HDR headroom bounds. Adds tinted ramps, partial-weight and low/zero-channel kernel regressions. HDR retains existing Pro/free policy. No Store code changed. Personal full checks/Polo probe and sandbox OFF/ON checks pending; not released. Unrelated marketing/listing edits excluded.
 
+
+## 2026-10-29 Heal patches made from the HDR decode (from main #196, SideStore 0.1.823)
+Heal takes its picture from an HDR-decoding twin session when the session is SDR, so a patch made with HDR off is no longer dim beside the brighter photo once HDR is switched on. Applies to painted fixes and Remove people. Free for all (Heal is in the shared engine; Pro gating unchanged). No Store code changed. Heals made before this keep dim patches (redo them).
