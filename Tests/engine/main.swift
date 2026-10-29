@@ -495,6 +495,22 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
                 } else {
                     check(false, "memory test: export \(attempt) HDR gain map data could not be read")
                 }
+                // The gain map's range (log2 stops) must stay within the photo's own HDR headroom and never dim the
+                // photo: the broken 29 Oct export stored -6.07...-1.33, and the first checked-render version, which
+                // lost the headroom, stored -0.58...+3.50, against 0...+0.64 for a good one.
+                let text = String(decoding: data, as: UTF8.self)
+                func toneMap(_ key: String) -> Double? {
+                    guard let r = text.range(of: "<HDRToneMap:\(key)>"),
+                          let end = text.range(of: "<", range: r.upperBound..<text.endIndex) else { return nil }
+                    return Double(text[r.upperBound..<end.lowerBound].trimmingCharacters(in: .whitespaces))
+                }
+                if let lo = toneMap("GainMapMin"), let hi = toneMap("GainMapMax"), let cap = toneMap("HDRCapacityMax") {
+                    print("MEMORY export \(attempt) gain map range \(lo)...\(hi) stops, headroom \(cap)")
+                    check(lo >= -0.01 && hi <= cap + 0.01 && hi >= lo,
+                          "memory test: export \(attempt) gain map range \(lo)...\(hi) is outside 0...\(cap)")
+                } else {
+                    check(false, "memory test: export \(attempt) has no readable HDR tone-map settings")
+                }
             }
             print("MEMORY export verified \(width)x\(height), \(data.count) bytes, HDR gain map inspected")
             if args.contains("--memory-export") {

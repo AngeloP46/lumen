@@ -1,5 +1,6 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import CoreVideo
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -414,17 +415,22 @@ extension EditSession {
         // the first of three exports after a large Heal and that file's HDR gain map came out solid white, while the
         // check passed. A render task reports the failure, so caches are freed and the render tried once more; if it
         // fails again the export fails instead of writing a wrong photo.
+        // The HDR rendition keeps its content headroom: the encoder limits the gain map to it (0...+0.64 stops for the
+        // test photo). Without it the first version of this change let specular sparkles reach +3.5 stops.
         func rendered(_ i: CIImage, hdr: Bool) -> CIImage? {
             let format: CIFormat = hdr ? .RGBAh : .RGBA8
             let space = hdr ? LumenGPU.workingSpace : LumenGPU.displaySpace
-            if let r = Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: hdr ? 8 : 4, colorSpace: space) {
+            var headroom: Float?
+            if hdr, #available(iOS 18.0, macOS 15.0, *), i.contentHeadroom > 0 { headroom = i.contentHeadroom }
+            if let r = Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: hdr ? 8 : 4,
+                                            colorSpace: space, headroom: headroom) {
                 return r.settingProperties(meta)
             }
             Self.healProbe?("export: GPU render failed, freeing caches and trying again")
             outputContext.clearCaches()
             LumenGPU.context.clearCaches()
-            return Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: hdr ? 8 : 4, colorSpace: space)?
-                .settingProperties(meta)
+            return Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: hdr ? 8 : 4,
+                                        colorSpace: space, headroom: headroom)?.settingProperties(meta)
         }
         guard let readyImg = rendered(img, hdr: false) else { return .failed(wantHDR ? .hdrEncode : .encode) }
         img = readyImg
@@ -469,10 +475,26 @@ extension EditSession {
     /// GPU running out of memory), which `createCGImage` and the image encoders never report. The bitmap's first row
     /// is the image's top row, as with `createCGImage` (engine test "checked render keeps orientation").
     static func renderedChecked(_ img: CIImage, context: CIContext, format: CIFormat, bytesPerPixel: Int,
-                                colorSpace: CGColorSpace) -> CIImage? {
+                                colorSpace: CGColorSpace, headroom: Float? = nil) -> CIImage? {
         let e = img.extent.integral
         let w = Int(e.width), h = Int(e.height)
         guard w > 0, h > 0, e.width.isFinite, e.height.isFinite else { return nil }
+        // An HDR rendition goes into a pixel buffer, the only bitmap image that can carry its content headroom.
+        if let headroom, format == .RGBAh, #available(iOS 18.0, macOS 15.0, *) {
+            var buffer: CVPixelBuffer?
+            let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+            guard CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_64RGBAHalf, attributes, &buffer) == kCVReturnSuccess,
+                  let buffer else { return nil }
+            let destination = CIRenderDestination(pixelBuffer: buffer)
+            destination.colorSpace = colorSpace
+            do {
+                let task = try context.startTask(toRender: img, from: e, to: destination, at: .zero)
+                _ = try task.waitUntilCompleted()
+            } catch {
+                return nil
+            }
+            return CIImage(cvPixelBuffer: buffer, options: [.colorSpace: colorSpace, .contentHeadroom: headroom])
+        }
         let rowBytes = w * bytesPerPixel
         var data = Data(count: rowBytes * h)
         let ok: Bool = data.withUnsafeMutableBytes { raw in

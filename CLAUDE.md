@@ -197,8 +197,11 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   solid white (whole photo over-bright on an HDR screen), and every check passed. `renderDataOutcome` now renders the
   SDR and HDR renditions itself (`EditSession.renderedChecked`: CIRenderDestination + `waitUntilCompleted`, which
   reports GPU failures), frees caches and retries once, else fails the export (`.hdrEncode` / `.encode`); the encoder
-  only packs finished bitmaps (+96 MB SDR, +192 MB HDR at 24 MP). Engine tests: "checked render keeps orientation", and
-  memory-export checks each gain map isn't solid white and that the three exports' gain maps match.
+  only packs finished bitmaps (+96 MB SDR, +192 MB HDR at 24 MP). The HDR bitmap is a CVPixelBuffer image carrying
+  the rendition's `contentHeadroom`: without it the encoder stops limiting the gain map to the headroom (first try
+  stored -0.58...+3.50 stops instead of 0...+0.64). The broken white gain map stored -6.07...-1.33 (photo ~2.5x dimmer
+  on HDR screens). Engine tests: "checked render keeps orientation"; memory-export checks each gain map isn't solid
+  white, its HDRToneMap range stays within 0...HDRCapacityMax, and the three exports' gain maps match.
 
 ## Two builds: every change goes to both (Angelo, 15 October)
 - **main** = Angelo's personal app on SideStore: everything free, no paywall, no watermark, no StoreKit.
