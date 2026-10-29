@@ -452,3 +452,6 @@ Shared candidate allows reciprocal-headroom gains below one, including Lens Blur
 
 ## 2026-10-29 Heal patches made from the HDR decode (from main #196, SideStore 0.1.823)
 Heal takes its picture from an HDR-decoding twin session when the session is SDR, so a patch made with HDR off is no longer dim beside the brighter photo once HDR is switched on. Applies to painted fixes and Remove people. Free for all (Heal is in the shared engine; Pro gating unchanged). No Store code changed. Heals made before this keep dim patches (redo them).
+
+## 2026-10-29 HDR exports match the editor brightness (from main #198, SideStore 0.1.828)
+Export hands the encoder the SDR colour times the single gain that gives the editor luminance (new lumenExportGain kernel), because the file gain map is one channel while the editor HDR has a gain per colour channel; exported HDR photos had come out far brighter than the editor. Editor and histogram unchanged. Free for all (export path). No Store code changed. Re-export photos saved with HDR on since 0.1.798.

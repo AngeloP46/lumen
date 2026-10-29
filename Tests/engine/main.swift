@@ -1625,6 +1625,31 @@ func runHDRChecks() {
     // blue-white sky, blue for a warm white) must not be held at SDR white by a gain clamped to 1.
     saturatedRamp("cool-white", channel: 0, rgb: (205, 220, 255))
     saturatedRamp("warm-white", channel: 2, rgb: (255, 230, 200))
+    // 10. Export round trip (owner, 29 Oct 2026: exported HDR photos came out far brighter than the editor showed). A plain
+    // JPEG with a blue sky, Exposure pushed well past white, exported with HDR on and reopened as HDR must have the
+    // editor's brightness, in the sky and overall: the file holds one gain per pixel, the editor one per colour channel.
+    // On the code before this check the file was up to 2x brighter (matterhorn +2: red 1.48 in the file vs 0.45 in the editor).
+    if #available(macOS 15.0, *), let photo = hdrFiles.first(where: { $0.lastPathComponent == "matterhorn.jpg" }),
+       let session = EditSession(url: photo, expandHDR: true), let source = session.makeSource(maxEdge: 1600, materialize: true) {
+        func meanLum(_ p: Pixels, top: Double) -> Double {   // Core Image rows run bottom-up: the top of the photo is the last rows
+            var sum = 0.0, n = 0
+            for y in Int(Double(p.h) * (1 - top))..<p.h { for x in 0..<p.w { sum += Double(lum(p, y * p.w + x)); n += 1 } }
+            return sum / Double(max(n, 1))
+        }
+        for exposure in [2.0, 3.0] {
+            var s = EditSettings(); s.hdr = true; s.exposure = exposure
+            guard let data = session.renderData(s, format: .jpeg, quality: 0.95, maxEdge: 1600, includeHDR: true),
+                  let back = CIImage(data: data, options: [.expandToHDR: true]) else { check(false, "10: export at +\(exposure) failed"); continue }
+            let editor = pixels(session.develop(s, source: source, geometry: true, hdrWeight: 1))
+            let file = pixels(back)
+            guard editor.w == file.w, editor.h == file.h else { check(false, "10: file size \(file.w)x\(file.h) vs editor \(editor.w)x\(editor.h)"); continue }
+            for (label, top) in [("whole photo", 1.0), ("sky", 0.2)] {
+                let a = meanLum(editor, top: top), b = meanLum(file, top: top)
+                print("HDR info: 10 +\(exposure) \(label) luminance, editor \(a), exported file as HDR \(b)")
+                check(abs(b - a) <= 0.05 * a + 0.005, "10: exported file at +\(exposure) differs from the editor in the \(label) (file \(b) vs editor \(a))")
+            }
+        }
+    } else { print("HDR skip: 10 (needs macOS 15 and the matterhorn sample)") }
     print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")
     if failures > 0 { exit(1) }
 }

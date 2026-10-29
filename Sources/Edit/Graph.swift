@@ -396,6 +396,14 @@ extension EditSession {
             img = Self.downscaled(img, k)
             hdrImg = hdrImg.map { Self.downscaled($0, k) }
         }
+        // The file's HDR layer is the SDR photo times one gain per pixel; the editor's HDR rendition has a gain per colour
+        // channel, which the encoder cannot store (see lumenExportGain). Write the layer the file can hold.
+        if let h = hdrImg {
+            guard let kernel = LumenKernels.shared?.exportGain,
+                  let single = kernel.apply(extent: img.extent, arguments: [img, h, CIVector(x: exp2(s.hdrStops), y: 0, z: 0, w: 0)])
+            else { return .failed(.hdrEncode) }
+            hdrImg = single
+        }
         // the camera's details go with the photo (Core Image writes an image's properties into the file): date taken,
         // camera, lens, exposure, GPS. Before 19 Oct exports had none, so Photos dated them the day they were exported.
         let meta = exportMetadata()
