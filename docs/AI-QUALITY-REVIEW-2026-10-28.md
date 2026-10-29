@@ -1,5 +1,12 @@
 # AI image quality review — 28 October 2026
 
+Current status: all concrete cache/preview/detection reliability fixes below are released through0.1.774 and
+shared sandbox#181. Missing Heal assets and failed people-search messaging are also fixed, with actual message
+screenshots and six UI tests40781694994 verified. Full released engine quality40783385204 passes1977 checks;
+its full24MP HDR export fails under virtualGPU allocation pressure and is being addressed separately in#184.
+The photographic model tradeoffs/limitations below still apply. Read AI-VISUAL-REVIEW-2026-10-28.md and the
+current completion checkpoint instead of older "queued"/"pending" wording in this historical review.
+
 ## Follow-up from current SideStore 0.1.747
 
 Parallel source review found two additional reliability defects. Requested AI Denoise could silently disappear
@@ -8,7 +15,8 @@ without establishing a complete, correctly sized image. `clarity-release-followu
 fixtures covering both export modes, denoise off, valid model-free cached output that measurably changes pixels,
 structurally invalid/truncated/wrong-size legacy PNGs, decoder compatibility and invalid-preview fallback.
 The legacy check caches at most 128 metadata verdicts and retains no decoded bitmap. It does not establish arbitrary
-compressed-pixel integrity or change model inference. Mac validation/publication pending; these are not in 0.1.747.
+compressed-pixel integrity or change model inference. Released in SideStore 0.1.756 and sandbox #177; all 132 focused
+GPU/cache/state regressions and six related UI cases pass. See AI-RELIABILITY-2026-10-28.md for exact evidence.
 Automatic-mask failures/export transfer are handled in the same reliability batch and recorded in the checklist.
 Missing Heal patch files and failed people-detection messaging remain queued; photographic model-quality reviews
 below are still incomplete. Do not infer that no-inference reliability fixtures validate AI image quality.

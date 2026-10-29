@@ -429,3 +429,13 @@ Unrelated MARKETING.md and docs/appstore/LISTING.md edits excluded.
 28 Oct release follow-up (from main #180, source8777ed5): release materialized RAW decoder caches with identical-options recreation; non-caching single-channel half-float brush checkpoints and final R8 raster; show explicit Heal results before generic availability notice. Sixteen rebuild memory/pixel tests and corrected saturated Lens Add fixture. No Store code, Pro/free policy, weights or inference settings changed. Personal validation and exact-branch OFF/ON/StoreKit required before merge.
 
 28 Oct (from main#184): candidate per-build RH checkpoint pooling with grouped ownership/GPU completion; non-caching source analysis/export encoding to address measured24MP full HDR virtualGPU OOM. Adds actual buffer-reuse/identity and Sharpen Masking/Vignette/Perspective probes; independent memory-export/ProRAW dispatch. No Store code, Pro/free policy, model settings or resolution changed. Validation pending;774 remains published.
+
+Latest29October: personal SideStore0.1.782 verified(main184/fe0a94c,publish40791387290), sharedsandbox185
+mergedbe2d802. Bothbuilds/policy/identity/fourStoreKit40788980740pass.500focused40789795464passes(actualtwo
+IOSurfacebackings,stablebrushmemory);245imaging/batch,96fullUI+3currentspotUI pass. Fullcurrentquality2014
+passes40790966338; itsmemoryphase stillruns.24MP/ProRAW memory/export runs pass once, but native24MP after
+largeHeal stillabortsunder virtualGPUOOM in40789798207 BEFORE newgainmapinspection. Notfullyresolved; no
+resolution/HDRfallback orbudgetincrease. Crashhelpermistakenly rerunsfullsuitewithoutnarrowargs; keepthatfix
+queuedtoo. NoStore/model/pricing/UIchanges. Seecompletioncheckpoint andplainlanguagereviewsummary.
+Ownerrequestedexisting30day sharingIPA afterverifiedSideStorepublication; tester40792070982 onfe0a94c,
+days30, intendedmanualGoogleDriveupload. No upload/sendperformed. Preserveunrelatedmarketing/listingchanges.
