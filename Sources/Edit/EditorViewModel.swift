@@ -107,6 +107,7 @@ final class EditorViewModel: ObservableObject {
     private weak var store: LibraryStore?
     private var started = false
     private var histPending = false
+    private var lastSpikeNote = Date.distantPast
     private var histImage: CIImage?
     private var histHDRImage: CIImage?
     private var histStops: (Double, Double) = (2, 0)
@@ -1063,6 +1064,7 @@ final class EditorViewModel: ObservableObject {
             guard let self, let img = self.histImage else { return }
             let hdrImg = self.histHDRImage
             let (stops, screenStops) = self.histStops
+            let settingsForNote = self.settings
             self.histPending = false
             histQueue.async {
                 let e = img.extent
@@ -1073,7 +1075,16 @@ final class EditorViewModel: ObservableObject {
                                                               colorSpace: LumenGPU.displaySpace) else { return }
                 var h = Histogram.compute(cg)
                 if let hdrImg, h != nil { Histogram.addHDR(&h!, hdrImg, stops: stops, screenStops: screenStops) }
-                Task { @MainActor [weak self] in self?.histogram = h }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.histogram = h
+                    // HDR spike at the white line (owner, 29 Oct): log the evidence with the exact settings, at most every 20 s.
+                    if let note = h?.hdrSpike, Date().timeIntervalSince(self.lastSpikeNote) > 20 {
+                        self.lastSpikeNote = Date()
+                        let json = (try? JSONEncoder().encode(settingsForNote)).flatMap { String(data: $0, encoding: .utf8) } ?? "?"
+                        Diagnostics.shared.note(note + " | settings " + String(json.prefix(2500)))
+                    }
+                }
             }
         }
     }
