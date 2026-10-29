@@ -191,6 +191,17 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   shared fixes to both versions; **no merges that publish to SideStore and no App Store submission without his
   instruction** (main PRs are left ready, not merged).
 
+## Heal patches are always made from the HDR decode (29 Oct 2026, night)
+- Owner: removed people with Remove people on a sunlit HEIC with HDR off, then turned HDR on: the healed pavement was
+  dim and flat beside the bright photo. A patch keeps the brightness of the decode it was made from (`HealSpot.scale` x an
+  8-bit patch) and nothing lifts it later, so an SDR-decoded patch stayed at SDR brightness once the session decoded
+  with `expandHDR`. `EditSession.decodeForHeal` now gives Heal an HDR-decoding twin session when the session is SDR (the
+  twin lives only for the heal); with HDR off the same photo is below white and the patch's highlights are shouldered
+  like the photo's own. Engine memory test: a HEIC with a gain map (exported at Exposure +2) healed at its brightest spot
+  gives scale 3.10 from the HDR decode and 1.19 from the SDR one before the fix, 3.10 / 3.10 after.
+- Heals made with HDR off BEFORE this fix keep their dim patches: clear and redo them with HDR off or on (not migrated;
+  old and new patches cannot be told apart).
+
 ## HDR histogram spike at the SDR-white line: fixed by gains below 1 (29 Oct 2026, evening)
 - Codex takeover: Claude already pushed `92f5dbe`, flooring the applied HDR pixel's luminance at SDR after
   the two failures in run40939931808 (HDR3a shortfall0.0739; HDR5 36,417 partial-weight violations).
