@@ -164,3 +164,11 @@ App Store draft work and its latest handover live in the sibling `Lumen-Sandbox`
 Read `Lumen-Sandbox\HANDOFF.md`'s latest update before reviewing that work. Preserve the
 existing personal SideStore app; do not publish or merge App Store changes to main without
 Angelo's instruction. Windows cannot compile this iPhone app; builds run on GitHub Actions.
+
+Tester delivery verified29October: workflow40792070982 succeeded onfe0a94c (samecode as SideStore0.1.782).
+Localfile C:\Users\pc user\Projects\app development\LumenIPA\tester-2026-10-29\Lumen.ipa,
+version0.1.3/build3 (separate tester workflowcounter), expiry2026-11-28T00:00:00Z,356048440bytes,
+SHA2563d7499ab90eb674c4c64a233af8eb4502c73dd432dc93d65a9361bdf1bdebcae. ZIPCRC passes andall4AI models
+have nonemptycoremldata.bin. build-details.json/README.txt arebeside it. Ownerreceivedthelink for manualGoogleDrive
+upload; no externalupload/send performed. Old26October tester IPA preserved. SideStorepublication precededtesterbuild.
+Fullcurrentenginequality40790966338 passes2014assertions; itslongmemoryphase wasstillrunninglastcheck.
