@@ -1,4 +1,4 @@
-# Completion checkpoint — SideStore0.1.782 published; tester file requested
+# Completion checkpoint — SideStore 0.1.782 and tester IPA delivered
 
 Owner's latest direction: publish SideStore first, then supply the existing30-day tester IPA for manual GoogleDrive
 sharing. Publication is done. Do not expand the review; finish the file delivery and the exact remaining HDR case.
@@ -58,4 +58,14 @@ version0.1.3/build3 (separate tester workflowcounter), expiry2026-11-28T00:00:00
 SHA2563d7499ab90eb674c4c64a233af8eb4502c73dd432dc93d65a9361bdf1bdebcae. ZIPCRC passes andall4AI models
 have nonemptycoremldata.bin. build-details.json/README.txt arebeside it. Ownerreceivedthelink for manualGoogleDrive
 upload; no externalupload/send performed. Old26October tester IPA preserved. SideStorepublication precededtesterbuild.
-Fullcurrentenginequality40790966338 passes2014assertions; itslongmemoryphase wasstillrunninglastcheck.
+Full current engine40790966338 completed successfully:2014 quality assertions,35 24MP memory checks and26
+ProRAW checks. Native6000x4000/3024x4032 JPEGs reopened with real HDR/ISO gain maps. Export peaks5176/4463MB;
+24MP AI Denoise peak4973MB,450seconds on CI CPU. All unchanged budgets pass. This does not erase40789798207.
+
+29October follow-up: `native-export-resource-handoff` changes tests/CI only. Crash diagnostics now preserve each
+actual command, paths and flags, keep its original status, and terminate their own process group after90seconds.
+Four small launcher regression tests and six release security tests pass locally. The narrow `memory-export`
+case now makes three consecutive native HDR outputs after the existing large Heal, inspecting every output and
+retaining the6600MB budget. New Mac execution is pending. No model eviction/admission policy adopted: active
+Heal/export can overlap and unconditional cache release could cause a second model load; measure before changing
+that lifetime. Current released app source and the delivered tester IPA remain unchanged.
