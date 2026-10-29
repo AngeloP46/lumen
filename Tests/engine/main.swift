@@ -450,6 +450,10 @@ if args.contains("--memory") || args.contains("--memory-subject") || args.contai
                 check(gain != nil, "memory test: requested HDR export has no HDR/ISO gain map")
             }
             print("MEMORY export verified \(width)x\(height), \(data.count) bytes, HDR gain map inspected")
+            if args.contains("--memory-export") {
+                do { try data.write(to: outDir.appendingPathComponent("memory-export-\(attempt).jpg")) }
+                catch { check(false, "memory test: could not preserve export \(attempt): \(error)") }
+            }
         }
         peaks["export"] = max(peaks["export"] ?? 0, exportPeak)
     }
