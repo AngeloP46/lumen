@@ -337,7 +337,7 @@ if args.contains("--hdr-probe") || (args.contains("--memory") && inDir.lastPathC
               let source = session.makeSource(maxEdge: 1200, materialize: true) else {
             print("PROBE cannot open \(file.lastPathComponent)"); continue
         }
-        for exposure in [0.0, 2.0, 4.18] {
+        for exposure in [2.0] {
             var s = EditSettings(); s.hdr = true; s.exposure = exposure
             let sdrImg = session.develop(s, source: source, geometry: true)
             let hdrImg = session.develop(s, source: source, geometry: true, hdrWeight: 1)
@@ -352,8 +352,26 @@ if args.contains("--hdr-probe") || (args.contains("--memory") && inDir.lastPathC
             }
             let n = hdr.count / 4
             print("PROBE \(file.lastPathComponent) exposure \(exposure): \(n) px; HDR at white r/g/b \(counts); a channel pinned at white below the others \(pinned.count); base max \(baseMax); hdrStops \(s.hdrStops)")
-            for i in pinned.prefix(8) {
+            for i in pinned.prefix(4) {
                 print("PROBE   base \(base.isEmpty ? "n/a" : f3(base, i))  sdr \(f3(sdr, i))  hdr \(f3(hdr, i))")
+            }
+            // Fine bands around white per channel (HDR and SDR), to tell a spike from a smooth slope.
+            let edges: [Float] = [0.90, 0.95, 0.98, 0.99, 0.995, 1.005, 1.01, 1.02, 1.05, 1.10]
+            for (name, img) in [("hdr", hdr), ("sdr", sdr)] {
+                for c in 0..<3 {
+                    var bands = [Int](repeating: 0, count: edges.count - 1)
+                    for i in stride(from: c, to: img.count, by: 4) {
+                        let v = img[i]
+                        for b in 0..<(edges.count - 1) where v >= edges[b] && v < edges[b + 1] { bands[b] += 1; break }
+                    }
+                    print("PROBE   \(name) \(["r", "g", "b"][c]) bands \(edges.map { String($0) }.joined(separator: "|")): \(bands)")
+                }
+            }
+            // Pixels whose HDR blue sits at white: what each stage holds, and the blue gain.
+            var shown = 0
+            for i in stride(from: 0, to: hdr.count, by: 4) where abs(hdr[i + 2] - 1) < 0.005 && shown < 10 {
+                shown += 1
+                print("PROBE   blue@white base \(base.isEmpty ? "n/a" : f3(base, i))  sdr \(f3(sdr, i))  hdr \(f3(hdr, i))  gains \(String(format: "%.3f %.3f %.3f", hdr[i] / max(sdr[i], 1e-6), hdr[i + 1] / max(sdr[i + 1], 1e-6), hdr[i + 2] / max(sdr[i + 2], 1e-6)))")
             }
         }
     }
