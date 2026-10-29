@@ -355,7 +355,7 @@ float4 lumenMainLocal(sample_t img, sample_t l1, sample_t l2, sample_t ch,
 
 // ------------------------------------------------------------------ HDR gain
 
-// Per-channel gains >= 1: the pixel's colour step with white at H divided by the SDR one (gh.x = H, the HDR ceiling;
+// Per-channel gains: the pixel's colour step with white at H divided by the SDR one (gh.x = H, the HDR ceiling;
 // gh.y > 0.5 = black and white look). Until 29 Oct the gain came from luminance alone and was applied to the finished
 // SDR colour: a saturated highlight (warm light, skin, red fur) had already been fitted into SDR with red at exactly 1
 // and, being dark in luminance, got no gain, so red piled up at SDR white in the HDR histogram (owner's screenshots)
@@ -368,7 +368,10 @@ inline float4 lmHdrGains(float3 tone, float vib, float sat, float4 gh) {
     g = select(g, float3(1.0), sdr <= float3(1e-6));
     // A monochrome look must not get colour back from per-channel gains after its LUT.
     if (gh.y > 0.5) g = float3(lmLum(hdr) / max(lmLum(sdr), 1e-6));
-    return float4(clamp(g, float3(1.0), float3(H)), 1.0);
+    // Gains may go below 1 (to -2 stops): where SDR clipped a bright tinted pixel to pure white, the HDR colour keeps its
+    // tint and its weakest channel is below 1. Clamping that gain to 1 pinned the channel at SDR white (owner, 29 Oct:
+    // a peak at the white line in red for a blue-white sky, in blue for a warm white).
+    return float4(clamp(g, float3(1.0 / H), float3(H)), 1.0);
 }
 
 float4 lumenGain(sample_t img, sample_t l1, sample_t l2, sample_t ch,
@@ -572,12 +575,20 @@ float4 lumenHDRBlurGain(sample_t hdr, sample_t sdr, float4 p) {
     ratio = select(ratio, float3(1.0), sdr.rgb <= float3(1e-6));
     // A monochrome look must not have original highlight colours reintroduced after its LUT.
     if (p.y > 0.5) ratio = float3(lmLum(hdr.rgb) / max(lmLum(sdr.rgb), 1e-6));
-    return float4(clamp(ratio, float3(1.0), float3(max(p.x, 1.0))), 1.0);
+    float H = max(p.x, 1.0);
+    // Preserve tinted highlights through the blur path too, including pixels on the sharp focus plane.
+    return float4(clamp(ratio, float3(1.0 / H), float3(H)), 1.0);
 }
 
 float4 lumenApplyRGBGain(sample_t sdr, sample_t gain, float4 p) {
     if (sdr.a <= 0.0) return float4(0.0);
-    return float4(sdr.rgb * exp2(p.x * log2(max(gain.rgb, float3(1.0)))), 1.0);
+    float3 out = sdr.rgb * exp2(p.x * log2(max(gain.rgb, float3(1e-3))));
+    // Restore SDR luminance toward SDR * H. Both endpoints respect each channel's maximum gain H;
+    // unlike scaling or blending toward neutral white, this also preserves zero channels and export gain bounds.
+    float ls = lmLum(sdr.rgb), lo = lmLum(out);
+    float H = max(p.y, 1.0);
+    if (lo < ls) out = mix(out, sdr.rgb * H, clamp((ls - lo) / max(ls * H - lo, 1e-6), 0.0, 1.0));
+    return float4(out, 1.0);
 }
 
 // Lens Blur, lens-like: only pixels that are themselves blurred (the background) feed the blur, carried as

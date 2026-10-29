@@ -445,3 +445,7 @@ Exports render the SDR and HDR renditions with a checked GPU task (CIRenderDesti
 
 ## 2026-10-29 HDR keeps saturated highlights (from main #190, SideStore 0.1.798)
 HDR gains are per channel: the colour step runs with white at 1 and at H = 2^hdrStops and their ratio is the gain (luminance ratio for black and white), applied with applyRGBGain. Fixes red (warm lights, skin, fur) and blue (sky, blue paint) piling up at SDR white in the HDR histogram with no HDR headroom. SDR unchanged. Engine HDR check 9 (warm and blue ramps). Free for all (HDR is in the shared engine). No Store code changed.
+
+## 2026-10-29 HDR white-line spike (from main PR #194, candidate 134ddf1)
+Shared candidate allows reciprocal-headroom gains below one, including Lens Blur reconstruction. Restores SDR luminance within per-channel gain and HDR headroom bounds. Adds tinted ramps, partial-weight and low/zero-channel kernel regressions. HDR retains existing Pro/free policy. No Store code changed. Personal full checks/Polo probe and sandbox OFF/ON checks pending; not released. Unrelated marketing/listing edits excluded.
+
