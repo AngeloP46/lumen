@@ -1530,6 +1530,17 @@ func runHDRChecks() {
             check(atWhite > w * h / 10, "9a \(tag): ramp reaches SDR white (\(atWhite) pixels)")
             check(pinned * 10 < max(atWhite, 1), "9b \(tag): HDR channel not pinned at SDR white (\(pinned) of \(atWhite))")
             check(top > 1.3 && top <= Float(exp2(s.hdrStops)) + 0.05, "9c \(tag): highlights use the HDR headroom (top \(top))")
+            let basePixels = pixels(session.develop(s, source: source, geometry: true))
+            let fullPixels = pixels(session.develop(s, source: source, geometry: true, hdrWeight: 1))
+            for weight in [0.25, 0.5, 0.75, 1.0] {
+                let weighted = pixels(session.develop(s, source: source, geometry: true, hdrWeight: weight))
+                var violations = 0
+                for i in 0..<(basePixels.w * basePixels.h) {
+                    let y = lum(weighted, i)
+                    if !y.isFinite || y < lum(basePixels, i) - 0.001 || y > lum(fullPixels, i) + 0.001 { violations += 1 }
+                }
+                check(violations == 0, "9f \(tag): weight \(weight) stays between SDR and full HDR luminance (\(violations) violations)")
+            }
             // Enabling Lens Blur with everything on the focus plane must preserve the same HDR colours.
             // Its separate ratio kernel previously re-clamped the weakest channel to SDR white.
             source.storeDepth(DepthField(width: 2, height: 2, values: [0.5, 0.5, 0.5, 0.5],

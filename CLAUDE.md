@@ -201,6 +201,10 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   in sharp pixels whenever blur is enabled (histogram skips blur). Follow-up preserves reciprocal-H...H
   ratios there too; four tinted ramps compare actual full/interactive develop paths with focus at1 against
   blur off, and check the spike stays absent. Static review passed; rendered regression validation pending.
+- Run40941655219 then finished: original HDR3a and5 now pass, but the blue ramp reaches4.23368 above
+  the4.0 headroom ceiling. Scaling the entire pixel to restore luminance causes this overshoot. Follow-up
+  restores luminance with a bounded blend toward neutral HDR white instead; the gain application receives H
+  explicitly. Existing headroom limits stay unchanged; ramps now check quarter/half/three-quarter/full weights.
 - Owner on 0.1.798: with HDR on and Exposure pushed, one channel spiked at the first histogram line (SDR white).
   Reproduced on the CI Mac with the owner's iPhone ProRAW (`Tests/engine/polo.DNG` on scratch branch `hdr-red-probe`,
   committed with consent; delete the branch when done) and Lumen's own `Histogram.addHDR` at Exposure +4.18: red bin at

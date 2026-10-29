@@ -583,9 +583,11 @@ float4 lumenHDRBlurGain(sample_t hdr, sample_t sdr, float4 p) {
 float4 lumenApplyRGBGain(sample_t sdr, sample_t gain, float4 p) {
     if (sdr.a <= 0.0) return float4(0.0);
     float3 out = sdr.rgb * exp2(p.x * log2(max(gain.rgb, float3(1e-3))));
-    // A gain below 1 (a tinted white's weakest channel) must not make the pixel darker than SDR, at any weight.
+    // A gain below 1 must not darken luminance. Move toward the HDR neutral ceiling just enough to restore SDR
+    // luminance: scaling all channels up can push saturated blue beyond H. This convex blend stays inside H.
     float ls = lmLum(sdr.rgb), lo = lmLum(out);
-    if (lo < ls && lo > 1e-6) out *= ls / lo;
+    float H = max(p.y, 1.0);
+    if (lo < ls) out = mix(out, float3(H), clamp((ls - lo) / max(H - lo, 1e-6), 0.0, 1.0));
     return float4(out, 1.0);
 }
 
