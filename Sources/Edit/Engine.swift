@@ -595,6 +595,21 @@ final class EditSession: @unchecked Sendable {
         return Self.normalized(img)
     }
 
+    /// The photo as Heal sees it, always with the HDR decode's highlight range. A patch keeps the brightness of the
+    /// decode it was made from and nothing lifts it later, so one made with HDR off sat dim and flat beside the
+    /// brighter photo once HDR was switched on (owner, 29 Oct 2026). With HDR off the same photo is below white, and
+    /// the patch's highlights are shouldered like the photo's own. The twin is dropped when the heal is done.
+    func decodeForHeal(maxEdge: CGFloat?, heals list: [HealSpot]) -> CIImage? {
+        if hdrDecode { return decode(maxEdge: maxEdge, heals: list) }
+        if healTwin == nil { healTwin = EditSession(url: originalURL, expandHDR: true) }
+        guard let twin = healTwin, twin.nativeSize == nativeSize,
+              let camera = twin.decodeCameraLocked(maxEdge: maxEdge) else { return decode(maxEdge: maxEdge, heals: list) }
+        decodeLock.lock(); defer { decodeLock.unlock() }
+        return HealStore.apply(list, to: withDenoise(camera, amount: denoiseValue))
+    }
+    private var healTwin: EditSession?
+    func releaseHealTwin() { healTwin = nil }
+
     /// Decode with heals for an explicit list (used while making a new heal, which must see the earlier ones).
     func decode(maxEdge: CGFloat?, heals list: [HealSpot]) -> CIImage? {
         decodeLock.lock(); defer { decodeLock.unlock() }
