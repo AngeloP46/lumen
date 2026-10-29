@@ -355,7 +355,7 @@ float4 lumenMainLocal(sample_t img, sample_t l1, sample_t l2, sample_t ch,
 
 // ------------------------------------------------------------------ HDR gain
 
-// Per-channel gains >= 1: the pixel's colour step with white at H divided by the SDR one (gh.x = H, the HDR ceiling;
+// Per-channel gains: the pixel's colour step with white at H divided by the SDR one (gh.x = H, the HDR ceiling;
 // gh.y > 0.5 = black and white look). Until 29 Oct the gain came from luminance alone and was applied to the finished
 // SDR colour: a saturated highlight (warm light, skin, red fur) had already been fitted into SDR with red at exactly 1
 // and, being dark in luminance, got no gain, so red piled up at SDR white in the HDR histogram (owner's screenshots)
@@ -575,15 +575,19 @@ float4 lumenHDRBlurGain(sample_t hdr, sample_t sdr, float4 p) {
     ratio = select(ratio, float3(1.0), sdr.rgb <= float3(1e-6));
     // A monochrome look must not have original highlight colours reintroduced after its LUT.
     if (p.y > 0.5) ratio = float3(lmLum(hdr.rgb) / max(lmLum(sdr.rgb), 1e-6));
-    return float4(clamp(ratio, float3(1.0), float3(max(p.x, 1.0))), 1.0);
+    float H = max(p.x, 1.0);
+    // Preserve tinted highlights through the blur path too, including pixels on the sharp focus plane.
+    return float4(clamp(ratio, float3(1.0 / H), float3(H)), 1.0);
 }
 
 float4 lumenApplyRGBGain(sample_t sdr, sample_t gain, float4 p) {
     if (sdr.a <= 0.0) return float4(0.0);
     float3 out = sdr.rgb * exp2(p.x * log2(max(gain.rgb, float3(1e-3))));
-    // A gain below 1 (a tinted white's weakest channel) must not make the pixel darker than SDR, at any weight.
+    // A gain below 1 must not darken luminance. Move toward the HDR neutral ceiling just enough to restore SDR
+    // luminance: scaling all channels up can push saturated blue beyond H. This convex blend stays inside H.
     float ls = lmLum(sdr.rgb), lo = lmLum(out);
-    if (lo < ls && lo > 1e-6) out *= ls / lo;
+    float H = max(p.y, 1.0);
+    if (lo < ls) out = mix(out, float3(H), clamp((ls - lo) / max(H - lo, 1e-6), 0.0, 1.0));
     return float4(out, 1.0);
 }
 
