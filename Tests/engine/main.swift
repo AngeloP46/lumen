@@ -1663,10 +1663,17 @@ func runHDRChecks() {
             check(abs(cf - ce) <= 0.1 * ce, "10: exported sky colour at +\(exposure) differs from the editor (blue/red file \(cf) vs editor \(ce))")
             // Thumbnails (owner, 30 Oct 2026: HDR edits looked blown out in the library) use the export's base: it stays
             // under white, keeps the sky bluer than the SDR rendition, and HDR off is the SDR rendition unchanged.
-            let thumb = pixels(session.developForSDRScreen(s, source: source, geometry: true))
+            let thumbImg = session.developForSDRScreen(s, source: source, geometry: true)
+            let thumb = pixels(thumbImg)
             let sdrOnly = pixels(session.develop(s, source: source, geometry: true))
             let ct = blueOverRed(thumb), cs = blueOverRed(sdrOnly)
-            let top = thumb.f.enumerated().filter { $0.offset % 4 != 3 }.map(\.element).max() ?? 0
+            // "under white" in Lumen's own space (linear Display P3): a deep P3 blue is above 1 in sRGB, which pixels() uses
+            let te = thumbImg.extent.integral, tw = Int(te.width), th = Int(te.height)
+            var p3 = [Float](repeating: 0, count: tw * th * 4)
+            p3.withUnsafeMutableBytes { q in
+                LumenGPU.context.render(thumbImg, toBitmap: q.baseAddress!, rowBytes: tw * 16, bounds: te, format: .RGBAf, colorSpace: LumenGPU.workingSpace)
+            }
+            let top = p3.enumerated().filter { $0.offset % 4 != 3 }.map(\.element).max() ?? 0
             print("HDR info: 10 +\(exposure) thumbnail sky blue/red \(ct), SDR rendition \(cs), brightest channel \(top)")
             check(top <= 1.001, "10: HDR thumbnail at +\(exposure) goes above white (\(top))")
             check(ct >= cs, "10: HDR thumbnail sky at +\(exposure) is less blue than the SDR rendition (\(ct) vs \(cs))")
