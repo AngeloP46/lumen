@@ -191,6 +191,10 @@ Finish its quality-upgrade/unchanged-open rules before merging it. Phone observa
   shared fixes to both versions; **no merges that publish to SideStore and no App Store submission without his
   instruction** (main PRs are left ready, not merged).
 
+## OPEN: owner's iPhone Photos shows HDR exports blown out (30 Oct 2026)
+- On 0.1.828 (after #198) the owner's iPhone Photos still shows HDR-on exports of iPhone photos blown out (chat screenshots are SDR, so only Send diagnostics can show the file). The CI Mac reopens the same kind of files (JPEG and an iPhone-style HEIC with gain map, source up to 4.5, +0/+1/+2) at the editor's luminance within 0.5 %, and export does not copy Apple's maker note, so the cause is on the phone (what iOS Core Image writes, or how Photos reads it).
+- Every HDR export now logs `export file (...)` to Send diagnostics: size, maker note keys, each gain map kind with byte mean/max and tone-map tags, exposure and screen headroom (`EditSession.exportSummary`). Ask the owner to export once with HDR on and send diagnostics, then compare with a CI export (see the HDR info: 10 lines). Do not guess further without it.
+
 ## HDR exports match the editor's brightness (29 Oct 2026, night)
 - Owner: a plain JPEG/HEIC edited with HDR on and Exposure pushed looked bright and balanced in the editor but the exported
   photo came out blown out (confirmed on the phone). Cause: since the per-channel gains (0.1.798) the editor's HDR
