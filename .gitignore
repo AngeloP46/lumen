@@ -11,3 +11,6 @@ __pycache__/
 
 # App Store business plan: private, kept outside the repo (deliverables\App Store)
 docs/APPSTORE-PLAN.md
+# App Store business files: private, kept in this PC folder only (backups in deliverables\App Store)
+MARKETING.md
+docs/appstore/LISTING.md

@@ -31,7 +31,7 @@
 - Every bug fix and shared editor feature ships to **both**: release it on main first (branch → PR → merge), then port the same change to `sandbox` (branch from `sandbox`, PR into `sandbox`, run its compile check with APP_STORE OFF/ON), and log it in `SANDBOX-LOG.md`.
 - When porting a NEW feature, keep or add the sandbox's Pro gating where it fits, and ask Angelo if it is unclear whether it should be free or Pro. Never copy paywall/StoreKit/watermark code or the APP_STORE flag into main, and never push to main from `Lumen-Sandbox`.
 - Tell Angelo which of the two each change has reached.
-- App Store pricing, Free vs Pro, claims and the marketing plan: `MARKETING.md` on the sandbox branch (`Lumen-Sandbox\MARKETING.md`). Keep it out of main.
+- App Store pricing, Free vs Pro, claims and the marketing plan: `Lumen-Sandbox\MARKETING.md` and the listing draft `Lumen-Sandbox\docs\appstore\LISTING.md` are PRIVATE: since 30 Oct they are not in git (the repo is public), only in that PC folder, ignored; backups in `deliverables\App Store`. Edit them in place; never commit them.
 
 ## Brightness, Auto, end stops (25 Oct 2026)
 - **Brightness** (owner: Exposure made a dull photo look over-exposed; Apple's slider brightens nicely): `EditSettings.brightness`
