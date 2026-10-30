@@ -41,8 +41,8 @@ struct LumenKernels {
     var gain, gainLocal, applyGain: CIColorKernel?
     /// Lens Blur averages RGB HDR radiance, then reconstructs channel gains relative to its blurred SDR base.
     var hdrBlurGain, applyRGBGain: CIColorKernel?
-    /// Export only: the HDR layer as the SDR photo times ONE gain per pixel (all the gain map can store).
-    var exportGain: CIColorKernel?
+    /// Export only: the base photo with the HDR's colour, so ONE gain per pixel (all the gain map can store) gives the HDR.
+    var exportBase: CIColorKernel?
     /// Clipping warning (optional too: a broken one only hides the warning).
     var clip: CIColorKernel?
     /// Band of a grey image (depth mask). Optional: a broken one only disables the Depth mask.
@@ -81,7 +81,7 @@ struct LumenKernels {
                             accum: h, linearMask: i, radialMask: j, lumMask: l, colorMask: m, similarMask: n,
                             combine: o, maskFinish: p, maskMul: q, overlay: r,
                             gain: k("lumenGain"), gainLocal: k("lumenGainLocal"), applyGain: k("lumenApplyGain"),
-                            hdrBlurGain: k("lumenHDRBlurGain"), applyRGBGain: k("lumenApplyRGBGain"), exportGain: k("lumenExportGain"),
+                            hdrBlurGain: k("lumenHDRBlurGain"), applyRGBGain: k("lumenApplyRGBGain"), exportBase: k("lumenExportBase"),
                             clip: k("lumenClip"), rangeMask: k("lumenRangeMask"), lensRamp: k("lumenLensRamp"), lensRefinedRamp: k("lumenLensRefinedRamp"),
                             lensWeigh: k("lumenLensWeigh"), lensCompose: k("lumenLensCompose"),
                             gfPack: k("lumenGFPack"), gfCoef: k("lumenGFCoef"), gfApply: k("lumenGFApply"),
