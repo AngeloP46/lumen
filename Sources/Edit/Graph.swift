@@ -1,5 +1,6 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import CoreVideo
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -399,6 +400,9 @@ extension EditSession {
         // The file's HDR layer is the SDR photo times one gain per pixel; the editor's HDR rendition has a gain per colour
         // channel, which the encoder cannot store (see lumenExportGain). Write the layer the file can hold.
         if let h = hdrImg {
+            // The file's base is 8-bit, so anything the SDR rendition holds above white is clipped there; the gain must be
+            // worked out against that clipped base, or the reopened photo misses the difference.
+            img = img.applyingFilter("CIColorClamp")
             guard let kernel = LumenKernels.shared?.exportGain,
                   let single = kernel.apply(extent: img.extent, arguments: [img, h, CIVector(x: exp2(s.hdrStops), y: 0, z: 0, w: 0)])
             else { return .failed(.hdrEncode) }
@@ -423,22 +427,28 @@ extension EditSession {
         // With HDR on, both renditions stay half-float in the linear working space: the encoder works out the gain map
         // from their ratio, and an 8-bit SDR base made the ratio jump in near-black pixels (first try of this change:
         // -0.58...+3.50 stops instead of 0...+0.64). The encoder still writes the SDR photo as 8-bit Display P3.
-        func rendered(_ i: CIImage, float: Bool) -> CIImage? {
+        // A rendered bitmap has no headroom of its own (0 = unknown), so the encoder had to guess the range it writes into
+        // the file's HDR tags, which Photos uses to decide how far to brighten. Since this render step (#188) the owner's
+        // iPhone Photos showed HDR exports blown out while the CI Mac, which reopens the file at full gain whatever the
+        // tags say, matched the editor (30 Oct 2026). Both float renditions say it: SDR base 1, HDR layer 2^hdrStops.
+        func rendered(_ i: CIImage, float: Bool, headroom: Float?) -> CIImage? {
             let format: CIFormat = float ? .RGBAh : .RGBA8
             let space = float ? LumenGPU.workingSpace : LumenGPU.displaySpace
-            if let r = Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: float ? 8 : 4, colorSpace: space) {
+            if let r = Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: float ? 8 : 4,
+                                            colorSpace: space, headroom: headroom) {
                 return r.settingProperties(meta)
             }
             Self.healProbe?("export: GPU render failed, freeing caches and trying again")
             outputContext.clearCaches()
             LumenGPU.context.clearCaches()
-            return Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: float ? 8 : 4, colorSpace: space)?
-                .settingProperties(meta)
+            return Self.renderedChecked(i, context: outputContext, format: format, bytesPerPixel: float ? 8 : 4,
+                                        colorSpace: space, headroom: headroom)?.settingProperties(meta)
         }
-        guard let readyImg = rendered(img, float: hdrImg != nil) else { return .failed(wantHDR ? .hdrEncode : .encode) }
+        guard let readyImg = rendered(img, float: hdrImg != nil, headroom: hdrImg != nil ? 1 : nil)
+        else { return .failed(wantHDR ? .hdrEncode : .encode) }
         img = readyImg
         if let h = hdrImg {
-            guard let readyHDR = rendered(h, float: true) else { return .failed(.hdrEncode) }
+            guard let readyHDR = rendered(h, float: true, headroom: Float(exp2(s.hdrStops))) else { return .failed(.hdrEncode) }
             hdrImg = readyHDR
         }
         Self.healProbe?("export: rendered")
@@ -478,10 +488,26 @@ extension EditSession {
     /// GPU running out of memory), which `createCGImage` and the image encoders never report. The bitmap's first row
     /// is the image's top row, as with `createCGImage` (engine test "checked render keeps orientation").
     static func renderedChecked(_ img: CIImage, context: CIContext, format: CIFormat, bytesPerPixel: Int,
-                                colorSpace: CGColorSpace) -> CIImage? {
+                                colorSpace: CGColorSpace, headroom: Float? = nil) -> CIImage? {
         let e = img.extent.integral
         let w = Int(e.width), h = Int(e.height)
         guard w > 0, h > 0, e.width.isFinite, e.height.isFinite else { return nil }
+        // A half-float rendition with a known headroom goes into a pixel buffer, the only bitmap image that can carry it.
+        if let headroom, format == .RGBAh, #available(iOS 18.0, macOS 15.0, *) {
+            var buffer: CVPixelBuffer?
+            let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+            guard CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_64RGBAHalf, attributes, &buffer) == kCVReturnSuccess,
+                  let buffer else { return nil }
+            let destination = CIRenderDestination(pixelBuffer: buffer)
+            destination.colorSpace = colorSpace
+            do {
+                let task = try context.startTask(toRender: img, from: e, to: destination, at: .zero)
+                _ = try task.waitUntilCompleted()
+            } catch {
+                return nil
+            }
+            return CIImage(cvPixelBuffer: buffer, options: [.colorSpace: colorSpace, .contentHeadroom: headroom])
+        }
         let rowBytes = w * bytesPerPixel
         var data = Data(count: rowBytes * h)
         let ok: Bool = data.withUnsafeMutableBytes { raw in
