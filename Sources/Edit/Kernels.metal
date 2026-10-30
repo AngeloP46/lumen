@@ -591,17 +591,20 @@ float4 lumenApplyRGBGain(sample_t sdr, sample_t gain, float4 p) {
     return float4(out, 1.0);
 }
 
-// Export: an HDR JPEG/HEIC stores the HDR layer as the SDR photo times ONE gain per pixel (a one-channel gain map). The
-// editor's HDR rendition has a gain per colour channel (a clipped blue sky keeps its blue, a channel can sit below SDR);
-// handed to the encoder as it is, the single gain it picks lifted the weaker channels and the exported photo came out far
-// brighter than the editor (owner, 29 Oct 2026; matterhorn at Exposure +2: red 1.48 in the file vs 0.45 in the editor).
-// This writes the HDR layer the file can actually hold: the SDR colour times the gain that gives the editor's brightness.
-// p.x = H, the HDR ceiling. Before the per-channel gains (0.1.798) the editor used the same single gain, so the file matched.
-float4 lumenExportGain(sample_t sdr, sample_t hdr, float4 p) {
+// Export: an HDR JPEG/HEIC holds a base photo and ONE gain per pixel (a one-channel gain map), so the HDR it shows is
+// the base's colour made brighter. The editor's HDR has a gain per colour channel: a bright sky keeps its blue, sunlit
+// ground its colour. With the SDR rendition as the base (0.1.828-0.1.838) those were already near white there, so the
+// file showed them white and blown out (owner, 30 Oct 2026: Pompeii at Exposure +0.85, no blue in the sky). The base is
+// now the editor's HDR colour scaled down until it fits under white, never darker than the SDR's brightness needs; the
+// gain (that scale, 1...H) brings back exactly the editor's HDR. p.x = H, the HDR ceiling.
+float4 lumenExportBase(sample_t sdr, sample_t hdr, float4 p) {
     if (sdr.a <= 0.0) return float4(0.0);
-    float ls = lmLum(sdr.rgb), lh = lmLum(hdr.rgb);
-    float g = ls > 1e-6 ? clamp(lh / ls, 1.0, max(p.x, 1.0)) : 1.0;
-    return float4(sdr.rgb * g, 1.0);
+    float H = max(p.x, 1.0);
+    float3 h = clamp(hdr.rgb, float3(0.0), float3(H));
+    float ls = lmLum(sdr.rgb), lh = lmLum(h);
+    float k = ls > 1e-6 ? lh / ls : 1.0;
+    k = clamp(max(k, max(h.r, max(h.g, h.b))), 1.0, H);
+    return float4(h / k, 1.0);
 }
 
 // Lens Blur, lens-like: only pixels that are themselves blurred (the background) feed the blur, carried as

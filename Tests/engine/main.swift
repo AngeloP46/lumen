@@ -1648,6 +1648,16 @@ func runHDRChecks() {
                 print("HDR info: 10 +\(exposure) \(label) luminance, editor \(a), exported file as HDR \(b)")
                 check(abs(b - a) <= 0.05 * a + 0.005, "10: exported file at +\(exposure) differs from the editor in the \(label) (file \(b) vs editor \(a))")
             }
+            // Colour too (owner, 30 Oct 2026: exports showed a white sky where the editor's was blue). The sky's blue over
+            // its red, in the editor's HDR and in the file reopened as HDR, must agree within 10 %.
+            func blueOverRed(_ p: Pixels) -> Double {
+                var r = 0.0, b = 0.0
+                for y in Int(Double(p.h) * 0.8)..<p.h { for x in 0..<p.w { let i = (y * p.w + x) * 4; r += Double(p.f[i]); b += Double(p.f[i + 2]) } }
+                return b / max(r, 1e-6)
+            }
+            let ce = blueOverRed(editor), cf = blueOverRed(file)
+            print("HDR info: 10 +\(exposure) sky blue/red, editor \(ce), exported file as HDR \(cf)")
+            check(abs(cf - ce) <= 0.1 * ce, "10: exported sky colour at +\(exposure) differs from the editor (blue/red file \(cf) vs editor \(ce))")
         }
     } else { print("HDR skip: 10 (needs macOS 15 and the matterhorn sample)") }
     print(failures == 0 ? "HDR checks: all passed" : "HDR checks: \(failures) FAILED")

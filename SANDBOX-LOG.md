@@ -458,3 +458,6 @@ Export hands the encoder the SDR colour times the single gain that gives the edi
 
 ## 2026-10-30 HDR export carries its headroom (from main #201, SideStore 0.1.838)
 Export hands the encoder both half-float renditions as pixel-buffer images with an explicit content headroom (SDR 1, HDR 2^hdrStops) and clamps the SDR to 0...1 before lumenExportGain. Since #188 the rendered bitmaps carried no headroom, so the encoder guessed the HDR tags Photos brightens by; the owner saw HDR exports blown out in iPhone Photos. Free for all (export path). No Store code changed.
+
+## 2026-10-30 HDR export base keeps the HDR colour (from main #204, SideStore 0.1.844)
+The export base photo is the editor HDR scaled per pixel to fit under white (new lumenExportBase replaces lumenExportGain) and the HDR layer is the editor HDR, so the one-channel gain map reproduces the editor HDR colour: blue skies and sunlit ground no longer go white (owner, Pompeii at +0.85). Engine check 10 also compares sky blue/red. Free for all (export path). No Store code changed.
