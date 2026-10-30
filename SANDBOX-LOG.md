@@ -455,3 +455,6 @@ Heal takes its picture from an HDR-decoding twin session when the session is SDR
 
 ## 2026-10-29 HDR exports match the editor brightness (from main #198, SideStore 0.1.828)
 Export hands the encoder the SDR colour times the single gain that gives the editor luminance (new lumenExportGain kernel), because the file gain map is one channel while the editor HDR has a gain per colour channel; exported HDR photos had come out far brighter than the editor. Editor and histogram unchanged. Free for all (export path). No Store code changed. Re-export photos saved with HDR on since 0.1.798.
+
+## 2026-10-30 HDR export carries its headroom (from main #201, SideStore 0.1.838)
+Export hands the encoder both half-float renditions as pixel-buffer images with an explicit content headroom (SDR 1, HDR 2^hdrStops) and clamps the SDR to 0...1 before lumenExportGain. Since #188 the rendered bitmaps carried no headroom, so the encoder guessed the HDR tags Photos brightens by; the owner saw HDR exports blown out in iPhone Photos. Free for all (export path). No Store code changed.
