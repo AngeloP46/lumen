@@ -1,15 +1,17 @@
 # Lumen – project notes for Claude
 
 ## Current state (30 Oct 2026) — read this first
-- SideStore **0.1.851** (main #207, daeb2ad). Sandbox (App Store build) has everything through #205 (0.1.844); #208
-  (port of #207) merges after its compile check. Both builds share the engine; Store code stays on `sandbox` only.
+- SideStore **0.1.851** (main #207, daeb2ad). Sandbox (App Store build) matches it (#208, port of #207). Both builds share the engine; Store code stays on `sandbox` only.
 - 30 Oct HDR work, owner-confirmed on the phone: HDR exports match the editor in Photos (#201 file headroom, #204 base
   keeps the HDR colour). #207 (thumbnails of HDR edits use the export base) is released; phone feedback pending.
 - Tester (30-day) IPA: 0.1.5, ends 29 Nov 2026, source = 0.1.844, at `LumenIPA	ester-2026-10-30Lumen.ipa`; the
   owner replaces the Drive file (same link) with Manage versions -> Upload new version.
-- Open: PR #193 (HDR spike diagnostics) never merged, although notes below cite it; scratch branch `hdr-red-probe` holds
-  the owner's Polo DNG (delete when he agrees); `docs/APPSTORE-PLAN.md` is tracked in this PUBLIC repo since 9d0e538
-  although the release rules say it must never reach main (owner to decide removal).
+- PR #193 (HDR spike diagnostics) was closed unmerged on 30 Oct (spike fixed by #194): notes below that cite it are wrong.
+  Merged branches were deleted on 30 Oct (restorable from each PR). Kept on purpose: `hdr-red-probe` (owner's Polo DNG,
+  owner wants it kept for HDR testing), `backup/before-ui-refresh`, and unmerged `clarity-persistence-checks`,
+  `crop-rework-1`, `sandbox-batch6`, `thumbnail-final-validation`, `hdr-spike-diagnostics`.
+- `docs/APPSTORE-PLAN.md` is tracked in this PUBLIC repo since 9d0e538 (against the release rules); owner deciding. The
+  repo is public for free Mac minutes; the owner plans to consider going private around the App Store launch.
 - Ship every change with the lumen-release routine (branch -> PR -> checks -> merge -> SideStore -> sandbox port).
   Sections below dated before 30 Oct are history: where they disagree with newer sections, the newer one wins.
 
