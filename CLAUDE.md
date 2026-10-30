@@ -10,7 +10,8 @@
   Merged branches were deleted on 30 Oct (restorable from each PR). Kept on purpose: `hdr-red-probe` (owner's Polo DNG,
   owner wants it kept for HDR testing), `backup/before-ui-refresh`, and unmerged `clarity-persistence-checks`,
   `crop-rework-1`, `sandbox-batch6`, `thumbnail-final-validation`, `hdr-spike-diagnostics`.
-- `docs/APPSTORE-PLAN.md` is tracked in this PUBLIC repo since 9d0e538 (against the release rules); owner deciding. The
+- `docs/APPSTORE-PLAN.md` was tracked in this PUBLIC repo from 9d0e538 to 30 Oct; removed from main and sandbox and
+  ignored (owner's choice; still in git history). The private copy: `deliverablesApp StoreAPPSTORE-PLAN.md`. The
   repo is public for free Mac minutes; the owner plans to consider going private around the App Store launch.
 - Ship every change with the lumen-release routine (branch -> PR -> checks -> merge -> SideStore -> sandbox port).
   Sections below dated before 30 Oct are history: where they disagree with newer sections, the newer one wins.

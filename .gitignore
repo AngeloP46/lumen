@@ -8,3 +8,6 @@ Config/Info.plist
 Models/
 __pycache__/
 .scratch/
+
+# App Store business plan: private, kept outside the repo (deliverables\App Store)
+docs/APPSTORE-PLAN.md
