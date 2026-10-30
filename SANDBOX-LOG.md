@@ -461,3 +461,6 @@ Export hands the encoder both half-float renditions as pixel-buffer images with 
 
 ## 2026-10-30 HDR export base keeps the HDR colour (from main #204, SideStore 0.1.844)
 The export base photo is the editor HDR scaled per pixel to fit under white (new lumenExportBase replaces lumenExportGain) and the HDR layer is the editor HDR, so the one-channel gain map reproduces the editor HDR colour: blue skies and sunlit ground no longer go white (owner, Pompeii at +0.85). Engine check 10 also compares sky blue/red. Free for all (export path). No Store code changed.
+
+## 2026-10-30 Thumbnails of HDR edits use the export base (from main #207, SideStore 0.1.851)
+With HDR on, thumbnails and preset previews use lumenExportBase (the HDR colour fitted under white) instead of the over-exposed SDR rendition (EditSession.developForSDRScreen); HDR off unchanged. Thumbnail revision not bumped (no library-wide re-render). Free for all. No Store code changed.
