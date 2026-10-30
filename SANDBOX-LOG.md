@@ -467,3 +467,6 @@ With HDR on, thumbnails and preset previews use lumenExportBase (the HDR colour 
 
 ## 2026-10-30 App Store business plan removed from the public repo (as main #211)
 docs/APPSTORE-PLAN.md untracked and ignored; private copy in deliverables\App Store. No app or Store code changed.
+
+## 2026-10-30 MARKETING.md and docs/appstore/LISTING.md made private
+The repo is public, so pricing, Free vs Pro and the listing draft are no longer in git: untracked and ignored, kept in the Lumen-Sandbox folder (with their local edits) and backed up in deliverables\App Store. No app or Store code changed.
