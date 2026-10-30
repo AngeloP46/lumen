@@ -573,6 +573,51 @@ extension EditSession {
         return out
     }
 
+    /// One line for Send diagnostics: what an exported file holds. The owner's iPhone shows exports with HDR on blown out
+    /// in Photos (30 Oct 2026) while the CI Mac reopens the same files at the editor's brightness; this shows what the
+    /// phone actually wrote: size, Apple maker note, and each gain map kind with its bytes (mean/max of 255) and tone map.
+    static func exportSummary(_ data: Data) -> String {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return "unreadable" }
+        var parts = ["\(data.count / 1024) KB"]
+        if let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] {
+            parts.append("\(props[kCGImagePropertyPixelWidth] ?? "?")x\(props[kCGImagePropertyPixelHeight] ?? "?")")
+            if let apple = props[kCGImagePropertyMakerAppleDictionary] as? [String: Any] {
+                parts.append("maker " + apple.keys.sorted().joined(separator: ","))
+            } else { parts.append("no maker note") }
+        }
+        var found = false
+        for (name, type) in [("apple", kCGImageAuxiliaryDataTypeHDRGainMap), ("iso", kCGImageAuxiliaryDataTypeISOGainMap)] as [(String, CFString)] {
+            guard let info = CGImageSourceCopyAuxiliaryDataInfoAtIndex(src, 0, type) as? [CFString: Any] else { continue }
+            found = true
+            var s = "gain map \(name)"
+            if let desc = info[kCGImageAuxiliaryDataInfoDataDescription] as? [String: Any] {
+                s += " \(desc["Width"] ?? "?")x\(desc["Height"] ?? "?")"
+            }
+            if let bytes = info[kCGImageAuxiliaryDataInfoData] as? Data, !bytes.isEmpty {
+                let step = max(1, bytes.count / 100_000)
+                var sum = 0.0, top = 0, n = 0.0, i = 0
+                bytes.withUnsafeBytes { raw in
+                    let p = raw.bindMemory(to: UInt8.self)
+                    while i < p.count { sum += Double(p[i]); top = max(top, Int(p[i])); n += 1; i += step }
+                }
+                s += String(format: " bytes mean %.1f max %d", sum / max(n, 1), top)
+            }
+            if let meta = info[kCGImageAuxiliaryDataInfoMetadata] {
+                var tags: [String] = []
+                CGImageMetadataEnumerateTagsUsingBlock(meta as! CGImageMetadata, nil, nil) { path, tag in
+                    let p = path as String
+                    if let v = CGImageMetadataTagCopyValue(tag) as? String,
+                       ["Gain", "Headroom", "Capacity", "Offset", "Gamma", "Base"].contains(where: { p.contains($0) }) { tags.append("\(p.split(separator: ":").last ?? "")=\(v)") }
+                    return true
+                }
+                if !tags.isEmpty { s += " [" + tags.joined(separator: " ") + "]" }
+            }
+            parts.append(s)
+        }
+        if !found { parts.append("NO gain map") }
+        return parts.joined(separator: "; ")
+    }
+
     static func downscaled(_ img: CIImage, _ k: CGFloat) -> CIImage {
         let s = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
             .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0])

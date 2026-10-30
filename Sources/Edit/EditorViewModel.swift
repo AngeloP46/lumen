@@ -2094,6 +2094,7 @@ final class EditorViewModel: ObservableObject {
         if Diagnostics.availableMB < 2000 { detailSource = nil; EditSession.releaseMaskModels() }
         LumenGPU.context.clearCaches()
         let mp = megapixels
+        let headroomNote = String(format: "%.2f now / %.2f potential", Double(currentHeadroom), Double(potentialHeadroom))
         workQueue.async {
             defer { patches.close() }
             Diagnostics.shared.note("export \(o.format) edge \(o.longEdge)")
@@ -2114,6 +2115,10 @@ final class EditorViewModel: ObservableObject {
                                            Date().timeIntervalSince(exportStart), data.map { "\($0.count / 1_048_576) MB" } ?? "no file"))
             var url: URL?
             if let data {
+                if o.hdr && s.hdr && o.format != .tiff {
+                    Diagnostics.shared.note("export file (\(o.format.rawValue), HDR on, exposure \(String(format: "%.2f", s.exposure)), screen headroom \(headroomNote)): "
+                                            + EditSession.exportSummary(data))
+                }
                 let u = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-lumen.\(o.format.ext)")
                 if (try? data.write(to: u, options: .atomic)) != nil { url = u }
                 if DemoMode.isOn { DemoMode.log("exported \(o.format.rawValue) q \(Int(o.quality)) edge \(o.longEdge) bytes \(data.count)") }

@@ -1643,6 +1643,9 @@ func runHDRChecks() {
             let editor = pixels(session.develop(s, source: source, geometry: true, hdrWeight: 1))
             let file = pixels(back)
             guard editor.w == file.w, editor.h == file.h else { check(false, "10: file size \(file.w)x\(file.h) vs editor \(editor.w)x\(editor.h)"); continue }
+            let summary = EditSession.exportSummary(data)
+            print("HDR info: 10 +\(exposure) export summary: \(summary)")
+            check(summary.contains("gain map") && !summary.contains("NO gain map"), "10: the export summary does not see the file's gain map (\(summary))")
             for (label, top) in [("whole photo", 1.0), ("sky", 0.2)] {
                 let a = meanLum(editor, top: top), b = meanLum(file, top: top)
                 print("HDR info: 10 +\(exposure) \(label) luminance, editor \(a), exported file as HDR \(b)")
