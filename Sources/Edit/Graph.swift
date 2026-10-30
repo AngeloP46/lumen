@@ -281,7 +281,7 @@ extension EditSession {
     /// masks the editor has worked out show on it (quality checklist A13; before, a thumbnail was a fresh RAW decode,
     /// ~2 GB at its peak on a 48 MP photo, and showed none of the AI masks).
     func renderThumbnail(_ s: EditSettings, source: ImageSource, maxEdge: CGFloat) -> CGImage? {
-        var img = develop(s, source: source, geometry: true)
+        var img = developForSDRScreen(s, source: source, geometry: true)
         let e = img.extent
         let k = min(1, maxEdge / max(e.width, e.height))
         if k < 1 { img = img.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1.0]) }
@@ -289,8 +289,21 @@ extension EditSession {
     }
 
     func renderCGImage(_ s: EditSettings, source: ImageSource, geometry: Bool = true) -> CGImage? {
-        let img = develop(s, source: source, geometry: geometry)
+        let img = developForSDRScreen(s, source: source, geometry: geometry)
         return ctx.createCGImage(img, from: img.extent, format: .RGBA8, colorSpace: LumenGPU.displaySpace)
+    }
+
+    /// The picture for an 8-bit image that has no HDR layer (thumbnails, preset previews). With HDR on, an edit made to
+    /// use the headroom (Exposure pushed until the HDR view looks right) is over-exposed in the SDR rendition: sky and
+    /// sunlit ground near white, so thumbnails looked blown out (owner, 30 Oct 2026). With HDR on this is the base an HDR
+    /// export holds (`lumenExportBase`): the HDR colour scaled to fit under white, so a thumbnail looks like the exported
+    /// file in Photos' grid. HDR off, or the kernel missing: the SDR rendition as before.
+    func developForSDRScreen(_ s: EditSettings, source: ImageSource, geometry: Bool) -> CIImage {
+        let sdr = develop(s, source: source, geometry: geometry)
+        guard s.effective.hdr, let kernel = LumenKernels.shared?.exportBase else { return sdr }
+        let hdr = develop(s, source: source, geometry: geometry, hdrWeight: 1)
+        return kernel.apply(extent: sdr.extent, arguments: [sdr.applyingFilter("CIColorClamp"), hdr,
+                                                            CIVector(x: exp2(s.hdrStops), y: 0, z: 0, w: 0)]) ?? sdr
     }
 
     /// Why an export could not be made (quality checklist A17: before this, every failure read as one
