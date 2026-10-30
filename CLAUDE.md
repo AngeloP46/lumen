@@ -1,6 +1,19 @@
 # Lumen – project notes for Claude
 
-## Latest: SideStore0.1.782,29October
+## Current state (30 Oct 2026) — read this first
+- SideStore **0.1.851** (main #207, daeb2ad). Sandbox (App Store build) has everything through #205 (0.1.844); #208
+  (port of #207) merges after its compile check. Both builds share the engine; Store code stays on `sandbox` only.
+- 30 Oct HDR work, owner-confirmed on the phone: HDR exports match the editor in Photos (#201 file headroom, #204 base
+  keeps the HDR colour). #207 (thumbnails of HDR edits use the export base) is released; phone feedback pending.
+- Tester (30-day) IPA: 0.1.5, ends 29 Nov 2026, source = 0.1.844, at `LumenIPA	ester-2026-10-30Lumen.ipa`; the
+  owner replaces the Drive file (same link) with Manage versions -> Upload new version.
+- Open: PR #193 (HDR spike diagnostics) never merged, although notes below cite it; scratch branch `hdr-red-probe` holds
+  the owner's Polo DNG (delete when he agrees); `docs/APPSTORE-PLAN.md` is tracked in this PUBLIC repo since 9d0e538
+  although the release rules say it must never reach main (owner to decide removal).
+- Ship every change with the lumen-release routine (branch -> PR -> checks -> merge -> SideStore -> sandbox port).
+  Sections below dated before 30 Oct are history: where they disagree with newer sections, the newer one wins.
+
+## History: SideStore 0.1.782, 29 October
 
 Main#184/fe0a94c, sourced9c4064; publish40791387290 verifiedfreshfeed/log/asset:
 356122572bytes,SHA2564f7f7307d51c6d938640687fadb4472a5ca92a991f9676a4f108912b5a9432e4.
@@ -13,7 +26,7 @@ Ownerprioritizedpublication, thenrequested30daytester IPAforGoogleDrive: existin
 onfe0a94c,days30, artifactLumen-tester-ipa; verifyexpiry/allmodels, deliverLumenIPA/tester-2026-10-29/Lumen.ipa.
 No personalSideStoreexpiry, no Store/model/layout/resolution changes or2,000photo run. Oldentriesbelowhistorical.
 
-## Latest release: SideStore0.1.774, 28 October
+## History: SideStore 0.1.774, 28 October
 
 Main#180 merged24c29b7 (source6d4f50d, application0a7e2a3), publish40783343904 verified:
 356120040bytes, SHA2569fce6d2106086b02b27239bef8f7b5378cff4612a82223a28fcaa1f8cc0874c1.
@@ -50,7 +63,7 @@ Sandbox#175 shared fix/check40732458311 pending; prior recovery#172 merged4f1e89
 Owner asked for parallel agents: AI, mask/export and effects/blur follow-ups run separately; no blanket quality claim.
 This section supersedes older pending/released entries below. Larger-library scheduler remains an unshipped draft.
 
-## Latest phone finding: Clarity coverage is still broken in 0.1.737
+## History: Clarity coverage finding in 0.1.737 (fixed in 0.1.747)
 Owner confirms thumbnails now work. Supplied car screenshots (+96/-100) show virtually no windscreen, grille or
 background change; only a bonnet patch responds. Root cause: local range was maximum-dilated by twice the broad
 filter radius and used as a hard veto. Crowded edges disabled entire surfaces. Earlier isolated frequency/edge
@@ -61,7 +74,7 @@ independent in SDR/HDR. Shared Clarity affects global/local/HDR; other slider fa
 Read docs/CLARITY-COVERAGE-2026-10-28.md; validation pending, 0.1.737 remains live. Thumbnail code unchanged.
 Sandbox recovery #172 passed OFF/ON/policy/StoreKit 40678793157 and merged. Larger-library scheduler remains draft.
 
-## Latest 28 October: recovery 0.1.737 is on SideStore
+## History: recovery 0.1.737 on SideStore, 28 October
 Main #171 merged 300008d (source 4df9b79); publish 40678586380 succeeded. Fresh feed, log and asset digest match:
 356071476 bytes, SHA256 78fff6e803a7d00567f50333058711b89d9b914efe8669662ddb2122150264e1.
 126 focused rendering/batch checks pass (40677111283), settled 32-thumbnail Mac memory 1276–1277 MB; logic and
@@ -547,7 +560,7 @@ Read PRODUCT-BRIEF.md for the iOS/RAW/all-brands and cheaper-Lightroom direction
 Read this first. It records what exists, how it's built and shipped, and what to do next.
 
 ## Housekeeping (do this every session)
-- Before finishing any session, update the **Status**, **Things to verify** and **Troubleshooting** sections below with what changed or was learned, then commit and push (`git add -A; git commit; git push`) so the next session starts current.
+- Before finishing any session, update the **Status**, **Things to verify** and **Troubleshooting** sections below with what changed or was learned, then ship it as a docs PR (main is protected; never `git add -A`: stage named paths) so the next session starts current.
 - Keep this file factual and short; remove items once they're fixed or verified. Never put passwords, tokens or Apple ID credentials in it.
 
 ## What this is
@@ -574,7 +587,7 @@ Read this first. It records what exists, how it's built and shipped, and what to
 
 ## How to build and ship (the loop)
 1. Edit Swift/Metal in `Sources/`.
-2. `git add -A; git commit; git push` → **Build IPA** workflow (`.github/workflows/build.yml`, macos-15, XcodeGen + xcodebuild, unsigned, ~1 min; pushes that only change `*.md`, `Tests/**` or the test workflows don't build, so notes never publish an empty SideStore update).
+2. Commit named paths on a branch, push, open a PR (main is protected) → **Build IPA** workflow (`.github/workflows/build.yml`, macos-15, XcodeGen + xcodebuild, unsigned, ~1 min; pushes that only change `*.md`, `Tests/**` or the test workflows don't build, so notes never publish an empty SideStore update).
 3. `gh run list --repo AngeloP46/lumen`, `gh run view <id> --log-failed`.
 4. Download: `gh run download <id> --repo AngeloP46/lumen --name Lumen-ipa --dir "C:\Users\pc user\Projects\app development\LumenIPA"`.
 5. **Main builds reach the phone through SideStore** (set up 2026-10-09; the owner chose it over a paid developer account and won't pay for one). The Build IPA workflow's last step (main only) runs `sidestore/make_source.py` and uploads `Lumen-<run>.ipa` + `source.json` to the fixed `sidestore` release (keeps the newest 3 IPAs). The owner added `https://github.com/AngeloP46/lumen/releases/download/sidestore/source.json` in SideStore and updates Lumen from there, anywhere, no PC. SideStore rejects a download unless bundle id, version, build, size, sha256 and the `NS*UsageDescription` keys match the feed, so the script reads them all from the IPA; `CFBundleShortVersionString` = `0.1.<run number>` and `CFBundleVersion` = `<run number>` (project.yml + `CURRENT_PROJECT_VERSION` in build.yml). If you add an entitlement or a privacy key, nothing else needs changing.

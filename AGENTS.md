@@ -1,5 +1,8 @@
 # Lumen session entry point
 
+**Current (30 Oct 2026): SideStore 0.1.851.** Everything below is history up to 29 Oct (0.1.782 and earlier). Read the
+"Current state" section at the top of CLAUDE.md first; it is kept up to date.
+
 **Latest verified: SideStore0.1.782,29Oct.** Main#184 mergedfe0a94c (sourced9c4064);
 publish40791387290 succeeds. Freshfeed/log/asset agree356122572bytes,
 SHA2564f7f7307d51c6d938640687fadb4472a5ca92a991f9676a4f108912b5a9432e4.
