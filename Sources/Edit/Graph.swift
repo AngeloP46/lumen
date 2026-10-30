@@ -397,16 +397,16 @@ extension EditSession {
             img = Self.downscaled(img, k)
             hdrImg = hdrImg.map { Self.downscaled($0, k) }
         }
-        // The file's HDR layer is the SDR photo times one gain per pixel; the editor's HDR rendition has a gain per colour
-        // channel, which the encoder cannot store (see lumenExportGain). Write the layer the file can hold.
+        // The file holds a base photo and one gain per pixel; the editor's HDR has a gain per colour channel. The base is the
+        // HDR's colour scaled to fit under white (see lumenExportBase), so base x gain is the editor's HDR, colour included.
         if let h = hdrImg {
-            // The file's base is 8-bit, so anything the SDR rendition holds above white is clipped there; the gain must be
-            // worked out against that clipped base, or the reopened photo misses the difference.
-            img = img.applyingFilter("CIColorClamp")
-            guard let kernel = LumenKernels.shared?.exportGain,
-                  let single = kernel.apply(extent: img.extent, arguments: [img, h, CIVector(x: exp2(s.hdrStops), y: 0, z: 0, w: 0)])
+            let ceiling = exp2(s.hdrStops)
+            guard let kernel = LumenKernels.shared?.exportBase,
+                  let base = kernel.apply(extent: img.extent, arguments: [img.applyingFilter("CIColorClamp"), h,
+                                                                          CIVector(x: ceiling, y: 0, z: 0, w: 0)])
             else { return .failed(.hdrEncode) }
-            hdrImg = single
+            img = base
+            hdrImg = h.applyingFilter("CIColorClamp", parameters: ["inputMaxComponents": CIVector(x: ceiling, y: ceiling, z: ceiling, w: 1)])
         }
         // the camera's details go with the photo (Core Image writes an image's properties into the file): date taken,
         // camera, lens, exposure, GPS. Before 19 Oct exports had none, so Photos dated them the day they were exported.
