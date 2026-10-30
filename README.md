@@ -22,7 +22,7 @@ Builds run on GitHub Actions (no Mac is used for development), and every change 
   - **Heal**: paint over something to fill it in with an on-device inpainting model; **Remove people** finds the people in the frame and takes them out.
   - **Crop**: aspect ratios, straighten, flip, transform and Auto level.
 - **HDR**: RAW files open with extended highlight range on HDR screens; export with or without HDR.
-- Histogram, pinch-zoom to a 100 % view, hold the eye icon to compare with the original, undo / redo, copy and paste edits, photo information,
+- Histogram, pinch-zoom to a 100 % view, press and hold the photo to compare with the original, undo / redo, copy and paste edits, photo information,
   export to JPEG, HEIC or TIFF at a chosen size and quality.
 - Edits are stored next to the library as small sidecar files; the original is never changed.
 
