@@ -399,6 +399,9 @@ extension EditSession {
         // The file's HDR layer is the SDR photo times one gain per pixel; the editor's HDR rendition has a gain per colour
         // channel, which the encoder cannot store (see lumenExportGain). Write the layer the file can hold.
         if let h = hdrImg {
+            // The file's base is 8-bit, so anything the SDR rendition holds above white is clipped there; the gain must be
+            // worked out against that clipped base, or the reopened photo misses the difference.
+            img = img.applyingFilter("CIColorClamp")
             guard let kernel = LumenKernels.shared?.exportGain,
                   let single = kernel.apply(extent: img.extent, arguments: [img, h, CIVector(x: exp2(s.hdrStops), y: 0, z: 0, w: 0)])
             else { return .failed(.hdrEncode) }
@@ -440,6 +443,14 @@ extension EditSession {
         if let h = hdrImg {
             guard let readyHDR = rendered(h, float: true) else { return .failed(.hdrEncode) }
             hdrImg = readyHDR
+            // A rendered bitmap has no headroom of its own (0 = unknown), so the encoder had to guess the range it writes
+            // into the file's HDR tags, which Photos uses to decide how far to brighten. Since this render step (#188) the
+            // owner's iPhone Photos showed HDR exports blown out while the CI Mac, which reopens the file at full gain
+            // whatever the tags say, matched the editor (30 Oct 2026). Say it: SDR base 1, HDR layer at most 2^hdrStops.
+            if #available(iOS 18.0, macOS 15.0, *) {
+                img = img.settingContentHeadroom(1)
+                hdrImg = readyHDR.settingContentHeadroom(Float(exp2(s.hdrStops)))
+            }
         }
         Self.healProbe?("export: rendered")
         switch format {
