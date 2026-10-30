@@ -464,3 +464,6 @@ The export base photo is the editor HDR scaled per pixel to fit under white (new
 
 ## 2026-10-30 Thumbnails of HDR edits use the export base (from main #207, SideStore 0.1.851)
 With HDR on, thumbnails and preset previews use lumenExportBase (the HDR colour fitted under white) instead of the over-exposed SDR rendition (EditSession.developForSDRScreen); HDR off unchanged. Thumbnail revision not bumped (no library-wide re-render). Free for all. No Store code changed.
+
+## 2026-10-30 App Store business plan removed from the public repo (as main #211)
+docs/APPSTORE-PLAN.md untracked and ignored; private copy in deliverables\App Store. No app or Store code changed.
